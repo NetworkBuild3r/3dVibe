@@ -11,6 +11,11 @@ module API
       end
 
       def create
+        unless current_user.owner_anywhere?
+          render json: { error: "forbidden" }, status: :forbidden
+          return
+        end
+
         library = Library.create!(library_params)
         Membership.create!(user: current_user, library: library, role: Membership::OWNER)
         render json: { library: serialize(library) }, status: :created
@@ -31,12 +36,16 @@ module API
       end
 
       def serialize(library, detail: false)
+        membership = current_user.memberships.find_by(library: library)
         payload = {
           id: library.id,
           name: library.name,
           root_path: library.root_path,
           notes: library.notes,
-          model_count: library.vibe_models.count
+          model_count: library.vibe_models.count,
+          shared: true,
+          role: membership&.role || Membership::VIEWER,
+          can_upload: current_user.can_upload?(library)
         }
         return payload unless detail
 

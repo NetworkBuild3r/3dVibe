@@ -3,8 +3,11 @@ import { useAuth } from "./auth";
 import { Layout } from "./components/Layout";
 import { CurationPage } from "./pages/CurationPage";
 import { GalleryPage } from "./pages/GalleryPage";
+import { InvitesPage } from "./pages/InvitesPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ModelPage } from "./pages/ModelPage";
+import { RedeemPage } from "./pages/RedeemPage";
+import { UploadPage } from "./pages/UploadPage";
 
 function Guard({ children }: { children: React.ReactNode }) {
   const { user, ready } = useAuth();
@@ -15,10 +18,23 @@ function Guard({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function OwnerGuard({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
+  if (!user?.can_invite) return <Navigate to="/" replace />;
+  return <>{children}</>;
+}
+
+function UploadGuard({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
+  if (!user?.can_upload) return <Navigate to="/" replace />;
+  return <>{children}</>;
+}
+
 export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/invite/:token" element={<RedeemPage />} />
       <Route
         element={
           <Guard>
@@ -29,6 +45,22 @@ export default function App() {
         <Route path="/" element={<GalleryPage />} />
         <Route path="/models/:id" element={<ModelPage />} />
         <Route path="/curation" element={<CurationPage />} />
+        <Route
+          path="/invites"
+          element={
+            <OwnerGuard>
+              <InvitesPage />
+            </OwnerGuard>
+          }
+        />
+        <Route
+          path="/upload"
+          element={
+            <UploadGuard>
+              <UploadPage />
+            </UploadGuard>
+          }
+        />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

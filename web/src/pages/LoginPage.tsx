@@ -1,5 +1,5 @@
 import { FormEvent, useState } from "react";
-import { Navigate } from "react-router-dom";
+import { Link, Navigate } from "react-router-dom";
 import { useAuth } from "../auth";
 
 export function LoginPage() {
@@ -29,7 +29,9 @@ export function LoginPage() {
       <form onSubmit={(event) => void onSubmit(event)} className="w-full rounded-2xl border border-white/10 bg-ink-900/80 p-8 shadow-2xl">
         <p className="font-display text-sm uppercase tracking-[0.2em] text-accent-400">3dvibe</p>
         <h1 className="mt-2 font-display text-3xl text-white">Open the library</h1>
-        <p className="mt-2 text-sm text-slate-400">Owner session for the NFS-backed model collection.</p>
+        <p className="mt-2 text-sm text-slate-400">
+          One shared catalog on the owner&apos;s disk. Friends who were invited can sign in here.
+        </p>
         <label className="mt-6 block text-sm text-slate-300">
           Email
           <input
@@ -58,6 +60,12 @@ export function LoginPage() {
         >
           {busy ? "Signing in…" : "Sign in"}
         </button>
+        <p className="mt-4 text-center text-xs text-slate-500">
+          Have an invite link? Open it to create an account.{" "}
+          <Link to="/" className="text-accent-400">
+            Library
+          </Link>
+        </p>
       </form>
     </div>
   );

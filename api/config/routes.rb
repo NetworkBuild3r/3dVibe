@@ -30,8 +30,16 @@ Rails.application.routes.draw do
       end
 
       resources :print_jobs, only: %i[index create]
-      resources :invites, only: %i[index create]
+      resources :invites, only: %i[index create] do
+        post :revoke, on: :member
+      end
+      get "invites/token/:token", to: "invites#preview"
       post "invites/:token/redeem", to: "invites#redeem"
+
+      resources :uploads, only: %i[create show update] do
+        post :complete, on: :member
+        post :direct, on: :collection
+      end
     end
   end
 end

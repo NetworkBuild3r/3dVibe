@@ -3,6 +3,7 @@ class ApplicationController < ActionController::API
 
   rescue_from ActiveRecord::RecordNotFound, with: :not_found
   rescue_from ActiveRecord::RecordInvalid, with: :unprocessable
+  rescue_from ArgumentError, with: :bad_request
 
   private
 
@@ -23,12 +24,14 @@ class ApplicationController < ActionController::API
     header.split(" ", 2).last if header.start_with?("Bearer ")
   end
 
+  # One shared catalog: every signed-in user sees every library and model.
+  # Membership roles gate write actions (invite / upload), not visibility.
   def accessible_libraries
-    current_user.libraries
+    Library.all
   end
 
   def accessible_models
-    VibeModel.where(library_id: accessible_libraries.select(:id))
+    VibeModel.all
   end
 
   def not_found
@@ -39,8 +42,18 @@ class ApplicationController < ActionController::API
     render json: { error: "invalid", details: exception.record.errors.full_messages }, status: :unprocessable_entity
   end
 
+  def bad_request(exception)
+    render json: { error: "invalid", details: [exception.message] }, status: :unprocessable_entity
+  end
+
   def require_owner!(library)
     return if current_user.owner_of?(library)
+
+    render json: { error: "forbidden" }, status: :forbidden
+  end
+
+  def require_upload!(library)
+    return if current_user.can_upload?(library)
 
     render json: { error: "forbidden" }, status: :forbidden
   end

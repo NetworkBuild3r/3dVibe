@@ -14,6 +14,15 @@ module ActiveSupport
       User.create!(email: email, display_name: "Owner", password: password, password_confirmation: password)
     end
 
+    def create_user!(email:, password: "secret123", display_name: nil)
+      User.create!(
+        email: email,
+        display_name: display_name || email.split("@").first,
+        password: password,
+        password_confirmation: password
+      )
+    end
+
     def auth_header(user)
       token = user.access_tokens.create!(expires_at: 1.day.from_now)
       { "Authorization" => "Bearer #{token.token}" }

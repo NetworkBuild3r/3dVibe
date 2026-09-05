@@ -1,5 +1,6 @@
 class VibeModel < ApplicationRecord
   belongs_to :library
+  belongs_to :uploaded_by, class_name: "User", optional: true
 
   has_many :assets, dependent: :destroy
   has_many :archive_members, through: :assets

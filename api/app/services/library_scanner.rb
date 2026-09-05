@@ -1,19 +1,21 @@
 class LibraryScanner
   SKIP_NAMES = %w[. .. .DS_Store Thumbs.db].freeze
 
-  def initialize(library)
+  def initialize(library, uploaded_by: nil)
     @library = library
+    @uploaded_by = uploaded_by
   end
 
-  def scan!
+  def scan!(path_prefix: nil)
     root = Pathname.new(@library.root_path)
     raise ArgumentError, "Library root is not a directory: #{root}" unless root.directory?
 
+    children = targeted_children(root, path_prefix)
     existing_folders = []
 
-    root.children.sort.each do |child|
+    children.sort.each do |child|
       next unless child.directory?
-      next if SKIP_NAMES.include?(child.basename.to_s)
+      next if hidden_name?(child.basename.to_s)
 
       folder_name = child.basename.to_s
       existing_folders << folder_name
@@ -26,13 +28,28 @@ class LibraryScanner
       cursor.remember!(mtime: fingerprint[:mtime], byte_size: fingerprint[:byte_size])
     end
 
-    stale = @library.vibe_models.where.not(folder_name: existing_folders)
-    stale.find_each(&:destroy)
-    @library.scan_cursors.where.not(path_prefix: existing_folders).delete_all
+    unless path_prefix.present?
+      stale = @library.vibe_models.where.not(folder_name: existing_folders)
+      stale.find_each(&:destroy)
+      @library.scan_cursors.where.not(path_prefix: existing_folders).delete_all
+    end
+
     @library
   end
 
   private
+
+  def targeted_children(root, path_prefix)
+    return root.children unless path_prefix.present?
+
+    folder = LibraryPathJail.new(root).normalize_folder(path_prefix)
+    target = root.join(folder)
+    target.directory? ? [target] : []
+  end
+
+  def hidden_name?(name)
+    name.start_with?(".") || SKIP_NAMES.include?(name)
+  end
 
   def folder_fingerprint(dir)
     max_mtime = 0
@@ -53,6 +70,7 @@ class LibraryScanner
     model.synopsis ||= read_synopsis(dir)
     model.folder_mtime = Time.at(fingerprint[:mtime])
     model.byte_size = fingerprint[:byte_size]
+    model.uploaded_by ||= @uploaded_by
     model.save!
 
     seen_paths = []
@@ -79,6 +97,7 @@ class LibraryScanner
     asset.kind = detect_kind(path)
     asset.byte_size = stat.size
     asset.mtime = stat.mtime
+    asset.uploaded_by ||= @uploaded_by if asset.new_record?
     asset.content_digest = digest_if_small(path, stat.size) if changed
     asset.save!
 

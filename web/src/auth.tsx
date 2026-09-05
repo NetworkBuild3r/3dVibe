@@ -1,10 +1,13 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { api, setToken, type User } from "./api";
 
+type RedeemFields = { email: string; password: string; display_name: string };
+
 type AuthState = {
   user: User | null;
   ready: boolean;
   login: (email: string, password: string) => Promise<void>;
+  redeem: (token: string, fields: RedeemFields) => Promise<void>;
   logout: () => Promise<void>;
 };
 
@@ -33,6 +36,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       ready,
       login: async (email, password) => {
         const payload = await api.login(email, password);
+        setToken(payload.token);
+        setUser(payload.user);
+      },
+      redeem: async (inviteToken, fields) => {
+        const payload = await api.redeemInvite(inviteToken, fields);
         setToken(payload.token);
         setUser(payload.user);
       },

@@ -15,17 +15,30 @@ export function Layout() {
             <NavLink to="/" className="font-display text-lg tracking-tight text-white">
               3dvibe
             </NavLink>
-            <nav className="flex items-center gap-1">
+            <nav className="flex flex-wrap items-center gap-1">
               <NavLink to="/" className={link} end>
                 Library
               </NavLink>
+              {user?.can_upload ? (
+                <NavLink to="/upload" className={link}>
+                  Upload
+                </NavLink>
+              ) : null}
+              {user?.can_invite ? (
+                <NavLink to="/invites" className={link}>
+                  Invites
+                </NavLink>
+              ) : null}
               <NavLink to="/curation" className={link}>
                 Curation
               </NavLink>
             </nav>
           </div>
           <div className="flex items-center gap-3 text-sm text-slate-400">
-            <span>{user?.display_name}</span>
+            <span>
+              {user?.display_name}
+              {user?.role ? <span className="ml-2 text-xs uppercase tracking-wide text-slate-500">{user.role}</span> : null}
+            </span>
             <button
               type="button"
               onClick={() => void logout()}

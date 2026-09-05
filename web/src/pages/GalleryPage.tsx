@@ -80,7 +80,9 @@ export function GalleryPage() {
       <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="font-display text-3xl text-white">Library</h1>
-          <p className="mt-1 text-sm text-slate-400">Browse folders on disk. Cards never auto-load meshes.</p>
+          <p className="mt-1 text-sm text-slate-400">
+            One shared catalog. Every signed-in friend sees the same folders. Cards never auto-load meshes.
+          </p>
         </div>
         <input
           value={query}
@@ -110,6 +112,7 @@ export function GalleryPage() {
             </div>
             <p className="mt-3 text-xs text-slate-500">
               {model.asset_count} files · {formatBytes(model.byte_size)}
+              {model.uploaded_by ? ` · uploaded by ${model.uploaded_by.display_name}` : ""}
             </p>
           </Link>
         ))}

@@ -3,6 +3,7 @@ class Asset < ApplicationRecord
   MESH_KINDS = %w[stl obj 3mf gcode bgcode].freeze
 
   belongs_to :vibe_model
+  belongs_to :uploaded_by, class_name: "User", optional: true
   has_many :archive_members, dependent: :destroy
 
   validates :relative_path, presence: true, uniqueness: { scope: :vibe_model_id }
