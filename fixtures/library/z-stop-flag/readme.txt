@@ -1,0 +1,1 @@
+Sample fixture folder z stop flag.

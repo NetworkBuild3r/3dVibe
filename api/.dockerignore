@@ -1,0 +1,7 @@
+vendor/bundle
+log/*
+tmp/*
+!log/.keep
+!tmp/.keep
+!tmp/pids/.keep
+.git

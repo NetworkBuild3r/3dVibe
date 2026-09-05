@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: vibe
+          POSTGRES_PASSWORD: vibe
+          POSTGRES_DB: td_vibe_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vibe -d td_vibe_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      RAILS_ENV: test
+      DATABASE_URL: postgres://vibe:vibe@127.0.0.1:5432/td_vibe_test
+      POSTGRES_USER: vibe
+      POSTGRES_PASSWORD: vibe
+      POSTGRES_HOST: 127.0.0.1
+      SECRET_KEY_BASE: test-secret-key-base-for-ci
+      CI: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+          working-directory: api
+      - run: bin/rails db:prepare
+      - run: bin/rails test
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run build

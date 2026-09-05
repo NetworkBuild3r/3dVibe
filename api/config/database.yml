@@ -1,0 +1,23 @@
+default: &default
+  adapter: postgresql
+  encoding: unicode
+  pool: <%= ENV.fetch("RAILS_MAX_THREADS", 5) %>
+  url: <%= ENV["DATABASE_URL"] %>
+
+development:
+  <<: *default
+  database: td_vibe_development
+  username: <%= ENV.fetch("POSTGRES_USER", "vibe") %>
+  password: <%= ENV.fetch("POSTGRES_PASSWORD", "vibe") %>
+  host: <%= ENV.fetch("POSTGRES_HOST", "127.0.0.1") %>
+
+test:
+  <<: *default
+  database: td_vibe_test
+  username: <%= ENV.fetch("POSTGRES_USER", "vibe") %>
+  password: <%= ENV.fetch("POSTGRES_PASSWORD", "vibe") %>
+  host: <%= ENV.fetch("POSTGRES_HOST", "127.0.0.1") %>
+
+production:
+  <<: *default
+  database: td_vibe_production

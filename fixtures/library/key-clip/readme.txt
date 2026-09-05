@@ -1,0 +1,1 @@
+Sample fixture folder key clip.

@@ -1,0 +1,124 @@
+require "test_helper"
+require "fileutils"
+require "zip"
+
+class APIV1Test < ActionDispatch::IntegrationTest
+  def setup
+    @root = Rails.root.join("tmp/api-library-#{SecureRandom.hex(4)}")
+    FileUtils.mkdir_p(@root.join("signal-horn"))
+    File.write(@root.join("signal-horn/horn.stl"), "solid x\nendsolid x\n")
+    File.write(@root.join("signal-horn/readme.txt"), "Handheld signal horn.")
+    FileUtils.mkdir_p(@root.join("crate"))
+    Zip::File.open(@root.join("crate/parts.zip"), Zip::File::CREATE) do |zip|
+      zip.get_output_stream("lid.stl") { |io| io.write("solid lid\nendsolid lid\n") }
+      zip.get_output_stream("docs/info.txt") { |io| io.write("lid only") }
+    end
+
+    @password = "secret123"
+    @owner = create_owner!(password: @password)
+    @library = Library.create!(name: "Studio", root_path: @root.to_s)
+    Membership.create!(user: @owner, library: @library, role: Membership::OWNER)
+    LibraryScanner.new(@library).scan!
+    @library.curation_proposals.create!(
+      kind: "tag",
+      summary: "Tag horns as audio",
+      payload: { tag: "audio" },
+      status: CurationProposal::PENDING
+    )
+  end
+
+  def teardown
+    FileUtils.rm_rf(@root)
+  end
+
+  test "session login and me" do
+    post "/api/v1/session", params: { email: @owner.email, password: @password }, as: :json
+    assert_response :created
+    token = response.parsed_body.fetch("token")
+
+    get "/api/v1/me", headers: { "Authorization" => "Bearer #{token}" }
+    assert_response :success
+    assert_equal @owner.email, response.parsed_body.dig("user", "email")
+  end
+
+  test "rejects unknown credentials" do
+    post "/api/v1/session", params: { email: @owner.email, password: "nope" }, as: :json
+    assert_response :unauthorized
+  end
+
+  test "lists models with cursor pagination and detail plus archive members" do
+    headers = auth_header(@owner)
+
+    get "/api/v1/models", params: { limit: 1 }, headers: headers
+    assert_response :success
+    body = response.parsed_body
+    assert_equal 1, body.fetch("models").length
+    assert body["next_cursor"].present?
+
+    get "/api/v1/models", params: { cursor: body["next_cursor"], limit: 1 }, headers: headers
+    assert_response :success
+
+    model = @library.vibe_models.find_by!(folder_name: "crate")
+    get "/api/v1/models/#{model.id}", headers: headers
+    assert_response :success
+    assert response.parsed_body.dig("model", "assets").any? { |asset| asset["archive"] }
+
+    get "/api/v1/models/#{model.id}/archive_members", headers: headers
+    assert_response :success
+    paths = response.parsed_body.fetch("members").map { |member| member["internal_path"] }
+    assert_includes paths, "lid.stl"
+    assert_includes paths, "docs/info.txt"
+  end
+
+  test "search uses postgres ilike fallback" do
+    get "/api/v1/search", params: { q: "horn" }, headers: auth_header(@owner)
+    assert_response :success
+    titles = response.parsed_body.fetch("models").map { |model| model["title"] }
+    assert titles.any? { |title| title.downcase.include?("horn") }
+    assert_equal "postgres", response.parsed_body["engine"]
+  end
+
+  test "owner can approve and reject curation proposals" do
+    headers = auth_header(@owner)
+    pending = @library.curation_proposals.pending.first
+
+    post "/api/v1/curation_proposals/#{pending.id}/approve", headers: headers, as: :json
+    assert_response :success
+    assert_equal "approved", pending.reload.status
+
+    other = @library.curation_proposals.create!(kind: "organize", summary: "Shelf", payload: {}, status: "pending")
+    post "/api/v1/curation_proposals/#{other.id}/reject", headers: headers, as: :json
+    assert_response :success
+    assert_equal "rejected", other.reload.status
+  end
+
+  test "print bridge is a stub" do
+    model = @library.vibe_models.first
+    post "/api/v1/print_jobs",
+         params: { model_id: model.id, printer_hint: "garage-printer" },
+         headers: auth_header(@owner),
+         as: :json
+    assert_response :accepted
+    assert_equal "unavailable", response.parsed_body.dig("print_job", "status")
+  end
+
+  test "friend invite can be created and redeemed" do
+    post "/api/v1/invites",
+         params: { library_id: @library.id, email: "pal@example.test" },
+         headers: auth_header(@owner),
+         as: :json
+    assert_response :created
+    token = response.parsed_body.dig("invite", "token")
+
+    post "/api/v1/invites/#{token}/redeem", params: { password: "friendpass1" }, as: :json
+    assert_response :success
+    friend = User.find_by!(email: "pal@example.test")
+    assert friend.member_of?(@library)
+  end
+
+  test "health endpoint does not require auth" do
+    get "/up"
+    assert_response :success
+    assert_equal "3dvibe", response.parsed_body["app"]
+  end
+end
