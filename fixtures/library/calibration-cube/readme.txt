@@ -1,0 +1,1 @@
+A 20mm gauge cube for first-layer checks.

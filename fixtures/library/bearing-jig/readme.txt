@@ -1,0 +1,1 @@
+Sample fixture folder bearing jig.

@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+bundle check || bundle install
+bin/rails db:prepare
+echo "3dvibe API is ready."

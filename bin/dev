@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Start the 3dvibe local stack.
+# Prefer Docker Compose. If compose is unavailable, start api + web on the host.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+  echo "Starting 3dvibe with docker compose..."
+  exec docker compose up --build
+fi
+
+echo "Docker Compose not found; starting host processes."
+echo "Requires Postgres, Redis, Ruby, and Node on PATH."
+
+export DATABASE_URL="${DATABASE_URL:-postgres://vibe:vibe@127.0.0.1:5432/td_vibe_development}"
+export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379/0}"
+export VIBE_LIBRARY_ROOT="${VIBE_LIBRARY_ROOT:-$ROOT/fixtures/library}"
+export SECRET_KEY_BASE="${SECRET_KEY_BASE:-devsecret-change-me-please-use-a-long-value}"
+
+(
+  cd "$ROOT/api"
+  bundle check || bundle install
+  bin/rails db:prepare
+  bin/rails server -b 0.0.0.0 -p "${API_PORT:-3000}"
+) &
+API_PID=$!
+
+(
+  cd "$ROOT/web"
+  if [ ! -d node_modules ]; then
+    npm install
+  fi
+  npm run dev -- --host 0.0.0.0 --port "${WEB_PORT:-5173}"
+) &
+WEB_PID=$!
+
+(
+  cd "$ROOT/api"
+  bundle exec sidekiq -C config/sidekiq.yml
+) &
+WORKER_PID=$!
+
+trap 'kill $API_PID $WEB_PID $WORKER_PID 2>/dev/null || true' INT TERM
+wait

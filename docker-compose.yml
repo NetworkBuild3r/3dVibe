@@ -1,0 +1,115 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-vibe}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vibe}
+      POSTGRES_DB: ${POSTGRES_DB:-td_vibe_development}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vibe} -d ${POSTGRES_DB:-td_vibe_development}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    environment:
+      RAILS_ENV: ${RAILS_ENV:-development}
+      DATABASE_URL: ${DATABASE_URL:-postgres://vibe:vibe@db:5432/td_vibe_development}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE:-devsecret-change-me-please-use-a-long-value}
+      RAILS_LOG_TO_STDOUT: "1"
+      VIBE_LIBRARY_ROOT: ${VIBE_LIBRARY_ROOT:-/library}
+      VIBE_LIBRARY_NAME: ${VIBE_LIBRARY_NAME:-Studio library}
+      VIBE_OWNER_EMAIL: ${VIBE_OWNER_EMAIL:-owner@3dvibe.local}
+      VIBE_OWNER_PASSWORD: ${VIBE_OWNER_PASSWORD:-vibe-dev-password}
+      MEILISEARCH_URL: ${MEILISEARCH_URL:-}
+      WEB_ORIGIN: http://localhost:${WEB_PORT:-5173}
+    volumes:
+      - ./api:/app
+      - ${VIBE_LIBRARY_HOST_PATH:-./fixtures/library}:${VIBE_LIBRARY_ROOT:-/library}:ro
+      - bundle_cache:/usr/local/bundle
+    ports:
+      - "${API_PORT:-3000}:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      bash -lc "bundle check || bundle install;
+      bin/rails db:prepare;
+      bin/rails server -b 0.0.0.0 -p 3000"
+
+  worker:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    environment:
+      RAILS_ENV: ${RAILS_ENV:-development}
+      DATABASE_URL: ${DATABASE_URL:-postgres://vibe:vibe@db:5432/td_vibe_development}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE:-devsecret-change-me-please-use-a-long-value}
+      RAILS_LOG_TO_STDOUT: "1"
+      VIBE_LIBRARY_ROOT: ${VIBE_LIBRARY_ROOT:-/library}
+      VIBE_LIBRARY_NAME: ${VIBE_LIBRARY_NAME:-Studio library}
+      MEILISEARCH_URL: ${MEILISEARCH_URL:-}
+    volumes:
+      - ./api:/app
+      - ${VIBE_LIBRARY_HOST_PATH:-./fixtures/library}:${VIBE_LIBRARY_ROOT:-/library}:ro
+      - bundle_cache:/usr/local/bundle
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      bash -lc "bundle check || bundle install;
+      bundle exec sidekiq -C config/sidekiq.yml"
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api/v1}
+    volumes:
+      - ./web:/app
+      - web_node_modules:/app/node_modules
+    ports:
+      - "${WEB_PORT:-5173}:5173"
+    depends_on:
+      - api
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.11
+    profiles: ["search"]
+    environment:
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-vibe_dev_meili_key}
+      MEILI_ENV: development
+    ports:
+      - "7700:7700"
+    volumes:
+      - meili_data:/meili_data
+
+volumes:
+  postgres_data:
+  bundle_cache:
+  web_node_modules:
+  meili_data:
