@@ -84,8 +84,8 @@ export function DuplicatesPage() {
       });
   }, []);
 
-  async function refresh(options: { silent?: boolean } = {}) {
-    if (libraryId === "") return;
+  async function refresh(options: { silent?: boolean } = {}): Promise<DuplicateGroup[] | null> {
+    if (libraryId === "") return null;
     if (!options.silent) {
       setError(null);
       setLoading(true);
@@ -93,15 +93,18 @@ export function DuplicatesPage() {
     try {
       const status = filter === "all" ? "" : (filter as DuplicateStatus);
       const payload = await api.duplicates(libraryId, status);
-      if (!mounted.current) return;
+      if (!mounted.current) return payload.groups;
       setGroups(payload.groups);
       const stored = readLastRun(libraryId);
       const newest = newestGroupTime(payload.groups);
       setLastRunAt((current) => newest || stored || current);
       if (!options.silent) setError(null);
+      return payload.groups;
     } catch (err) {
-      if (!mounted.current || options.silent) return;
-      setError(err instanceof Error ? err.message : "Failed to load duplicates");
+      if (mounted.current && !options.silent) {
+        setError(err instanceof Error ? err.message : "Failed to load duplicates");
+      }
+      return null;
     } finally {
       if (mounted.current && !options.silent) setLoading(false);
     }
@@ -170,11 +173,16 @@ export function DuplicatesPage() {
       const queuedAt = new Date().toISOString();
       writeLastRun(libraryId, queuedAt);
       if (mounted.current) setLastRunAt(queuedAt);
+      const priorStamp = newestGroupTime(groups);
+      const priorCount = groups.length;
       const started = Date.now();
       while (Date.now() - started < 12000 && analyzeTicket.current === ticket && mounted.current) {
-        await new Promise((resolve) => window.setTimeout(resolve, 1400));
+        await new Promise((resolve) => window.setTimeout(resolve, 800));
         if (analyzeTicket.current !== ticket || !mounted.current) return;
-        await refresh({ silent: true });
+        const next = await refresh({ silent: true });
+        if (!next) continue;
+        const stamp = newestGroupTime(next);
+        if (next.length !== priorCount || (stamp && stamp !== priorStamp)) break;
       }
     } catch (err) {
       if (mounted.current) setError(err instanceof Error ? err.message : "Analyze failed");
