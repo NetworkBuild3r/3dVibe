@@ -39,7 +39,7 @@ class ArchiveShellLister
   end
 
   def each_entry
-    parse_slt(list_slt).each { |entry| yield entry }
+    self.class.parse_slt(list_slt).each { |entry| yield entry }
   end
 
   def extract_member(internal_path, destination, max_bytes:)

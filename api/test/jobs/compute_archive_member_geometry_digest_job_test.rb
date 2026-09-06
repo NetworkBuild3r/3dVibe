@@ -84,11 +84,12 @@ class ComputeArchiveMemberGeometryDigestJobTest < ActiveJob::TestCase
   end
 
   test "empty mesh skips without writing a digest" do
-    Zip::File.open(@root.join("packed/empty.zip"), Zip::File::CREATE) do |zip|
+    FileUtils.mkdir_p(@root.join("empty-pack"))
+    Zip::File.open(@root.join("empty-pack/empty.zip"), Zip::File::CREATE) do |zip|
       zip.get_output_stream("blank.stl") { |io| io.write("solid foo\nendsolid foo\n") }
     end
     LibraryScanner.new(@library, budget: ScanBudget.unlimited).scan!
-    empty = @library.vibe_models.find_by!(folder_name: "packed").assets.find_by!(filename: "empty.zip")
+    empty = @library.vibe_models.find_by!(folder_name: "empty-pack").assets.find_by!(filename: "empty.zip")
     member = empty.archive_members.find_by!(internal_path: "blank.stl")
 
     assert_nothing_raised { ComputeArchiveMemberGeometryDigestJob.perform_now(member.id) }
