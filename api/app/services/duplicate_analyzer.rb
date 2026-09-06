@@ -95,12 +95,13 @@ class DuplicateAnalyzer
   end
 
   def fingerprint_pending_meshes!
+    geo = GeometryBudget.from_env
     started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
     processed = 0
     pending_meshes.find_each do |asset|
-      break if GeometrySettings.max_assets.positive? && processed >= GeometrySettings.max_assets
-      break if GeometrySettings.max_seconds.positive? &&
-        (Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) >= GeometrySettings.max_seconds
+      break if geo.max_assets.positive? && processed >= geo.max_assets
+      break if geo.max_seconds.positive? &&
+        (Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) >= geo.max_seconds
 
       digest = GeometryFingerprint.compute(asset)
       GeometryWriteback.apply!(asset_id: asset.id, geometry_digest: digest) if digest.present?

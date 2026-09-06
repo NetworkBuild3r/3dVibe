@@ -82,7 +82,7 @@ Background jobs:
 - `DispatchPrintJob` — path-jails a library file and sends it through a printer adapter (mock simulates progress)
 - `ModelComposer` — merge/split first-level folders and selected files inside the path jail
 - `AnalyzeDuplicatesJob` — on-demand (not every NFS poll): size-prefilter, stream SHA-256, upsert `open` groups, enqueue geometry fingerprints
-- `ComputeGeometryDigestJob` / `GeometryFingerprint` — path-jailed stl/obj/3mf fingerprint (center + unit AABB, quantized vertices, SHA-256 `qv1:…`). Writes via `GeometryWriteback.apply!`. Huge meshes skip / time out; 3MF streams the `.model` member
+- `ComputeGeometryDigestJob` / `GeometryFingerprint` — path-jailed STL/OBJ/3MF fingerprint (`mesh:v1:<sha256>`). Writes via `GeometryWriteback.apply!`. Huge meshes skip / time out; 3MF streams the `.model` member
 - `DuplicateFinder` / `DuplicateAnalyzer` — cluster by content hash, geometry digest, then name+size; persist only; never delete NFS files
 - `GeometryWriteback` — Rendering sets `assets.geometry_digest` (`POST /api/v1/geometry/writeback` or `GeometryWriteback.apply!`)
 - `GenerateCoverJob` — path-jails the locked cover payload, generates a budgeted libvips webp (or fails for mesh-without-preview), writes back via `CoverWriteback.apply!`
@@ -274,12 +274,13 @@ Owner API `GET /api/v1/libraries` (and show) includes the latest `scan` object. 
 | `VIBE_SCAN_ALLOW_EMPTY_PRUNE` | Allow wiping the catalog when the mount lists no folders (default 0) |
 | `VIBE_COVER_TOKEN` | Shared token for `POST /api/v1/covers/writeback` (`X-Cover-Token` or Bearer). Signed-in users can also write back |
 | `VIBE_GEOMETRY_TOKEN` | Shared token for `POST /api/v1/geometry/writeback` (`X-Geometry-Token` or Bearer). Owner/contributor can also write back |
+| `VIBE_GEO_MAX_BYTES` | Skip a mesh larger than this many bytes (default 64 MiB). `0` = unlimited |
+| `VIBE_GEO_MAX_VERTS` | Skip after this many streamed vertices (default 250000). `0` = unlimited |
+| `VIBE_GEO_MAX_SECONDS` | Wall-clock cap per fingerprint (default 20). `0` = unlimited |
+| `VIBE_GEO_QUANT` | Vertex quantization grid in model units (default 0.01) |
+| `VIBE_GEO_MAX_ASSETS` | Meshes fingerprinted inline per analyze (default 40). `0` = unlimited |
 | `VIBE_DUP_MAX_SECONDS` | Wall-clock cap per analyze job (default 60). `0` = unlimited |
 | `VIBE_DUP_MAX_FILES` | Streamed hashes per analyze job (default 2000). `0` = unlimited |
-| `VIBE_GEOM_MAX_SECONDS` | Mesh fingerprint time cap (default 20). `0` = unlimited |
-| `VIBE_GEOM_MAX_BYTES` | Skip meshes larger than this (default 48 MiB) |
-| `VIBE_GEOM_MAX_FACES` | Skip meshes with more faces than this (default 500000) |
-| `VIBE_GEOM_MAX_ASSETS` | Meshes fingerprinted inline per analyze (default 40) |
 | `VIBE_COVER_MAX_PX` | Cover generate budget, pixels (default 512). Passed through on the enqueue payload |
 | `VIBE_COVER_MAX_BYTES` | Cover generate budget, bytes (default 250000). Passed through on the enqueue payload |
 
@@ -345,7 +346,9 @@ Clustering, highest confidence first:
 
 **Rematch.** Terminal groups (`kept` / `dismissed` / `merged`) are never rewritten. If they still match a current cluster (same reason+digest or same name+size, and at least two current members overlap), those assets stay reserved and will not open a new group. Only `open` groups are created or have members refreshed. Stale `open` groups that no longer match are destroyed. Re-analyze after a keep/dismiss does not wipe that decision.
 
-**Rendering bind.** Compute a stable mesh fingerprint and write it back, then the curator re-runs analyze:
+**Geometry fingerprint.** `ComputeGeometryDigestJob` / `GeometryFingerprint.compute` path-jails the file (`LibraryPathJail#resolve_file`), streams a loose STL / OBJ / 3MF (3MF via zip entry stream — never a whole-archive RAM load), quantizes vertices, drops colors / names / 3MF transforms, and writes `mesh:v1:<sha256>` through `GeometryWriteback.apply!`. Gcode, images, and other non-mesh kinds skip. Jail escape, files over `VIBE_GEO_MAX_BYTES`, or meshes over `VIBE_GEO_MAX_VERTS` / `VIBE_GEO_MAX_SECONDS` skip without crashing and without writing an empty digest. Near-dup grouping stays on `AnalyzeDuplicatesJob`. No native mesh library — pure Ruby + `rubyzip`.
+
+External / sidecar write-back (same column) after the curator re-runs analyze:
 
 ```
 POST /api/v1/geometry/writeback
@@ -353,10 +356,10 @@ X-Geometry-Token: $VIBE_GEOMETRY_TOKEN
 ```
 
 ```json
-{ "asset_id": 99, "geometry_digest": "mesh:stable-fingerprint" }
+{ "asset_id": 99, "geometry_digest": "mesh:v1:…" }
 ```
 
-In-process: `GeometryWriteback.apply!(asset_id:, geometry_digest:)` or `asset.update!(geometry_digest:)`. `GeometryFingerprint.compute` returns a `qv1:` digest (center + unit AABB, quantized sorted vertices) or `nil` for skip/timeout/empty mesh. The analyze job writes that digest through `GeometryWriteback` — there is no second writeback API.
+In-process: `GeometryWriteback.apply!(asset_id:, geometry_digest:)` or `asset.update!(geometry_digest:)`. `GeometryFingerprint.compute` returns a `mesh:v1:` digest or `nil` for skip/timeout/empty mesh. The analyze job writes that digest through `GeometryWriteback` — there is no second writeback API. After switching prefix from `qv1:` to `mesh:v1:`, re-run Analyze so open groups refresh (mixed prefixes will not cluster).
 
 **Frontend bind.** The Duplicates page calls `POST /libraries/:id/duplicates/analyze`, then `GET /duplicates?library_id=&status=open`. Group `id` is an integer. Sections split Exact content / Exact geometry / Likely. Cover-first multi-card review; Keep / Dismiss / Merge hit `/duplicates/:id/{keep,dismiss,merge}`. Analyze and decide are hidden unless `can_curate` / `can_merge`.
 

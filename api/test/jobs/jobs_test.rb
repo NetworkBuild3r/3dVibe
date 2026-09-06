@@ -115,12 +115,12 @@ class JobsTest < ActiveJob::TestCase
 
     AnalyzeDuplicatesJob.perform_now(library.id)
     assert library.duplicate_groups.open.exists?(reason: DuplicateGroup::REASON_CONTENT_HASH)
-    assert cube.reload.geometry_digest.to_s.start_with?("qv1:")
+    assert_match(/\Amesh:v1:[0-9a-f]{64}\z/, cube.reload.geometry_digest)
 
     assert_nothing_raised { ComputeGeometryDigestJob.perform_now(empty.id) }
     assert_nil empty.reload.geometry_digest
     ComputeGeometryDigestJob.perform_now(cube.id)
-    assert cube.reload.geometry_digest.to_s.start_with?("qv1:")
+    assert_match(/\Amesh:v1:[0-9a-f]{64}\z/, cube.reload.geometry_digest)
   ensure
     FileUtils.rm_rf(root)
   end

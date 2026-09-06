@@ -1,6 +1,6 @@
-# Path-jailed mesh fingerprint. Writes assets.geometry_digest via
-# GeometryWriteback.apply! so DuplicateAnalyzer can cluster geometry groups.
-# Skips / times out huge meshes without slurping archives.
+# Mesh-only geometry fingerprint. Path-jails the file, streams STL/OBJ/3MF,
+# and writes assets.geometry_digest via GeometryWriteback.apply!.
+# Skips (no crash, no empty digest) on jail escape, non-mesh, or budget.
 class ComputeGeometryDigestJob < ApplicationJob
   queue_as :duplicates
 
@@ -11,11 +11,12 @@ class ComputeGeometryDigestJob < ApplicationJob
     return unless asset.mesh?
     return if asset.geometry_digest.present?
 
-    digest = GeometryFingerprint.compute(asset)
+    fingerprint = GeometryFingerprint.new(asset)
+    digest = fingerprint.compute
     if digest.present?
       GeometryWriteback.apply!(asset_id: asset.id, geometry_digest: digest)
     else
-      Rails.logger.info("[ComputeGeometryDigestJob] skip asset=#{asset.id} (digest blank)")
+      Rails.logger.info("[ComputeGeometryDigestJob] skip asset=#{asset.id} reason=#{fingerprint.skip_reason || 'blank'}")
     end
   end
 end
