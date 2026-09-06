@@ -40,8 +40,10 @@ class ArchiveIndexer
     tmp
   end
 
-  def extract_member(internal_path, max_bytes: self.class.stream_bytes)
-    path = @asset.absolute_path
+  # Stream one member into a Tempfile. Pass archive_path when the caller
+  # already path-jailed the parent zip/7z/rar (ComputeArchiveMemberGeometryDigestJob).
+  def extract_member(internal_path, max_bytes: self.class.stream_bytes, archive_path: nil)
+    path = archive_path.present? ? archive_path.to_s : @asset.absolute_path
     raise ArgumentError, "archive missing on disk" unless File.file?(path)
 
     safe = ArchiveMember.normalize_path(internal_path)

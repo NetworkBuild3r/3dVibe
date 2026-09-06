@@ -309,7 +309,29 @@ class DuplicatesTest < ActionDispatch::IntegrationTest
     assert_equal DuplicateGroup::DISMISSED, dismissable.reload.status
   end
 
-  test "analyze enqueues archive member geometry stub without extracting the zip" do
+  test "analyze fingerprints a packed mesh and clusters it with the same loose file" do
+    member = seed_cube_packed_member!
+    loose = seed_cube_loose!
+
+    AnalyzeDuplicatesJob.perform_now(@library.id)
+
+    assert_match(/\Amesh:v1:[0-9a-f]{64}\z/, member.reload.geometry_digest)
+    assert_equal member.geometry_digest, loose.reload.geometry_digest
+    refute File.exist?(@root.join("packed-cube/path/foo.stl"))
+    assert File.file?(@root.join("packed-cube/pack.zip"))
+
+    get "/api/v1/duplicates",
+        params: { library_id: @library.id, status: "open" },
+        headers: auth_header(@owner)
+    assert_response :success
+    geo = response.parsed_body.fetch("groups").find { |group| group["reason"] == "geometry" && group["digest"] == member.geometry_digest }
+    assert geo
+    kinds = geo.fetch("members").map { |row| row["kind"] }
+    assert_includes kinds, "asset"
+    assert_includes kinds, "archive_member"
+  end
+
+  test "analyze enqueues leftover archive member geometry jobs without extracting the zip" do
     member = seed_packed_member!
     assert_nil member.geometry_digest
 
@@ -318,6 +340,10 @@ class DuplicatesTest < ActionDispatch::IntegrationTest
     end
     assert_nil member.reload.geometry_digest
     assert File.file?(@root.join("packed/pack.zip"))
+    refute File.exist?(@root.join("packed/path/foo.stl"))
+
+    ComputeArchiveMemberGeometryDigestJob.perform_now(member.id)
+    assert_nil member.reload.geometry_digest
     refute File.exist?(@root.join("packed/path/foo.stl"))
   end
 
@@ -332,6 +358,28 @@ class DuplicatesTest < ActionDispatch::IntegrationTest
     LibraryScanner.new(@library, budget: ScanBudget.unlimited).scan!
     archive = @library.vibe_models.find_by!(folder_name: "packed").assets.find_by!(filename: "pack.zip")
     archive.archive_members.find_by!(internal_path: "path/foo.stl")
+  end
+
+  def seed_cube_loose!
+    FileUtils.mkdir_p(@root.join("loose-cube"))
+    write_ascii_stl(@root.join("loose-cube/box.stl"), CUBE_FACES, name: "box")
+    LibraryScanner.new(@library, budget: ScanBudget.unlimited).scan!
+    @library.vibe_models.find_by!(folder_name: "loose-cube").assets.find_by!(filename: "box.stl")
+  end
+
+  def seed_cube_packed_member!
+    require "zip"
+    FileUtils.mkdir_p(@root.join("packed-cube"))
+    stl = Tempfile.new(["cube", ".stl"])
+    write_ascii_stl(stl.path, CUBE_FACES, name: "box")
+    Zip::File.open(@root.join("packed-cube/pack.zip"), Zip::File::CREATE) do |zip|
+      zip.get_output_stream("path/foo.stl") { |io| io.write(File.binread(stl.path)) }
+    end
+    LibraryScanner.new(@library, budget: ScanBudget.unlimited).scan!
+    archive = @library.vibe_models.find_by!(folder_name: "packed-cube").assets.find_by!(filename: "pack.zip")
+    archive.archive_members.find_by!(internal_path: "path/foo.stl")
+  ensure
+    stl&.close!
   end
 
   def seed_second_packed_member!

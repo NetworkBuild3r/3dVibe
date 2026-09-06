@@ -3,6 +3,9 @@
 #
 # Geometry clusters include loose assets and archive members that share a
 # geometry_digest (loose↔member↔member). Exact content_hash stays Asset-only.
+# Pending archive-member meshes are fingerprinted in-process (one streamed
+# member, never a whole-archive extract) so the same analyze pass can open
+# mixed groups. Leftovers enqueue ComputeArchiveMemberGeometryDigestJob.
 #
 # Rematch rules:
 # - Terminal groups are left alone. If they still match a current cluster
@@ -135,6 +138,18 @@ class DuplicateAnalyzer
       GeometryWriteback.apply!(asset_id: asset.id, geometry_digest: digest) if digest.present?
       processed += 1
     end
+
+    pending_archive_members.find_each do |member|
+      next unless member.mesh?
+
+      break if geo.max_assets.positive? && processed >= geo.max_assets
+      break if geo.max_seconds.positive? &&
+        (Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) >= geo.max_seconds
+
+      digest = GeometryFingerprint.compute(member)
+      GeometryWriteback.apply!(archive_member_id: member.id, geometry_digest: digest) if digest.present?
+      processed += 1
+    end
   end
 
   def pending_meshes
@@ -142,6 +157,17 @@ class DuplicateAnalyzer
          .where(vibe_models: { library_id: @library.id }, kind: GeometryFingerprint::KINDS)
          .where(geometry_digest: [nil, ""])
          .order(:id)
+  end
+
+  def pending_archive_members
+    ArchiveMember.joins(asset: :vibe_model)
+                 .where(vibe_models: { library_id: @library.id })
+                 .where(directory: false)
+                 .where.not(listing_source: "placeholder")
+                 .where.not(internal_path: ArchiveMember::PLACEHOLDER_PATH)
+                 .where(geometry_digest: [nil, ""])
+                 .includes(asset: { vibe_model: :library })
+                 .order(:id)
   end
 
   def enqueue_geometry_jobs(assets)
