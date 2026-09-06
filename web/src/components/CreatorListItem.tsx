@@ -1,18 +1,8 @@
 import { Link } from "react-router-dom";
 import type { Creator, ModelCard } from "../api";
-import { CoverMedia } from "./CoverMedia";
+import { modelCountLabel, modelCountOf } from "../creators";
+import { CoverMosaic } from "./CoverMosaic";
 import { IconChevronRight } from "./Icons";
-
-function MosaicCell({ model }: { model?: ModelCard }) {
-  if (!model) {
-    return <div className="cover-checker aspect-square rounded-sm" />;
-  }
-  return (
-    <div className="aspect-square overflow-hidden rounded-sm">
-      <CoverMedia model={model} label={`${model.title} cover`} />
-    </div>
-  );
-}
 
 export function CreatorListItem({
   creator,
@@ -25,8 +15,7 @@ export function CreatorListItem({
   selected?: boolean;
   to: string;
 }) {
-  const cells = [0, 1, 2, 3].map((index) => covers[index]);
-  const count = creator.model_count ?? covers.length;
+  const count = modelCountOf(creator, covers);
 
   return (
     <Link
@@ -38,16 +27,10 @@ export function CreatorListItem({
           : "border-transparent bg-ink-900/60 hover:border-white/10 hover:bg-ink-900"
       }`}
     >
-      <div className="grid h-12 w-12 shrink-0 grid-cols-2 gap-0.5 overflow-hidden rounded-md bg-ink-800">
-        {cells.map((model, index) => (
-          <MosaicCell key={model?.id ?? index} model={model} />
-        ))}
-      </div>
+      <CoverMosaic covers={covers} className="h-12 w-12 shrink-0 rounded-md" />
       <div className="min-w-0 flex-1">
         <p className="truncate font-medium text-white">{creator.name}</p>
-        <p className="text-xs text-slate-500">
-          {count} model{count === 1 ? "" : "s"}
-        </p>
+        <p className="text-xs text-slate-500">{modelCountLabel(count)}</p>
       </div>
       <IconChevronRight className="h-4 w-4 shrink-0 text-slate-600" />
     </Link>
