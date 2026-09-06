@@ -75,7 +75,7 @@ Background jobs:
 
 - `IncrementalScanJob` — incremental NFS walk (or one folder prefix after an upload/curation apply); honors `VIBE_SCAN_*` budgets and re-enqueues when budgeted
 - `ScheduledScanJob` — sidekiq-cron entry that queues a scan for every library (default every 6 hours)
-- `IndexVibeModelJob` / `RemoveVibeModelIndexJob` / `ReindexSearchJob` — keep Meilisearch in sync after scan upserts, upload, destroy, curation apply, cover write-back, and creator assign
+- `BulkIndexVibeModelsJob` / `IndexVibeModelJob` / `RemoveVibeModelIndexJob` / `ReindexSearchJob` — keep Meilisearch in sync after scan upserts, upload, destroy, curation apply, cover write-back, and creator assign. `SearchIndex.enqueue` debounces unique `model_id`s (default 2s) and flushes a bulk upsert so a cover/scan burst cannot enqueue one `IndexVibeModelJob` per card
 - `DerivePreviewJob` — copies hot image members out of an archive into a preview cache (mesh rasterization is still a stub)
 - `FetchCurationProposalsJob` — polls the curator sidecar (or in-process stub), upserts pending `CurationProposal` rows by stable `sidecar_ref`, and writes per-library `last_polled_at` / `last_provider` / `last_error`
 - `ApplyCurationProposalJob` — applies an approved rename/move/merge (tags apply in-request)
@@ -131,7 +131,7 @@ Default owner (override with `VIBE_OWNER_EMAIL` / `VIBE_OWNER_PASSWORD`):
 
 Open the web app, sign in, scroll the gallery, type `hero` (Packed Minis via the member path), open **Packed Minis**, expand `minis.zip`, search within the archive, and load `hero.stl` or `preview/hero.png`. Meshes never auto-load.
 
-Search indexes title, folder path, tags, asset filenames/paths, archive-member paths, uploader, creator name/slug, `updated_at`, `has_preview` (mesh or previewable archive member), `cover_status`, and `has_cover` (`cover_status=ready`). Meilisearch facets/filters `creator_slug` (alias `creator`), `tags`, `cover_status`, and `has_cover` — the same chips the gallery uses (creator / tag / cover). `VibeModel` `after_commit` plus explicit scan/curation hooks reindex after scan upserts, curation apply, cover write-back, and creator assign.
+Search indexes title, folder path, tags, asset filenames/paths, archive-member paths, uploader, creator name/slug, `updated_at`, `has_preview` (mesh or previewable archive member), `cover_status`, and `has_cover` (`cover_status=ready`). Meilisearch facets/filters `creator_slug` (alias `creator`), `tags`, `cover_status`, and `has_cover` — the same chips the gallery uses (creator / tag / cover). `VibeModel` `after_commit` plus explicit scan/curation/cover hooks enqueue a **debounced bulk** reindex (`BulkIndexVibeModelsJob`) after scan upserts, curation apply, cover write-back (ready/failed), and creator assign. Unique `model_id`s share one flush (`VIBE_SEARCH_INDEX_DEBOUNCE`, default 2s; batches of `VIBE_SEARCH_INDEX_BATCH`, default 100) so Sidekiq and Meili stay calm under a NAS-scale cover or scan spike.
 
 If Meilisearch is unreachable or `MEILI_URL` is unset, `GET /api/v1/search` answers from Postgres and sets `fallback: true` (or `engine: "postgres"` / `fallback: false` when Meili was never configured). The fallback applies the same chip filters on indexed columns (`creator_id`, `cover_status`, tags). Text `q` uses staged `ILIKE` (title / folder / synopsis, then creator, uploader, tags, then a **capped** asset and archive-member scan) so a NAS-scale `archive_members` join cannot melt the catalog. When `pg_trgm` is present (enabled by migration, GIN `gin_trgm_ops` on those text columns), `ILIKE '%q%'` can use the indexes; when it is not, the same queries still run but stay LIMIT-capped. `estimated_total` for a text fallback is the capped candidate set (default `VIBE_SEARCH_FALLBACK_CAP=250`); `capped: true` means treat that total as a floor, not a full count. Filter-only requests (`q` blank) are not capped and paginate in SQL.
 
@@ -267,6 +267,9 @@ Environment variables (see `.env.example`):
 | `MEILI_MASTER_KEY` | Admin key used to create the index and write documents |
 | `MEILI_SEARCH_KEY` | Optional search-only key. When blank, search uses the master key |
 | `MEILI_TIMEOUT` | HTTP timeout in seconds for Meili calls (default 2). Failures fall back to Postgres |
+| `VIBE_SEARCH_INDEX_DEBOUNCE` | Seconds to coalesce unique `model_id`s before `BulkIndexVibeModelsJob` (default 2, clamp 0–30). Cover `has_cover` / `cover_status` facets catch up in this window |
+| `VIBE_SEARCH_INDEX_BATCH` | Models per Meili upsert in a bulk flush or full reindex (default 100, clamp 1–500) |
+| `VIBE_SEARCH_HEALTH_TTL` | Seconds to reuse the last cheap Meili `/health` probe for ops (default 3, clamp 0–15). Not index-task lag |
 | `VIBE_SEARCH_FALLBACK_CAP` | Max model ids the Postgres `ILIKE` fallback will collect for a text `q` (default 250, clamp 1–1000). Chip-only filters are not capped |
 | `VIBE_SEARCH_FALLBACK_JOIN_SCAN` | Max asset / archive-member rows scanned per source during fallback text search (default 500, clamp 50–2000) |
 | `VIBE_ARCHIVE_MEMBER_LIMIT` | Max file members indexed per archive (default 10_000). Parents are still synthesized. Excess sets `archive_truncated` |
@@ -549,6 +552,8 @@ Facets (`tags`, `creator_slug`, `cover_status`, `has_cover`) drive the Creators 
 
 When Meili is down the search payload is `engine: "postgres"`, `fallback: true`. If `capped: true`, `estimated_total` is a floor.
 
+**Search / cover freshness (Frontend bind).** `GET /models` is Postgres and is correct as soon as cover write-back or creator assign commits. `GET /search` facets (`has_cover`, `cover_status`, `creator_slug`, `tags`) come from Meili and catch up through that debounced bulk reindex — do **not** fire a reindex from the SPA, and do **not** treat a couple of seconds of facet lag after a cover lands as a bug. Scan upserts, curation apply, cover write-back (`ready` / `failed`), and creator assign all share the same unique-`model_id` buffer. `VIBE_SEARCH_FALLBACK_CAP` stays the hard cap for text `q` when Meili is down (`capped: true` is a floor). Chip-only `/search` and `/models` are not capped.
+
 ## Tests
 
 ```bash
@@ -743,6 +748,8 @@ Calm copy suggestions: idle → hidden or “Ready”; running/queued → “Sca
 | Covers | `pending` / `failed` / `missing` | quiet unless `failed > 0`; `pending` is work-in-progress, not an outage |
 | Geometry | `assets_missing` + `archive_members_missing` (mesh `stl`/`obj`/`3mf` with a blank digest) | backlog count; not a red error |
 | Meili | `up` \| `down` \| `unset` + `last_error` | `unset` = Postgres fallback (dev/CI); `down` = search still works via `ILIKE` |
+
+`meili.status` is a cheap `GET /health` probe with a short in-process TTL (`VIBE_SEARCH_HEALTH_TTL`, default 3s) so a busy ops strip cannot melt Meili. It is **not** index-task lag and **not** a catalog/NFS walk. A cached `down` is still `down` — do not invent a “degraded / indexing” chip from this field. Poll `/ops` on an interval; do not hit `/health` yourself.
 
 Cover and geometry numbers are `COUNT(*)` / `GROUP BY` only. Do not call Analyze or Scan from the chip refresh. Poll `/ops` on an interval (or after Scan now / Refresh proposals) — a few seconds is enough.
 

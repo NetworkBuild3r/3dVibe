@@ -99,6 +99,11 @@ class LibrariesOpsTest < ActionDispatch::IntegrationTest
     assert meili["last_error"].present?
     assert_equal before, @library.vibe_models.count
     assert_equal 1, response.parsed_body.dig("ops", "geometry", "assets_missing")
+
+    get "/api/v1/libraries/#{@library.id}/ops", headers: auth_header(@owner)
+    assert_response :success
+    assert_equal "down", response.parsed_body.dig("ops", "meili", "status")
+    assert response.parsed_body.dig("ops", "meili", "last_error").present?
   ensure
     ENV.delete("MEILI_URL")
   end

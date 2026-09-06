@@ -95,6 +95,7 @@ class JobsTest < ActiveJob::TestCase
 
     assert_nothing_raised do
       IndexVibeModelJob.perform_now(model.id)
+      BulkIndexVibeModelsJob.perform_now([model.id])
       RemoveVibeModelIndexJob.perform_now(model.id)
       ReindexSearchJob.perform_now(library.id)
     end
