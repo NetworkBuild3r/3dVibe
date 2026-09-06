@@ -1,6 +1,14 @@
 class VibeModel < ApplicationRecord
+  COVER_MISSING = "missing"
+  COVER_PENDING = "pending"
+  COVER_READY = "ready"
+  COVER_FAILED = "failed"
+  COVER_STATUSES = [COVER_MISSING, COVER_PENDING, COVER_READY, COVER_FAILED].freeze
+  CARD_INCLUDES = [:tags, :library, :uploaded_by, :creator, :assets].freeze
+
   belongs_to :library
   belongs_to :uploaded_by, class_name: "User", optional: true
+  belongs_to :creator, optional: true
 
   has_many :assets, dependent: :destroy
   has_many :archive_members, through: :assets
@@ -13,8 +21,10 @@ class VibeModel < ApplicationRecord
 
   validates :folder_name, presence: true, uniqueness: { scope: :library_id }
   validates :title, presence: true
+  validates :cover_status, inclusion: { in: COVER_STATUSES }
 
   scope :recent, -> { order(updated_at: :desc, id: :desc) }
+  scope :for_cards, -> { includes(*CARD_INCLUDES) }
 
   after_commit :enqueue_search_index, on: %i[create update]
   after_commit :enqueue_search_removal, on: :destroy
@@ -46,7 +56,11 @@ class VibeModel < ApplicationRecord
       tags: tags.map(&:name),
       updated_at: updated_at,
       uploaded_by: uploaded_by && { id: uploaded_by.id, display_name: uploaded_by.display_name },
-      has_preview: previewable?
+      has_preview: previewable?,
+      creator: creator&.as_card,
+      cover_status: cover_status,
+      cover_url: cover_url,
+      cover_placeholder: cover_placeholder
     }
   end
 

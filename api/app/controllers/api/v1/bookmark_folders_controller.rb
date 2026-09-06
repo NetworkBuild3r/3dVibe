@@ -7,7 +7,7 @@ module API
       end
 
       def show
-        folder = current_user.bookmark_folders.includes(vibe_models: %i[tags library uploaded_by assets]).find(params[:id])
+        folder = current_user.bookmark_folders.includes(vibe_models: VibeModel::CARD_INCLUDES).find(params[:id])
         payload = folder.as_api(include_models: false).merge(
           models: VibeModel.card_payloads(folder.vibe_models, viewer: current_user)
         )

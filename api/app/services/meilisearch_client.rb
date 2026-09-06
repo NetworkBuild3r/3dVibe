@@ -100,8 +100,8 @@ class MeilisearchClient
 
   def index_settings
     {
-      searchableAttributes: %w[name title folder_name path synopsis tags filenames asset_paths archive_paths uploader],
-      filterableAttributes: %w[tags has_preview library_id uploaded_by_id kinds],
+      searchableAttributes: %w[name title folder_name path synopsis tags filenames asset_paths archive_paths uploader creator_name creator_slug],
+      filterableAttributes: %w[tags has_preview library_id uploaded_by_id kinds creator_slug cover_status],
       sortableAttributes: %w[updated_at],
       displayedAttributes: %w[id]
     }

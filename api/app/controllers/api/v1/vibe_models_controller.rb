@@ -2,7 +2,7 @@ module API
   module V1
     class VibeModelsController < ApplicationController
       def index
-        scope = accessible_models.includes(:tags, :library, :uploaded_by, :assets).recent
+        scope = accessible_models.for_cards.recent
         scope = scope.where(library_id: params[:library_id]) if params[:library_id].present?
         limit = [[params.fetch(:limit, 24).to_i, 1].max, 60].min
 
@@ -27,7 +27,7 @@ module API
       end
 
       def show
-        model = accessible_models.includes(:tags, :uploaded_by, assets: %i[archive_members uploaded_by]).find(params[:id])
+        model = accessible_models.includes(:tags, :uploaded_by, :creator, assets: %i[archive_members uploaded_by]).find(params[:id])
         render json: { model: detail_payload(model) }
       end
 
@@ -54,7 +54,7 @@ module API
           title: params[:title],
           folder_name: params[:folder_name]
         )
-        target = accessible_models.includes(:tags, :uploaded_by, assets: %i[archive_members uploaded_by])
+        target = accessible_models.includes(:tags, :uploaded_by, :creator, assets: %i[archive_members uploaded_by])
                                  .find(record.target_vibe_model_id)
         render json: { merge: record.as_api, model: detail_payload(target) }, status: :created
       end
@@ -102,7 +102,7 @@ module API
 
       def restored_models(record)
         names = Array(record.result["restored"]).filter_map { |part| part["folder_name"] }
-        record.library.vibe_models.where(folder_name: names).includes(:tags, :library, :uploaded_by, :assets)
+        record.library.vibe_models.where(folder_name: names).for_cards
       end
     end
   end

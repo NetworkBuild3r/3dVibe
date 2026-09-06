@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_09_06_050000) do
+ActiveRecord::Schema[8.0].define(version: 2026_09_06_140000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -85,6 +85,16 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_06_050000) do
     t.index ["user_id", "vibe_model_id"], name: "index_bookmarks_on_user_id_and_vibe_model_id"
     t.index ["user_id"], name: "index_bookmarks_on_user_id"
     t.index ["vibe_model_id"], name: "index_bookmarks_on_vibe_model_id"
+  end
+
+  create_table "creators", force: :cascade do |t|
+    t.string "slug", null: false
+    t.string "name", null: false
+    t.string "source"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["name"], name: "index_creators_on_name"
+    t.index ["slug"], name: "index_creators_on_slug", unique: true
   end
 
   create_table "curation_proposals", force: :cascade do |t|
@@ -312,6 +322,15 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_06_050000) do
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.bigint "uploaded_by_id"
+    t.bigint "creator_id"
+    t.string "cover_status", default: "missing", null: false
+    t.string "cover_url"
+    t.boolean "cover_placeholder", default: true, null: false
+    t.string "cover_cache_key"
+    t.bigint "cover_asset_id"
+    t.index ["cover_cache_key"], name: "index_vibe_models_on_cover_cache_key"
+    t.index ["cover_status"], name: "index_vibe_models_on_cover_status"
+    t.index ["creator_id"], name: "index_vibe_models_on_creator_id"
     t.index ["library_id", "folder_name"], name: "index_vibe_models_on_library_id_and_folder_name", unique: true
     t.index ["library_id", "updated_at", "id"], name: "index_vibe_models_on_library_id_and_updated_at_and_id"
     t.index ["library_id"], name: "index_vibe_models_on_library_id"
@@ -349,6 +368,7 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_06_050000) do
   add_foreign_key "scan_runs", "libraries"
   add_foreign_key "scan_runs", "users", column: "triggered_by_id"
   add_foreign_key "tag_assignments", "tags"
+  add_foreign_key "vibe_models", "creators"
   add_foreign_key "vibe_models", "libraries"
   add_foreign_key "vibe_models", "users", column: "uploaded_by_id"
 end

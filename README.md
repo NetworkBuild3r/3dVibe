@@ -34,6 +34,8 @@ Storage is the owner's NFS mount. There is one library pile.
 - Personal likes and bookmark folders (organize the shared catalog; they never hide models)
 - Path-jailed model merge/split (move archives/STLs on disk, never load them into RAM)
 - Duplicate review (content hash + filename/size heuristics)
+- Creator-first catalog: scan upserts `Creator` from the first-level folder / pack-style prefixes (`Creator - Title`, known packs). Shared labels only — no private shelves
+- Budgeted covers: scan enqueues `GenerateCoverJob` (pending); Rendering generates and writes back `ready`/`failed` + `cover_url`
 
 ## Architecture
 
@@ -63,6 +65,7 @@ Domain objects (original names):
 | `Printer` | Owner-managed registry entry (name, host/IP, protocol, enabled) |
 | `PrintDispatch` | Print job private to the requester: queued → sending → printing → succeeded/failed/cancelled |
 | `Like` / `BookmarkFolder` / `Bookmark` | Personal catalog organization (not visibility) |
+| `Creator` | Shared label derived from a first-level folder or pack-style prefix (`nfs_hint`). Not a shelf and not per-user |
 | `ModelMerge` | Recorded merge so a split can restore first-level folders |
 
 Background jobs:
@@ -76,6 +79,8 @@ Background jobs:
 - `DispatchPrintJob` — path-jails a library file and sends it through a printer adapter (mock simulates progress)
 - `ModelComposer` — merge/split first-level folders and selected files inside the path jail
 - `DuplicateFinder` — groups assets by SHA-256 and filename+size (streams hashes; does not slurp archives)
+- `GenerateCoverJob` — enqueue-only stub. Payload is the locked cover contract; Rendering owns generate and calls the write-back hook
+- `CoverEnqueue` / `CoverWriteback` — scan sets `cover_status=pending`; write-back sets `ready`/`failed` + `cover_url`
 
 The curation sidecar is `CurationSidecar`. In development/test a blank or `stub` URL generates deterministic fixture proposals. A compose profile runs the same contract as HTTP.
 
@@ -119,7 +124,7 @@ Default owner (override with `VIBE_OWNER_EMAIL` / `VIBE_OWNER_PASSWORD`):
 
 Open the web app, sign in, scroll the gallery, type `hero` (Packed Minis via the member path), open **Packed Minis**, expand `minis.zip`, search within the archive, and load `hero.stl` or `preview/hero.png`. Meshes never auto-load.
 
-Search indexes title, folder path, tags, asset filenames/paths, archive-member paths, uploader, `updated_at`, and `has_preview` (mesh or previewable archive member). If Meilisearch is unreachable, `GET /api/v1/search` answers from Postgres and sets `fallback: true`.
+Search indexes title, folder path, tags, asset filenames/paths, archive-member paths, uploader, creator name/slug, `updated_at`, and `has_preview` (mesh or previewable archive member). Meilisearch facets/filters `creator_slug` (and still `tags` / `has_preview`). If Meilisearch is unreachable, `GET /api/v1/search` answers from Postgres `ILIKE` (including creator name/slug) and sets `fallback: true`.
 
 ### Print from browser (mock printer)
 
@@ -260,6 +265,9 @@ Owner API `GET /api/v1/libraries` (and show) includes the latest `scan` object. 
 | `VIBE_SCAN_DEEP_INTERVAL` | Seconds between deep walks of an unchanged folder identity (default 21600) |
 | `VIBE_SCAN_TRUST_DIR_MTIME` | Skip deep walk when dir identity is fresh (default 1) |
 | `VIBE_SCAN_ALLOW_EMPTY_PRUNE` | Allow wiping the catalog when the mount lists no folders (default 0) |
+| `VIBE_COVER_TOKEN` | Shared token for `POST /api/v1/covers/writeback` (`X-Cover-Token` or Bearer). Signed-in users can also write back |
+| `VIBE_COVER_MAX_PX` | Cover generate budget, pixels (default 512). Passed through on the enqueue payload |
+| `VIBE_COVER_MAX_BYTES` | Cover generate budget, bytes (default 250000). Passed through on the enqueue payload |
 
 ### Archive visibility
 
@@ -276,6 +284,57 @@ The indexer never extracts an archive to disk. A huge listing stops at `VIBE_ARC
 
 Search (Meilisearch `archive_paths` and Postgres `ILIKE`) includes file member paths, so `hero` still hits Packed Minis. Directory rows and placeholders are excluded from the search document.
 
+### Creators and budgeted covers
+
+**Creators** are shared labels, not shelves. Scan upserts a `Creator` from the first-level folder name, or from a pack-style prefix (`Creator - Title`, known packs such as Mz4250 / Printable Scenery). `vibe_models.creator_id` is nullable. The heuristic never creates bookmark folders, per-user piles, or federation.
+
+**Covers.** Backend owns enqueue + index fields. Rendering owns generate.
+
+On scan, when a cover-candidate asset appears (image named cover/preview/thumb/hero, else any image, else a loose mesh) or the model is missing a cover, `CoverEnqueue` sets `cover_status=pending` and enqueues `GenerateCoverJob` with this payload (Sidekiq job args — one JSON object):
+
+```json
+{
+  "library_id": 1,
+  "model_id": 42,
+  "asset_id": 99,
+  "jailed_path": "CreatorPack/model/preview.png",
+  "mtime": 1710000000,
+  "content_hash": "sha256:…",
+  "budget": { "max_px": 512, "max_bytes": 250000 }
+}
+```
+
+`jailed_path` is jail-relative from the library root. Resolve it with `LibraryPathJail#resolve_jailed` (never load the whole file or archive into RAM). Cache key is `asset_id + mtime + content_hash` (`cover_cache_key` on the model). The same key is not re-enqueued while `pending` or `ready`.
+
+Model card / index fields:
+
+| Field | Values |
+| --- | --- |
+| `creator` | `{ id, slug, name }` or `null` |
+| `cover_status` | `missing` \| `pending` \| `ready` \| `failed` |
+| `cover_url` | nullable |
+| `cover_placeholder` | bool (`true` until a real cover is written back) |
+
+**Rendering write-back** (also `CoverWriteback.apply!` in-process):
+
+```
+POST /api/v1/covers/writeback
+X-Cover-Token: $VIBE_COVER_TOKEN
+```
+
+```json
+{
+  "model_id": 42,
+  "asset_id": 99,
+  "status": "ready",
+  "cover_url": "/covers/42.webp",
+  "cover_placeholder": false,
+  "cache_key": "99:1710000000:sha256:…"
+}
+```
+
+`status` must be `ready` or `failed`. `cover_url` is required when `ready`. Signed-in users can call the same endpoint (useful in tests). `GenerateCoverJob` is a stub that only logs — replace/implement generate on the Rendering worker, then call write-back.
+
 ## API (JSON)
 
 All endpoints except `POST /api/v1/session`, invite preview/redeem, and `GET /up` require `Authorization: Bearer <token>`.
@@ -284,7 +343,9 @@ All endpoints except `POST /api/v1/session`, invite preview/redeem, and `GET /up
 - `GET /api/v1/me`
 - `GET /api/v1/libraries` · `GET /api/v1/libraries/:id` (owner payload includes `scan`, `scan_settings`, `cursors`)
 - `POST /api/v1/libraries/:id/scan` `{ path_prefix? }` owner-only; `202` + latest scan status
-- `GET /api/v1/models?cursor=&limit=` (cursor pagination; no owner ACL filter; includes `liked`, `like_count`, `bookmark_folder_ids`)
+- `GET /api/v1/creators` (`id`, `slug`, `name`, `source`, `model_count`)
+- `GET /api/v1/creators/:id` or `GET /api/v1/creators/:slug` (paginated models; `cursor` / `limit` like the catalog)
+- `GET /api/v1/models?cursor=&limit=` (cursor pagination; no owner ACL filter; includes `liked`, `like_count`, `bookmark_folder_ids`, nullable `creator: { id, slug, name }`, `cover_status`, `cover_url`, `cover_placeholder`)
 - `GET /api/v1/models/:id`
 - `POST /api/v1/models/:id/like` · `DELETE /api/v1/models/:id/like`
 - `POST /api/v1/models/merge` `{ library_id, source_ids?|asset_ids?, target_id?|title? }` (owner/contributor)
@@ -299,7 +360,8 @@ All endpoints except `POST /api/v1/session`, invite preview/redeem, and `GET /up
 - `GET /api/v1/archive_members/:id/content` (stream one member; `?download=1` for attachment)
 - `GET /api/v1/assets/:id/content` (lazy mesh / file stream)
 - `GET /api/v1/archive_members/:id/preview` (derived thumb or inline image; mesh returns `use_content`)
-- `GET /api/v1/search?q=&tag=&tags[]=&has_preview=&library_id=&uploaded_by_id=&offset=&limit=` (Meilisearch when configured; Postgres `ILIKE` fallback)
+- `GET /api/v1/search?q=&tag=&tags[]=&has_preview=&library_id=&uploaded_by_id=&creator_slug=&offset=&limit=` (Meilisearch when configured; Postgres `ILIKE` fallback; facet/filter `creator_slug`)
+- `POST /api/v1/covers/writeback` `{ model_id, status: "ready"|"failed", cover_url?, cover_placeholder?, asset_id?, cache_key? }` (Rendering worker; `X-Cover-Token: $VIBE_COVER_TOKEN` or Bearer user)
 - `GET /api/v1/curation_proposals?status=`
 - `POST /api/v1/curation_proposals` `{ library_id, curation_proposal: { kind, summary, payload, sidecar_ref? } }`
 - `POST /api/v1/curation_proposals/fetch` `{ library_id }` (owner/contributor; polls sidecar)

@@ -46,6 +46,15 @@ class LibraryPathJail
     dir
   end
 
+  # Jail-relative path from the library root, e.g. "CreatorPack/model/preview.png".
+  def resolve_jailed(jailed_path)
+    parts = segments(jailed_path)
+    raise ArgumentError, "empty path" if parts.empty?
+    raise ArgumentError, "jailed path must include a file under a model folder" if parts.size < 2
+
+    resolve_file(parts.first, parts[1..].join("/"))
+  end
+
   # Resolve a regular file under the library root. Used by the print bridge so
   # workers never read a path the browser (or a stale Asset row) pointed outside.
   def resolve_file(folder_name, relative_path)

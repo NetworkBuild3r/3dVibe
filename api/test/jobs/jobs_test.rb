@@ -35,6 +35,15 @@ class JobsTest < ActiveJob::TestCase
 
     assert_nothing_raised do
       DerivePreviewJob.perform_now(asset.id)
+      GenerateCoverJob.perform_now(
+        "library_id" => library.id,
+        "model_id" => model.id,
+        "asset_id" => asset.id,
+        "jailed_path" => "x/a.stl",
+        "mtime" => 0,
+        "content_hash" => nil,
+        "budget" => { "max_px" => 512, "max_bytes" => 250_000 }
+      )
       ApplyCurationProposalJob.perform_now(pending.id)
       ApplyCurationProposalJob.perform_now(approved.id)
     end

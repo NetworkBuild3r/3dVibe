@@ -24,6 +24,15 @@ class LibraryPathJailTest < ActiveSupport::TestCase
     assert_raises(ArgumentError) { @jail.normalize_relative(".vibe-incoming/x") }
   end
 
+  test "resolve_jailed accepts a jail-relative file path" do
+    FileUtils.mkdir_p(@root.join("CreatorPack/model"))
+    File.write(@root.join("CreatorPack/model/preview.png"), "png")
+    path = @jail.resolve_jailed("CreatorPack/model/preview.png")
+    assert_equal @root.join("CreatorPack/model/preview.png").realpath.to_s, path.to_s
+    assert_raises(ArgumentError) { @jail.resolve_jailed("CreatorPack") }
+    assert_raises(ArgumentError) { @jail.resolve_jailed("../etc/passwd") }
+  end
+
   test "resolve_file requires a regular file inside the root" do
     FileUtils.mkdir_p(@root.join("signal-horn"))
     File.write(@root.join("signal-horn/horn.stl"), "solid x\n")

@@ -19,6 +19,6 @@ class BookmarkFolder < ApplicationRecord
     }
     return payload unless include_models
 
-    payload.merge(models: vibe_models.includes(:tags, :library, :uploaded_by, :assets).map { |model| model.as_card })
+    payload.merge(models: vibe_models.for_cards.map { |model| model.as_card })
   end
 end
