@@ -38,7 +38,9 @@ class LibraryScannerTest < ActiveSupport::TestCase
     assert archive.archive?
     names = archive.archive_members.pluck(:internal_path)
     assert_includes names, "hero.stl"
+    assert_includes names, "extras/"
     assert_includes names, "extras/readme.txt"
+    assert_equal "full", archive.reload.archive_support
     assert @library.scan_cursors.exists?(path_prefix: "cube-gauge")
   end
 

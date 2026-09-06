@@ -1,1 +1,1 @@
-A zip kit with two printable members and a note.
+A zip kit with printable members, a nested folder, and a preview still.

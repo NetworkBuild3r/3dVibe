@@ -60,7 +60,7 @@ class SearchIndex
 
   def document_for(model)
     assets = model.assets.to_a
-    members = assets.flat_map(&:archive_members)
+    members = assets.flat_map(&:archive_members).reject { |member| member.directory? || member.placeholder? }
     {
       id: model.id,
       name: model.title,

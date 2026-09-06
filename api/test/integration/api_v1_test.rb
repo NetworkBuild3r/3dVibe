@@ -65,6 +65,15 @@ class APIV1Test < ActionDispatch::IntegrationTest
 
     get "/api/v1/models/#{model.id}/archive_members", headers: headers
     assert_response :success
+    tree = response.parsed_body
+    assert_equal "tree", tree["view"]
+    tree_paths = tree.fetch("members").map { |member| member["internal_path"] }
+    assert_includes tree_paths, "lid.stl"
+    assert_includes tree_paths, "docs/"
+    refute_includes tree_paths, "docs/info.txt"
+
+    get "/api/v1/models/#{model.id}/archive_members", params: { view: "flat" }, headers: headers
+    assert_response :success
     paths = response.parsed_body.fetch("members").map { |member| member["internal_path"] }
     assert_includes paths, "lid.stl"
     assert_includes paths, "docs/info.txt"

@@ -89,16 +89,29 @@ EXTRA.each do |name|
   write_folder(name, "Sample fixture folder #{name.tr('-', ' ')}.", "#{name.split('-').first}.stl")
 end
 
+# 32x32 teal PNG so archive image preview is visible in the viewer.
+PNG_TEAL = ["89504e470d0a1a0a0000000d4948445200000020000000200802000000fc18eda30000002b4944415478da63d0bdb29fa68861d482510b462d18b560d482510b462d18b560d482510b462d182a16000040b0006a82d8eda00000000049454e44ae426082"].pack("H*")
+
 pack = ROOT.join("packed-minis")
 FileUtils.mkdir_p(pack)
-File.write(pack.join("readme.txt"), "A zip kit with two printable members and a note.")
+File.write(pack.join("readme.txt"), "A zip kit with printable members, a nested folder, and a preview still.")
 write_zip(
   pack.join("minis.zip"),
   [
     ["hero.stl", STL],
     ["sidekick.stl", STL],
-    ["extras/readme.txt", "Packed kit members for archive-tree tests."]
+    ["preview/hero.png", PNG_TEAL],
+    ["extras/readme.txt", "Packed kit members for archive-tree tests."],
+    ["extras/nested/note.txt", "Deeper folder for lazy tree children."]
   ]
 )
+write_zip(
+  pack.join("kit.3mf"),
+  [
+    ["[Content_Types].xml", "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"></Types>\n"],
+    ["3D/3dmodel.model", "<model>packed-minis fixture</model>\n"]
+  ]
+)
+File.binwrite(pack.join("notes.7z"), "not a real 7z; listing is best-effort when 7z is installed\n")
 
 puts "Wrote #{ROOT.children.count} fixture folders into #{ROOT}"

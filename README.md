@@ -25,7 +25,7 @@ Storage is the owner's NFS mount. There is one library pile.
 - Owner invite links (optional email, role, expiry) plus a redeem/signup page
 - Chunked, resumable uploads (1 MB patches, TUS-style offset) path-jailed to the library root
 - Incremental folder scanning with mtime/size/path-prefix cursors; uploads enqueue a targeted rescan
-- First-class archive visibility for zip/3mf
+- Deep archive visibility: nested zip/3mf tree, single-member streaming, image thumbs, lazy mesh members
 - Token auth
 - HITL AI curation: sidecar contract, stub curator, ingest, review queue, path-jailed apply
 - Meilisearch-backed faceted search with a Postgres `ILIKE` fallback when Meili is down or unset
@@ -50,7 +50,7 @@ Domain objects (original names):
 | `Library` | Root path on disk (your NFS mount) |
 | `VibeModel` | One folder under that root |
 | `Asset` | An on-disk file, with a content digest when the file is small enough |
-| `ArchiveMember` | An indexed entry inside a zip/3mf (7z/rar listing is deferred) |
+| `ArchiveMember` | An indexed entry inside a zip/3mf (7z/rar listing is best-effort) |
 | `Tag` / `TagAssignment` | Lightweight joins for search and display |
 | `User` / `Membership` / `Invite` | Owner, contributor, or viewer |
 | `LibraryUpload` | Resumable upload session that lands inside the library jail |
@@ -63,7 +63,7 @@ Background jobs:
 
 - `IncrementalScanJob` — walks a library (or one folder prefix after an upload) and updates stale folders
 - `IndexVibeModelJob` / `RemoveVibeModelIndexJob` / `ReindexSearchJob` — keep Meilisearch in sync after scan, upload, destroy, and curation apply
-- `DerivePreviewJob` — stub for stills / decimated meshes
+- `DerivePreviewJob` — copies hot image members out of an archive into a preview cache (mesh rasterization is still a stub)
 - `FetchCurationProposalsJob` — polls the curator sidecar (or in-process stub) and upserts pending `CurationProposal` rows
 - `ApplyCurationProposalJob` — applies an approved rename/move/merge (tags apply in-request)
 - `DispatchPrintJob` — path-jails a library file and sends it through a printer adapter (mock simulates progress)
@@ -107,7 +107,7 @@ Default owner (override with `VIBE_OWNER_EMAIL` / `VIBE_OWNER_PASSWORD`):
 - email: `owner@3dvibe.local`
 - password: `vibe-dev-password`
 
-Open the web app, sign in, scroll the gallery, type in the search box (debounced, faceted), open **Packed Minis**, and expand archive members.
+Open the web app, sign in, scroll the gallery, type `hero` (Packed Minis via the member path), open **Packed Minis**, expand `minis.zip`, search within the archive, and load `hero.stl` or `preview/hero.png`. Meshes never auto-load.
 
 Search indexes title, folder path, tags, asset filenames/paths, archive-member paths, uploader, `updated_at`, and `has_preview` (mesh or previewable archive member). If Meilisearch is unreachable, `GET /api/v1/search` answers from Postgres and sets `fallback: true`.
 
@@ -196,8 +196,29 @@ Environment variables (see `.env.example`):
 | `MEILI_MASTER_KEY` | Admin key used to create the index and write documents |
 | `MEILI_SEARCH_KEY` | Optional search-only key. When blank, search uses the master key |
 | `MEILI_TIMEOUT` | HTTP timeout in seconds for Meili calls (default 2). Failures fall back to Postgres |
+| `VIBE_ARCHIVE_MEMBER_LIMIT` | Max file members indexed per archive (default 10_000). Parents are still synthesized. Excess sets `archive_truncated` |
+| `VIBE_ARCHIVE_STREAM_BYTES` | Cap for a single member stream (default 32 MiB). The whole zip is never loaded into RAM |
+| `VIBE_ARCHIVE_PREVIEW_BYTES` | Cap for derived/inline image previews (default 4 MiB) |
+| `VIBE_ARCHIVE_LIST_TIMEOUT` | Timeout for `7z l` (default 15s) |
+| `VIBE_PREVIEW_ROOT` | Directory for derived archive thumbs (default `api/tmp/previews`) |
+| `VIBE_7Z_BIN` | Optional absolute path to `7z` / `7za` |
 
-Each first-level directory under the library root becomes a `VibeModel`. Hidden first-level folders (including `.vibe-incoming` used during uploads) are ignored. Files beneath a model folder become `Asset` rows. Zip/3mf files are opened only far enough to read the central directory and, on demand, a single member stream.
+Each first-level directory under the library root becomes a `VibeModel`. Hidden first-level folders (including `.vibe-incoming` used during uploads) are ignored. Files beneath a model folder become `Asset` rows.
+
+### Archive visibility
+
+`IncrementalScanJob` → `LibraryScanner` → `ArchiveIndexer`. Members are stored with `parent_path` so the API can return a folder page instead of a flat dump.
+
+| Format | Listing | Single-member stream | Notes |
+| --- | --- | --- | --- |
+| zip / 3mf | **Full** — central directory only | **Full** — 64 KiB copy into a tempfile, then `send_file` | Default path. Parent folders are synthesized when the zip omits directory entries. |
+| 7z / rar | **Best-effort** — `7z l -slt` when `7z` is on PATH | **Best-effort** — `7z e -so` of one path | Compose images install `p7zip-full`. Without the CLI, one `(listing pending)` placeholder is stored and the UI says so. |
+
+The indexer never extracts an archive to disk. A huge listing stops at `VIBE_ARCHIVE_MEMBER_LIMIT` and sets `assets.archive_truncated`. A single member larger than `VIBE_ARCHIVE_STREAM_BYTES` is refused.
+
+`DerivePreviewJob` copies up to 24 hot image members (shallow / names like preview, thumb, cover, hero) into `VIBE_PREVIEW_ROOT`. Mesh members stay lazy: the tree shows a Load action; Three.js only runs after a click.
+
+Search (Meilisearch `archive_paths` and Postgres `ILIKE`) includes file member paths, so `hero` still hits Packed Minis. Directory rows and placeholders are excluded from the search document.
 
 ## API (JSON)
 
@@ -208,9 +229,11 @@ All endpoints except `POST /api/v1/session`, invite preview/redeem, and `GET /up
 - `GET /api/v1/libraries` · `POST /api/v1/libraries/:id/scan`
 - `GET /api/v1/models?cursor=&limit=` (cursor pagination; no owner ACL filter)
 - `GET /api/v1/models/:id`
-- `GET /api/v1/models/:id/archive_members`
+- `GET /api/v1/models/:id/archive_members?asset_id=&prefix=&q=&view=tree|flat&limit=&offset=` (nested children by default; `q` searches paths; `view=flat` paginates every member)
+- `GET /api/v1/archive_members/:id` (size, path, content type, streamable)
+- `GET /api/v1/archive_members/:id/content` (stream one member; `?download=1` for attachment)
 - `GET /api/v1/assets/:id/content` (lazy mesh / file stream)
-- `GET /api/v1/archive_members/:id/preview`
+- `GET /api/v1/archive_members/:id/preview` (derived thumb or inline image; mesh returns `use_content`)
 - `GET /api/v1/search?q=&tag=&tags[]=&has_preview=&library_id=&uploaded_by_id=&offset=&limit=` (Meilisearch when configured; Postgres `ILIKE` fallback)
 - `GET /api/v1/curation_proposals?status=`
 - `POST /api/v1/curation_proposals` `{ library_id, curation_proposal: { kind, summary, payload, sidecar_ref? } }`

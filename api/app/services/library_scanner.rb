@@ -102,8 +102,16 @@ class LibraryScanner
     asset.content_digest = digest_if_small(path, stat.size) if changed
     asset.save!
 
-    ArchiveIndexer.new(asset).index! if asset.archive? && changed
-    DerivePreviewJob.perform_later(asset.id) if asset.mesh? && changed
+    if asset.archive? && (changed || asset.archive_members.none?)
+      begin
+        ArchiveIndexer.new(asset).index!
+        DerivePreviewJob.perform_later(asset.id)
+      rescue StandardError => e
+        Rails.logger.warn("[LibraryScanner] archive index failed asset=#{asset.id}: #{e.class}: #{e.message}")
+      end
+    elsif (asset.mesh? || asset.image?) && changed
+      DerivePreviewJob.perform_later(asset.id)
+    end
     asset
   end
 

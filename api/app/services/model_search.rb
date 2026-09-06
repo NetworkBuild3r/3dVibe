@@ -85,9 +85,14 @@ class ModelSearch
         OR users.display_name ILIKE :q
         OR assets.filename ILIKE :q
         OR assets.relative_path ILIKE :q
-        OR archive_members.internal_path ILIKE :q
+        OR (
+          archive_members.directory = FALSE
+          AND archive_members.internal_path <> :placeholder
+          AND archive_members.internal_path ILIKE :q
+        )
       SQL
-      q: pattern
+      q: pattern,
+      placeholder: ArchiveMember::PLACEHOLDER_PATH
     ).distinct
   end
 

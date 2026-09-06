@@ -6,10 +6,16 @@ class JobsTest < ActiveJob::TestCase
     root = Rails.root.join("tmp/job-lib-#{SecureRandom.hex(4)}")
     FileUtils.mkdir_p(root.join("only"))
     File.write(root.join("only/a.txt"), "x")
+    require "zip"
+    Zip::File.open(root.join("only/minis.zip"), Zip::File::CREATE) do |zip|
+      zip.get_output_stream("hero.stl") { |io| io.write("solid x\nendsolid x\n") }
+    end
     library = Library.create!(name: "Jobs", root_path: root.to_s)
 
     IncrementalScanJob.perform_now(library.id)
     assert_equal 1, library.vibe_models.count
+    archive = library.vibe_models.first.assets.find_by!(filename: "minis.zip")
+    assert_includes archive.archive_members.pluck(:internal_path), "hero.stl"
   ensure
     FileUtils.rm_rf(root)
   end
