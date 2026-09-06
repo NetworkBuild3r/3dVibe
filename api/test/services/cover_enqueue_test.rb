@@ -3,6 +3,7 @@ require "fileutils"
 
 class CoverEnqueueTest < ActiveJob::TestCase
   def setup
+    CoverPacer.reset!
     @root = Rails.root.join("tmp/cover-enq-#{SecureRandom.hex(4)}")
     FileUtils.mkdir_p(@root.join("CreatorPack/model"))
     File.binwrite(@root.join("CreatorPack/model/preview.png"), "png")
@@ -50,6 +51,8 @@ class CoverEnqueueTest < ActiveJob::TestCase
     assert_equal "sha256:abc123", payload["content_hash"]
     assert_equal 512, payload.dig("budget", "max_px")
     assert_equal 250_000, payload.dig("budget", "max_bytes")
+    assert_equal 32, payload.dig("budget", "lqip", "max_px")
+    assert_equal 2_048, payload.dig("budget", "lqip", "max_bytes")
   end
 
   test "same cache key does not re-enqueue while pending or ready" do
@@ -62,6 +65,7 @@ class CoverEnqueueTest < ActiveJob::TestCase
       "model_id" => @model.id,
       "status" => "ready",
       "cover_url" => "/covers/pack.webp",
+      "cover_lqip_url" => "/covers/pack.lqip.webp",
       "cover_placeholder" => false
     )
     assert_no_enqueued_jobs only: GenerateCoverJob do

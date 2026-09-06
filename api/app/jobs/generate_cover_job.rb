@@ -15,5 +15,6 @@ class GenerateCoverJob < ApplicationJob
 
   def fail_exhausted(error)
     CoverGenerator.new(arguments.first).fail!(error)
+    CoverPacer.nudge!
   end
 end

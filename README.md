@@ -35,7 +35,7 @@ Storage is the owner's NFS mount. There is one library pile.
 - Path-jailed model merge/split (move archives/STLs on disk, never load them into RAM)
 - Duplicate review: persisted groups (exact SHA-256, geometry digest, name+size), HITL keep/dismiss/merge. Archive-resident hits stay `merge_unsupported` until a human **Extract** (stream one member onto disk). Near-dups are never auto-deleted.
 - Creator-first catalog: scan upserts `Creator` from the first-level folder / pack-style prefixes (`Creator - Title`, known packs). Shared labels only — no private shelves
-- Budgeted covers: scan enqueues `GenerateCoverJob` (pending); the worker generates a libvips thumbnail and writes back `ready`/`failed` + `cover_url`
+- Budgeted covers: scan marks `pending` and `CoverPacer` admits `GenerateCoverJob` in batches; the worker writes a libvips webp plus a tiny LQIP and writes back `ready`/`failed` + `cover_url` / `cover_lqip_url`
 
 ## Architecture
 
@@ -87,8 +87,8 @@ Background jobs:
 - `ComputeArchiveMemberGeometryDigestJob` — path-jails the parent zip/7z/rar/3mf, streams **one** mesh member, computes the same `mesh:v1:` digest, writes `archive_members.geometry_digest`
 - `DuplicateFinder` / `DuplicateAnalyzer` — cluster by content hash (Asset only), geometry digest (Asset + ArchiveMember), then name+size (Asset); persist only; never delete NFS files
 - `GeometryWriteback` — Rendering sets `assets.geometry_digest` or `archive_members.geometry_digest` (`POST /api/v1/geometry/writeback` or `GeometryWriteback.apply!`)
-- `GenerateCoverJob` — path-jails the locked cover payload, generates a budgeted libvips webp (or fails for mesh-without-preview), writes back via `CoverWriteback.apply!`
-- `CoverEnqueue` / `CoverWriteback` — scan sets `cover_status=pending`; write-back sets `ready`/`failed` + `cover_url`
+- `GenerateCoverJob` — path-jails the locked cover payload, generates a budgeted libvips webp plus a tiny LQIP (or fails for mesh-without-preview), writes back via `CoverWriteback.apply!`
+- `CoverEnqueue` / `CoverPacer` / `CoverBacklogJob` / `CoverWriteback` — scan sets `cover_status=pending`; the pacer rate-limits / priority-batches Sidekiq so an enqueue storm cannot starve the API; write-back sets `ready`/`failed` + `cover_url` + `cover_lqip_url`
 
 The curation sidecar is `CurationSidecar`. In development/test a blank or `stub` URL generates deterministic fixture proposals. Compose profile `curator` runs the live HTTP sidecar (`stub` | `ollama` | `xai`) behind the same contract. HITL approve/apply stays in Rails.
 
@@ -282,7 +282,7 @@ Environment variables (see `.env.example`):
 | `VIBE_ARCHIVE_STREAM_SECONDS` | Wall-clock cap for one member stream (default 30). `0` = unlimited. Client abort also stops the read |
 | `VIBE_ARCHIVE_LIST_TIMEOUT` | Timeout for `7z l` (default 15s) |
 | `VIBE_PREVIEW_ROOT` | Directory for derived archive thumbs (default `api/tmp/previews`) |
-| `VIBE_COVER_ROOT` | Directory for generated cover webps (default `api/tmp/covers`). Served at `GET /covers/:id.webp` |
+| `VIBE_COVER_ROOT` | Directory for generated cover webps (default `api/tmp/covers`). Served at `GET /covers/:id.webp` and `GET /covers/:id.lqip.webp` |
 | `VIBE_7Z_BIN` | Optional absolute path to `7z` / `7za` |
 | `VIBE_SCAN_*` | Incremental NFS scan budgets, cron, deep-walk interval, and isolated Sidekiq queue/concurrency (see below) |
 
@@ -344,6 +344,11 @@ Owner/contributor **ops chips** use `GET /api/v1/libraries/:id/ops` or `GET /api
 | `VIBE_DUP_MAX_FILES` | Streamed hashes per analyze job (default 2000). `0` = unlimited |
 | `VIBE_COVER_MAX_PX` | Cover generate budget, pixels (default 512). Passed through on the enqueue payload |
 | `VIBE_COVER_MAX_BYTES` | Cover generate budget, bytes (default 250000). Passed through on the enqueue payload |
+| `VIBE_COVER_LQIP_MAX_PX` | LQIP / small-thumb budget, pixels (default 32). Clamped to `VIBE_COVER_MAX_PX` |
+| `VIBE_COVER_LQIP_MAX_BYTES` | LQIP / small-thumb budget, bytes (default 2048). Clamped to `VIBE_COVER_MAX_BYTES` |
+| `VIBE_COVER_QUEUE_MAX` | Max `GenerateCoverJob` rows allowed on `:covers` (default 40). `0` = unlimited |
+| `VIBE_COVER_BATCH` | Max cover jobs admitted per pace window / drain tick (default 20). `0` = unlimited |
+| `VIBE_COVER_PACE_SECONDS` | Drain tick delay and submit burst window (default 2). `0` = no delay |
 
 ### Archive visibility
 
@@ -379,9 +384,9 @@ Search (Meilisearch `archive_paths` and Postgres `ILIKE`) includes file member p
 
 **Creators** are shared labels, not shelves. Scan upserts a `Creator` from the first-level folder name, or from a pack-style prefix (`Creator - Title`, known packs such as Mz4250 / Printable Scenery). `vibe_models.creator_id` is nullable. The heuristic never creates bookmark folders, per-user piles, or federation.
 
-**Covers.** Scan owns enqueue + index fields. `GenerateCoverJob` generates and writes back.
+**Covers.** Scan owns enqueue + index fields. `GenerateCoverJob` generates and writes back. `CoverPacer` + `CoverBacklogJob` keep a NAS-scale pending→ready drain from cliffing the API.
 
-On scan, when a cover-candidate asset appears (image named cover/preview/thumb/hero, else any image, else a loose mesh) or the model is missing a cover, `CoverEnqueue` sets `cover_status=pending` and enqueues `GenerateCoverJob` with this payload (Sidekiq job args — one JSON object):
+On scan, when a cover-candidate asset appears (image named cover/preview/thumb/hero, else any image, else a loose mesh) or the model is missing a cover, `CoverEnqueue` sets `cover_status=pending` and asks `CoverPacer` to admit `GenerateCoverJob` with this payload (Sidekiq job args — one JSON object):
 
 ```json
 {
@@ -391,11 +396,13 @@ On scan, when a cover-candidate asset appears (image named cover/preview/thumb/h
   "jailed_path": "CreatorPack/model/preview.png",
   "mtime": 1710000000,
   "content_hash": "sha256:…",
-  "budget": { "max_px": 512, "max_bytes": 250000 }
+  "budget": { "max_px": 512, "max_bytes": 250000, "lqip": { "max_px": 32, "max_bytes": 2048 } }
 }
 ```
 
-`jailed_path` is jail-relative from the library root. Resolve it with `LibraryPathJail#resolve_jailed` (never load the whole file or archive into RAM). Cache key is `asset_id + mtime + content_hash` (`cover_cache_key` on the model). The same key is not re-enqueued while `pending` or `ready`.
+`jailed_path` is jail-relative from the library root. Resolve it with `LibraryPathJail#resolve_jailed` (never load the whole file or archive into RAM). Cache key is `asset_id + mtime + content_hash` (`cover_cache_key` on the model). The same key is not re-enqueued while `pending` or `ready` with both `cover_url` and `cover_lqip_url`. A `ready` cover missing LQIP is backfilled without flipping to `pending`.
+
+**Pacing.** `CoverPacer` admits at most `VIBE_COVER_BATCH` jobs per `VIBE_COVER_PACE_SECONDS` window and never more than `VIBE_COVER_QUEUE_MAX` `GenerateCoverJob` rows on `:covers`. Overflow stays `pending` (gallery shimmer) and `CoverBacklogJob` drains it. Drain priority: named cover/preview/thumb/hero, then other images, then mesh/archive, then recency. The default Sidekiq capsule weights `:covers` below `default` / `print` (scan already lives on `VIBE_SCAN_QUEUE`) so an enqueue storm cannot starve the API.
 
 Model card / index fields:
 
@@ -403,8 +410,11 @@ Model card / index fields:
 | --- | --- |
 | `creator` | `{ id, slug, name }` or `null` |
 | `cover_status` | `missing` \| `pending` \| `ready` \| `failed` |
-| `cover_url` | nullable |
+| `cover_url` | nullable full webp (`/covers/:id.webp`) |
+| `cover_lqip_url` | nullable tiny blur webp (`/covers/:id.lqip.webp`) for cheap card chrome |
 | `cover_placeholder` | bool (`true` until a real cover is written back) |
+
+**Frontend bind.** Gallery cards / mosaics should prefer `cover_lqip_url` (`cheapCoverUrl()` / `<CoverMedia preferLqip />`). Model detail and duplicate review keep `cover_url`. `cover_status=pending` is still shimmer. Do not invent a second preview API. Meilisearch still facets `cover_status` / `has_cover` only — LQIP is not an index field.
 
 ### Duplicate groups (HITL)
 
@@ -464,14 +474,15 @@ X-Cover-Token: $VIBE_COVER_TOKEN
   "asset_id": 99,
   "status": "ready",
   "cover_url": "/covers/42.webp",
+  "cover_lqip_url": "/covers/42.lqip.webp",
   "cover_placeholder": false,
   "cache_key": "99:1710000000:sha256:…"
 }
 ```
 
-`status` must be `ready` or `failed`. `cover_url` is required when `ready`. Signed-in users can call the same endpoint (useful in tests). `GenerateCoverJob` resolves `jailed_path` with `LibraryPathJail#resolve_jailed`, thumbnails with libvips (`ruby-vips`) within `budget.max_px` / `budget.max_bytes`, and calls `CoverWriteback.apply!`. Cache key is `asset_id + mtime + content_hash`; a model already `ready` for that key is skipped. Mesh/STL/3MF sources use a named preview sibling (`cover`/`preview`/`thumb`/`hero`) under the jail when one exists — there is no 3D renderer in this worker, so a mesh without a preview writes back `failed` (silent status).
+`status` must be `ready` or `failed`. `cover_url` is required when `ready`. `cover_lqip_url` is optional; `failed` clears it. Signed-in users can call the same endpoint (useful in tests). `GenerateCoverJob` resolves `jailed_path` with `LibraryPathJail#resolve_jailed`, thumbnails with libvips (`ruby-vips`) within `budget.max_px` / `budget.max_bytes`, writes a tiny LQIP from the already-resized thumbnail (no second NFS decode, no archive slurp), and calls `CoverWriteback.apply!`. Cache key is `asset_id + mtime + content_hash`; a model already `ready` for that key with both URLs is skipped. Mesh/STL/3MF sources use a named preview sibling (`cover`/`preview`/`thumb`/`hero`) under the jail when one exists — there is no 3D renderer in this worker, so a mesh without a preview writes back `failed` (silent status).
 
-Generated files live in `VIBE_COVER_ROOT` (default `api/tmp/covers`) and are served at `GET /covers/:id.webp`. API/worker images need `libvips` (compose Dockerfile installs `libvips42`).
+Generated files live in `VIBE_COVER_ROOT` (default `api/tmp/covers`) and are served at `GET /covers/:id.webp` (full) and `GET /covers/:id.lqip.webp` (LQIP). API/worker images need `libvips` (compose Dockerfile installs `libvips42`).
 
 ## API (JSON)
 
@@ -486,7 +497,7 @@ All endpoints except `POST /api/v1/session`, invite preview/redeem, and `GET /up
 - `GET /api/v1/ops` · `GET /api/v1/ops?library_id=` same snapshot for every library the caller can curate (or one library)
 - `GET /api/v1/creators` (`id`, `slug`, `name`, `source`, `model_count`)
 - `GET /api/v1/creators/:id` or `GET /api/v1/creators/:slug` (paginated models; `cursor` / `limit` like the catalog)
-- `GET /api/v1/models?cursor=&limit=&creator_slug=&creator=&tag=&tags[]=&cover_status=&has_cover=` (cursor pagination on `updated_at,id`; no owner ACL filter; includes `liked`, `like_count`, `bookmark_folder_ids`, nullable `creator: { id, slug, name }`, `cover_status`, `cover_url`, `cover_placeholder`). Chip filters are optional and keep the unfiltered gallery when omitted. `has_cover=true` is `cover_status=ready`. `limit` max 60. Text `q` is **not** a catalog param — use `GET /search`.
+- `GET /api/v1/models?cursor=&limit=&creator_slug=&creator=&tag=&tags[]=&cover_status=&has_cover=` (cursor pagination on `updated_at,id`; no owner ACL filter; includes `liked`, `like_count`, `bookmark_folder_ids`, nullable `creator: { id, slug, name }`, `cover_status`, `cover_url`, `cover_lqip_url`, `cover_placeholder`). Chip filters are optional and keep the unfiltered gallery when omitted. `has_cover=true` is `cover_status=ready`. `limit` max 60. Text `q` is **not** a catalog param — use `GET /search`.
 - `GET /api/v1/models/:id`
 - `POST /api/v1/models/:id/like` · `DELETE /api/v1/models/:id/like`
 - `POST /api/v1/models/merge` `{ library_id, source_ids?|asset_ids?, target_id?|title? }` (owner/contributor)
@@ -510,7 +521,8 @@ All endpoints except `POST /api/v1/session`, invite preview/redeem, and `GET /up
 - `GET /api/v1/archive_members/:id/preview` (derived thumb or inline image stream; mesh returns `use_content`)
 - `GET /api/v1/search?q=&creator_slug=&creator=&tag=&tags[]=&cover_status=&has_cover=&has_preview=&library_id=&uploaded_by_id=&offset=&limit=` (Meilisearch when configured; Postgres `ILIKE` fallback). Facets: `tags`, `creator_slug`, `cover_status`, `has_cover`, `has_preview`. `has_cover=true` matches the gallery "Has cover" chip (`cover_status=ready`). `creator` is an alias for `creator_slug`. Offset pagination (`offset` / `limit`, max 60) — not the gallery model-id `cursor`. Response adds `capped` when the fallback hit `VIBE_SEARCH_FALLBACK_CAP`.
 - `GET /covers/:id.webp` generated cover bytes (libvips webp under `VIBE_COVER_ROOT`)
-- `POST /api/v1/covers/writeback` `{ model_id, status: "ready"|"failed", cover_url?, cover_placeholder?, asset_id?, cache_key? }` (`GenerateCoverJob` uses `CoverWriteback.apply!` in-process; `X-Cover-Token: $VIBE_COVER_TOKEN` or Bearer user)
+- `GET /covers/:id.lqip.webp` tiny LQIP / small-thumb webp for cheap card chrome
+- `POST /api/v1/covers/writeback` `{ model_id, status: "ready"|"failed", cover_url?, cover_lqip_url?, cover_placeholder?, asset_id?, cache_key? }` (`GenerateCoverJob` uses `CoverWriteback.apply!` in-process; `X-Cover-Token: $VIBE_COVER_TOKEN` or Bearer user)
 - `GET /api/v1/curator_settings` owner-only — `{ curator_setting: { provider, ollama_url, ollama_model, xai_api_key_status: "set"|"missing" } }`. **Never** returns the raw xAI key. 403 for everyone else.
 - `PATCH /api/v1/curator_settings` `{ provider, ollama_url, ollama_model }` owner-only. Does not accept the raw key.
 - `PUT /api/v1/curator_settings/xai_api_key` `{ "xai_api_key": "..." }` owner-only. Stores the key encrypted. Response is status only (`set`).

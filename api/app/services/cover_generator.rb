@@ -1,6 +1,6 @@
 # Budgeted cover generate for GenerateCoverJob.
 # Resolves jailed_path via LibraryPathJail (never escapes, never slurps archives),
-# writes a webp under VIBE_COVER_ROOT, then CoverWriteback.apply!.
+# writes a webp + LQIP under VIBE_COVER_ROOT, then CoverWriteback.apply!.
 class CoverGenerator
   IMAGE_EXT = %w[png jpg jpeg webp gif].freeze
   PREVIEW_STEMS = %w[cover preview thumb hero].freeze
@@ -29,6 +29,10 @@ class CoverGenerator
     "/covers/#{model_id}.webp"
   end
 
+  def self.cover_lqip_url_for(model_id)
+    "/covers/#{model_id}.lqip.webp"
+  end
+
   def self.stringify(payload)
     data = payload.respond_to?(:to_unsafe_h) ? payload.to_unsafe_h : payload
     (data.presence || {}).to_h.stringify_keys
@@ -51,13 +55,15 @@ class CoverGenerator
     end
 
     source = resolve_source!(model)
-    CoverImage.encode(source, dest_path(model.id), budget)
+    CoverImage.encode(source, dest_path(model.id), budget, lqip_dest: lqip_path(model.id), lqip_budget: lqip_budget)
     writeback_ready!(model, key)
     :ready
   rescue PermanentError => e
     fail!(e)
   rescue *TRANSIENT_ERRNO => e
     raise TransientError, e.message
+  ensure
+    CoverPacer.nudge!
   end
 
   def fail!(error)
@@ -70,6 +76,7 @@ class CoverGenerator
       "asset_id" => @data["asset_id"],
       "status" => VibeModel::COVER_FAILED,
       "cover_placeholder" => true,
+      "cover_lqip_url" => nil,
       "cache_key" => cache_key
     )
     :failed
@@ -91,7 +98,10 @@ class CoverGenerator
   def skip_fresh?(model, key)
     model.cover_status == VibeModel::COVER_READY &&
       model.cover_cache_key.to_s == key &&
-      model.cover_url.present?
+      model.cover_url.present? &&
+      model.cover_lqip_url.present? &&
+      File.file?(dest_path(model.id)) &&
+      File.file?(lqip_path(model.id))
   end
 
   def assert_library!(model)
@@ -149,6 +159,10 @@ class CoverGenerator
     File.join(self.class.cover_root, "#{model_id}.webp")
   end
 
+  def lqip_path(model_id)
+    File.join(self.class.cover_root, "#{model_id}.lqip.webp")
+  end
+
   def budget
     raw = @data["budget"]
     raw = raw.to_h.stringify_keys if raw.respond_to?(:to_h)
@@ -161,12 +175,40 @@ class CoverGenerator
     }
   end
 
+  def lqip_budget
+    raw = @data["budget"]
+    raw = raw.to_h.stringify_keys if raw.respond_to?(:to_h)
+    nested = raw.is_a?(Hash) ? raw["lqip"] : nil
+    nested = nested.to_h.stringify_keys if nested.respond_to?(:to_h)
+    defaults = CoverEnqueue.lqip_budget
+    max_px = if nested.is_a?(Hash) && nested["max_px"].to_i.positive?
+      nested["max_px"].to_i
+    elsif raw.is_a?(Hash) && raw["lqip_max_px"].to_i.positive?
+      raw["lqip_max_px"].to_i
+    else
+      defaults["max_px"]
+    end
+    max_bytes = if nested.is_a?(Hash) && nested["max_bytes"].to_i.positive?
+      nested["max_bytes"].to_i
+    elsif raw.is_a?(Hash) && raw["lqip_max_bytes"].to_i.positive?
+      raw["lqip_max_bytes"].to_i
+    else
+      defaults["max_bytes"]
+    end
+    cover = budget
+    max_px = [max_px, cover["max_px"]].min if cover["max_px"].positive?
+    max_bytes = [max_bytes, cover["max_bytes"]].min if cover["max_bytes"].positive?
+    { "max_px" => max_px, "max_bytes" => max_bytes }
+  end
+
   def writeback_ready!(model, key)
+    lqip_url = File.file?(lqip_path(model.id)) ? self.class.cover_lqip_url_for(model.id) : nil
     CoverWriteback.apply!(
       "model_id" => model.id,
       "asset_id" => @data["asset_id"],
       "status" => VibeModel::COVER_READY,
       "cover_url" => self.class.cover_url_for(model.id),
+      "cover_lqip_url" => lqip_url,
       "cover_placeholder" => false,
       "cache_key" => key
     )

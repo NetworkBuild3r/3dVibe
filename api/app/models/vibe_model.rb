@@ -64,6 +64,7 @@ class VibeModel < ApplicationRecord
       creator: creator&.as_card,
       cover_status: cover_status,
       cover_url: cover_url,
+      cover_lqip_url: cover_lqip_url,
       cover_placeholder: cover_placeholder
     }
   end

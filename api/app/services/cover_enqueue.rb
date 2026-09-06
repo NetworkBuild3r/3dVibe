@@ -1,7 +1,11 @@
 # Enqueues a budgeted cover job. GenerateCoverJob generates and writes back.
+# Sidekiq pressure goes through CoverPacer so a NAS-scale scan cannot dump
+# every pending model onto :covers at once.
 class CoverEnqueue
   DEFAULT_MAX_PX = 512
   DEFAULT_MAX_BYTES = 250_000
+  DEFAULT_LQIP_MAX_PX = 32
+  DEFAULT_LQIP_MAX_BYTES = 2_048
   CANDIDATE_NAME = /cover|preview|thumb|hero/i
   RANK = { "cover" => 0, "preview" => 1, "thumb" => 2, "hero" => 3 }.freeze
 
@@ -22,9 +26,12 @@ class CoverEnqueue
 
     key = cache_key(asset)
     if @model.cover_status == VibeModel::COVER_READY && @model.cover_cache_key == key && @model.cover_url.present?
-      return :fresh
+      return :fresh if @model.cover_lqip_url.present?
+
+      return CoverPacer.submit!(self.class.payload_for(@model, asset)) == :enqueued ? :lqip_backfill : :deferred
     end
     if @model.cover_status == VibeModel::COVER_PENDING && @model.cover_cache_key == key
+      CoverPacer.nudge!
       return :pending
     end
 
@@ -34,8 +41,7 @@ class CoverEnqueue
       cover_cache_key: key,
       cover_asset_id: asset.id
     )
-    GenerateCoverJob.perform_later(payload(asset))
-    :enqueued
+    CoverPacer.submit!(self.class.payload_for(@model, asset)) == :enqueued ? :enqueued : :deferred
   end
 
   def self.cache_key_for(asset)
@@ -53,12 +59,42 @@ class CoverEnqueue
   def self.budget
     {
       "max_px" => ENV.fetch("VIBE_COVER_MAX_PX", DEFAULT_MAX_PX).to_i,
+      "max_bytes" => ENV.fetch("VIBE_COVER_MAX_BYTES", DEFAULT_MAX_BYTES).to_i,
+      "lqip" => lqip_budget
+    }
+  end
+
+  def self.lqip_budget
+    max_px = ENV.fetch("VIBE_COVER_LQIP_MAX_PX", DEFAULT_LQIP_MAX_PX).to_i
+    max_bytes = ENV.fetch("VIBE_COVER_LQIP_MAX_BYTES", DEFAULT_LQIP_MAX_BYTES).to_i
+    cover = {
+      "max_px" => ENV.fetch("VIBE_COVER_MAX_PX", DEFAULT_MAX_PX).to_i,
       "max_bytes" => ENV.fetch("VIBE_COVER_MAX_BYTES", DEFAULT_MAX_BYTES).to_i
     }
+    max_px = DEFAULT_LQIP_MAX_PX unless max_px.positive?
+    max_bytes = DEFAULT_LQIP_MAX_BYTES unless max_bytes.positive?
+    max_px = [max_px, cover["max_px"]].min if cover["max_px"].positive?
+    max_bytes = [max_bytes, cover["max_bytes"]].min if cover["max_bytes"].positive?
+    { "max_px" => max_px, "max_bytes" => max_bytes }
   end
 
   def self.jailed_path_for(model, asset)
     [model.folder_name, asset.relative_path].join("/")
+  end
+
+  def self.payload_for(model, asset = nil)
+    asset ||= Asset.find_by(id: model.cover_asset_id)
+    return unless asset
+
+    {
+      "library_id" => model.library_id,
+      "model_id" => model.id,
+      "asset_id" => asset.id,
+      "jailed_path" => jailed_path_for(model, asset),
+      "mtime" => asset.mtime.to_i,
+      "content_hash" => content_hash_for(asset),
+      "budget" => budget
+    }
   end
 
   private
@@ -84,22 +120,11 @@ class CoverEnqueue
     self.class.cache_key_for(asset)
   end
 
-  def payload(asset)
-    {
-      "library_id" => @model.library_id,
-      "model_id" => @model.id,
-      "asset_id" => asset.id,
-      "jailed_path" => self.class.jailed_path_for(@model, asset),
-      "mtime" => asset.mtime.to_i,
-      "content_hash" => self.class.content_hash_for(asset),
-      "budget" => self.class.budget
-    }
-  end
-
   def clear_missing!
     @model.update!(
       cover_status: VibeModel::COVER_MISSING,
       cover_url: nil,
+      cover_lqip_url: nil,
       cover_placeholder: true,
       cover_cache_key: nil,
       cover_asset_id: nil

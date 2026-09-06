@@ -18,7 +18,7 @@ export function CoverMosaic({
       {cells.map((model, index) => (
         <div key={model?.id ?? `empty-${index}`} className="aspect-square min-h-0 overflow-hidden">
           {model ? (
-            <CoverMedia model={model} label={`${model.title} cover`} showFailedCopy={false} />
+            <CoverMedia model={model} label={`${model.title} cover`} showFailedCopy={false} preferLqip />
           ) : (
             <div className="cover-checker h-full w-full" />
           )}

@@ -1,12 +1,13 @@
 # Default capsule: API-critical queues. IncrementalScanJob / ScheduledScanJob
 # run on VIBE_SCAN_QUEUE (default: scan) via a Sidekiq capsule with
 # VIBE_SCAN_CONCURRENCY (default: 1). See config/initializers/sidekiq.rb.
+# Weighted so a cover backlog cannot starve API / print.
 :concurrency: 5
 :queues:
-  - default
-  - print
-  - search
-  - previews
-  - covers
-  - curation
-  - duplicates
+  - [default, 10]
+  - [print, 8]
+  - [search, 5]
+  - [previews, 3]
+  - [covers, 2]
+  - [curation, 3]
+  - [duplicates, 2]

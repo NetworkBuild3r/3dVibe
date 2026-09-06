@@ -21,7 +21,7 @@ export function ModelCard({
     <article className="min-w-0">
       <div className="relative overflow-hidden rounded-xl bg-ink-900">
         <Link to={`/models/${model.id}`} className="block aspect-square">
-          <CoverMedia model={model} />
+          <CoverMedia model={model} preferLqip />
         </Link>
         {onLike ? (
           <button

@@ -135,6 +135,7 @@ export function assetAsMember(asset: DuplicateAsset): DuplicateMember {
     folder_name: asset.folder_name,
     cover_status: asset.cover_status,
     cover_url: asset.cover_url,
+    cover_lqip_url: asset.cover_lqip_url,
     cover_placeholder: asset.cover_placeholder
   };
 }
@@ -242,13 +243,14 @@ export function memberColumns(group: DuplicateGroup): MemberColumn[] {
 export function coverFromMembers(
   members: DuplicateMember[],
   title: string
-): Pick<ModelCard, "title" | "cover_status" | "cover_url" | "cover_placeholder"> | undefined {
-  const member = members.find((item) => item.cover_status || item.cover_url || item.cover_placeholder != null);
+): Pick<ModelCard, "title" | "cover_status" | "cover_url" | "cover_lqip_url" | "cover_placeholder"> | undefined {
+  const member = members.find((item) => item.cover_status || item.cover_url || item.cover_lqip_url || item.cover_placeholder != null);
   if (!member) return undefined;
   return {
     title,
     cover_status: member.cover_status,
     cover_url: member.cover_url,
+    cover_lqip_url: member.cover_lqip_url,
     cover_placeholder: member.cover_placeholder
   };
 }
@@ -256,7 +258,7 @@ export function coverFromMembers(
 export function previewModels(
   group: DuplicateGroup,
   limit = 4
-): Array<ModelCard | Pick<ModelCard, "title" | "cover_status" | "cover_url" | "cover_placeholder"> | undefined> {
+): Array<ModelCard | Pick<ModelCard, "title" | "cover_status" | "cover_url" | "cover_lqip_url" | "cover_placeholder"> | undefined> {
   const columns = memberColumns(group);
   const models = columns.map((column) => column.model || coverFromMembers(column.members, column.title));
   return models.slice(0, Math.min(Math.max(models.length, 2), limit));

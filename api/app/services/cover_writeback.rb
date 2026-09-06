@@ -1,5 +1,6 @@
 # Job/API hook for the Rendering worker. Sets cover_status ready/failed plus
-# cover_url after a budgeted generate. Does not open or rasterize files.
+# cover_url / cover_lqip_url after a budgeted generate. Does not open or
+# rasterize files.
 class CoverWriteback
   ALLOWED = [VibeModel::COVER_READY, VibeModel::COVER_FAILED].freeze
 
@@ -33,6 +34,11 @@ class CoverWriteback
     }
     updates[:cover_asset_id] = @attrs["asset_id"].to_i if @attrs["asset_id"].present?
     updates[:cover_cache_key] = @attrs["cache_key"].to_s if @attrs["cache_key"].present?
+    if @attrs.key?("cover_lqip_url")
+      updates[:cover_lqip_url] = status == VibeModel::COVER_READY ? @attrs["cover_lqip_url"].to_s.presence : nil
+    elsif status == VibeModel::COVER_FAILED
+      updates[:cover_lqip_url] = nil
+    end
     model.update!(updates)
     # after_commit also enqueues; the buffer collapses both so has_cover /
     # cover_status land in Meili without an IndexVibeModelJob per write-back.

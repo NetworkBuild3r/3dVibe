@@ -1,6 +1,6 @@
 Rails.application.routes.draw do
   get "/up", to: "health#show"
-  get "/covers/:filename", to: "api/v1/covers#show", constraints: { filename: /[0-9]+\.webp/ }
+  get "/covers/:filename", to: "api/v1/covers#show", constraints: { filename: /[0-9]+(?:\.lqip)?\.webp/ }
 
   namespace :api do
     namespace :v1 do

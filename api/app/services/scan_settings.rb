@@ -15,6 +15,18 @@ class ScanSettings
   # Queues that serve API-critical work. IncrementalScanJob must not share
   # this pool or an overnight deep walk can occupy every Sidekiq thread.
   CRITICAL_QUEUES = %w[default print search previews covers curation duplicates].freeze
+  # Sidekiq weights on the default capsule. Covers stay below API/print so a
+  # NAS-scale GenerateCoverJob backlog cannot starve request-driven work.
+  # Scan is not listed — it runs on the isolated capsule.
+  QUEUE_WEIGHTS = {
+    "default" => 10,
+    "print" => 8,
+    "search" => 5,
+    "previews" => 3,
+    "covers" => 2,
+    "curation" => 3,
+    "duplicates" => 2
+  }.freeze
 
   class << self
     def max_seconds
@@ -76,9 +88,13 @@ class ScanSettings
       CRITICAL_QUEUES - [queue]
     end
 
+    def weighted_isolated_queues
+      isolated_queues.map { |name| [name, QUEUE_WEIGHTS[name] || 1] }
+    end
+
     def sidekiq_layout
       {
-        default: { concurrency: worker_concurrency, queues: isolated_queues },
+        default: { concurrency: worker_concurrency, queues: weighted_isolated_queues },
         scan: { concurrency: concurrency, queues: [queue] }
       }
     end
