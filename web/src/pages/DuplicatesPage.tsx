@@ -1,150 +1,256 @@
-import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
-import { api, type DuplicateGroup, type LibraryInfo } from "../api";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
+import { api, type DuplicateGroup, type DuplicateStatus, type LibraryInfo } from "../api";
 import { useAuth } from "../auth";
-import { CoverMedia } from "../components/CoverMedia";
 import { CalmChip } from "../components/CalmChip";
-import { EmptyState, InlineError, ListSkeleton } from "../components/UiStates";
-import { formatBytes } from "../format";
+import { CoverMedia } from "../components/CoverMedia";
+import { ConfidenceBadge, DuplicateReview, DuplicateReviewSkeleton, StatusChip } from "../components/DuplicateReview";
+import { EmptyState, InlineError, Pulse } from "../components/UiStates";
+import {
+  CONFIDENCE_COPY,
+  formatWhen,
+  newestGroupTime,
+  previewModels,
+  readLastRun,
+  STATUS_FILTERS,
+  type StatusFilter,
+  writeLastRun
+} from "../duplicates";
 
-type ReasonFilter = "all" | "content_hash" | "geometry" | "name_size";
-type StatusFilter = "open" | "kept" | "dismissed" | "merged";
-
-const REASON_COPY: Record<string, { label: string; hint: string }> = {
-  content_hash: { label: "Exact content", hint: "Same SHA-256 bytes" },
-  geometry: { label: "Exact geometry", hint: "Same normalized mesh fingerprint" },
-  name_size: { label: "Likely", hint: "Same filename and size" }
-};
+function GroupRowSkeleton() {
+  return (
+    <li className="rounded-2xl border border-white/10 bg-ink-900/70 p-4" aria-hidden>
+      <div className="flex gap-2">
+        <Pulse className="h-5 w-16 rounded-full" />
+        <Pulse className="h-5 w-20 rounded-full" />
+      </div>
+      <div className="mt-4 flex gap-2">
+        <Pulse className="h-16 w-16" />
+        <Pulse className="h-16 w-16" />
+        <Pulse className="h-16 w-16" />
+      </div>
+    </li>
+  );
+}
 
 export function DuplicatesPage() {
+  const { id } = useParams();
+  const navigate = useNavigate();
   const { user } = useAuth();
-  const canReview = Boolean(user?.can_curate || user?.can_merge);
+  const reviewId = id ? Number(id) : null;
+  const reviewOpen = Number.isFinite(reviewId);
+
   const [libraries, setLibraries] = useState<LibraryInfo[]>([]);
   const [libraryId, setLibraryId] = useState<number | "">("");
+  const [filter, setFilter] = useState<StatusFilter>("open");
   const [groups, setGroups] = useState<DuplicateGroup[]>([]);
-  const [reason, setReason] = useState<ReasonFilter>("all");
-  const [status, setStatus] = useState<StatusFilter>("open");
-  const [title, setTitle] = useState("Merged duplicates");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [note, setNote] = useState("");
+  const [reviewGroup, setReviewGroup] = useState<DuplicateGroup | null>(null);
+  const [lastRunAt, setLastRunAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [reviewLoading, setReviewLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
+  const [acting, setActing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const analyzeTicket = useRef(0);
+  const mounted = useRef(true);
 
-  async function loadLibraries() {
-    const payload = await api.libraries();
-    setLibraries(payload.libraries);
-    setLibraryId((current) => current || payload.libraries[0]?.id || "");
-  }
-
-  async function loadGroups(id: number, silent = false) {
-    if (!silent) setLoading(true);
-    const payload = await api.duplicates(id, { status });
-    setGroups(payload.groups);
-    if (!silent) setLoading(false);
-  }
+  const selectedLibrary = libraries.find((library) => library.id === libraryId);
+  const canReview = Boolean(
+    selectedLibrary
+      ? (selectedLibrary.can_merge ?? user?.can_merge ?? user?.can_curate)
+      : user?.can_merge || user?.can_curate
+  );
 
   useEffect(() => {
-    loadLibraries().catch((err) => setError(err instanceof Error ? err.message : "Failed to load libraries"));
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
   }, []);
 
   useEffect(() => {
+    api
+      .libraries()
+      .then((payload) => {
+        if (!mounted.current) return;
+        setLibraries(payload.libraries);
+        if (payload.libraries[0]) setLibraryId(payload.libraries[0].id);
+      })
+      .catch((err) => {
+        if (!mounted.current) return;
+        setError(err instanceof Error ? err.message : "Failed to load libraries");
+        setLoading(false);
+      });
+  }, []);
+
+  async function refresh(options: { silent?: boolean } = {}) {
     if (libraryId === "") return;
-    loadGroups(libraryId).catch((err) => {
+    if (!options.silent) {
+      setError(null);
+      setLoading(true);
+    }
+    try {
+      const status = filter === "all" ? "" : (filter as DuplicateStatus);
+      const payload = await api.duplicates(libraryId, status);
+      if (!mounted.current) return;
+      setGroups(payload.groups);
+      const stored = readLastRun(libraryId);
+      const newest = newestGroupTime(payload.groups);
+      setLastRunAt((current) => newest || stored || current);
+      if (!options.silent) setError(null);
+    } catch (err) {
+      if (!mounted.current || options.silent) return;
       setError(err instanceof Error ? err.message : "Failed to load duplicates");
-      setLoading(false);
-    });
-  }, [libraryId, status]);
+    } finally {
+      if (mounted.current && !options.silent) setLoading(false);
+    }
+  }
 
-  const visible = useMemo(
-    () => (reason === "all" ? groups : groups.filter((group) => group.reason === reason)),
-    [groups, reason]
-  );
+  useEffect(() => {
+    if (libraryId === "") return;
+    setLastRunAt(readLastRun(libraryId));
+    void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [libraryId, filter]);
 
-  const sections = useMemo(() => {
-    const order: Array<DuplicateGroup["reason"]> = ["content_hash", "geometry", "name_size"];
-    return order
-      .map((key) => ({ key, groups: visible.filter((group) => group.reason === key) }))
-      .filter((section) => section.groups.length > 0);
-  }, [visible]);
+  useEffect(() => {
+    if (libraryId === "" || !reviewOpen || reviewId == null) {
+      setReviewGroup(null);
+      setReviewError(null);
+      setReviewLoading(false);
+      return;
+    }
+    const fromList = groups.find((group) => group.id === reviewId);
+    if (fromList) {
+      setReviewGroup(fromList);
+      setReviewLoading(false);
+      setReviewError(null);
+      return;
+    }
+    let cancelled = false;
+    setReviewLoading(true);
+    setReviewError(null);
+    api
+      .duplicates(libraryId)
+      .then((payload) => {
+        if (cancelled) return;
+        const found = payload.groups.find((group) => group.id === reviewId) || null;
+        setReviewGroup(found);
+        if (!found) setReviewError("This group is not in the library index.");
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setReviewError(err instanceof Error ? err.message : "Failed to load group");
+      })
+      .finally(() => {
+        if (!cancelled) setReviewLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [libraryId, reviewId, reviewOpen, groups]);
 
-  const counts = useMemo(
-    () => ({
-      content_hash: groups.filter((group) => group.reason === "content_hash").length,
-      geometry: groups.filter((group) => group.reason === "geometry").length,
-      name_size: groups.filter((group) => group.reason === "name_size").length
-    }),
-    [groups]
-  );
+  useEffect(() => {
+    if (!reviewOpen) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") navigate("/duplicates");
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [reviewOpen, navigate]);
 
   async function analyze() {
-    if (libraryId === "") return;
-    setBusy(true);
+    if (libraryId === "" || !canReview || analyzing) return;
+    const ticket = ++analyzeTicket.current;
     setAnalyzing(true);
     setError(null);
     try {
       await api.analyzeDuplicates(libraryId);
-      setNote("Analysis queued. Geometry fingerprints run on path-jailed meshes only.");
-      await new Promise((resolve) => window.setTimeout(resolve, 600));
-      await loadGroups(libraryId, true);
+      const queuedAt = new Date().toISOString();
+      writeLastRun(libraryId, queuedAt);
+      if (mounted.current) setLastRunAt(queuedAt);
+      const started = Date.now();
+      while (Date.now() - started < 12000 && analyzeTicket.current === ticket && mounted.current) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1400));
+        if (analyzeTicket.current !== ticket || !mounted.current) return;
+        await refresh({ silent: true });
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Analyze failed");
+      if (mounted.current) setError(err instanceof Error ? err.message : "Analyze failed");
     } finally {
-      setBusy(false);
-      setAnalyzing(false);
+      if (analyzeTicket.current === ticket && mounted.current) {
+        setAnalyzing(false);
+        await refresh({ silent: true });
+      }
     }
   }
 
-  async function keep(id: number) {
-    setBusy(true);
-    setError(null);
-    try {
-      await api.keepDuplicateGroup(id);
-      setNote("Kept — files stay on disk.");
-      if (libraryId !== "") await loadGroups(libraryId, true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Keep failed");
-    } finally {
-      setBusy(false);
+  function closeReview() {
+    navigate("/duplicates");
+  }
+
+  async function afterDecision(group: DuplicateGroup) {
+    setReviewGroup(group);
+    await refresh({ silent: true });
+    if (filter === "open" && group.status !== "open") {
+      navigate("/duplicates");
     }
   }
 
-  async function dismiss(id: number) {
-    setBusy(true);
-    setError(null);
+  async function keepGroup(group: DuplicateGroup) {
+    if (!canReview || acting) return;
+    setActing(true);
+    setReviewError(null);
     try {
-      await api.dismissDuplicateGroup(id);
-      setNote("Dismissed — nothing was deleted.");
-      if (libraryId !== "") await loadGroups(libraryId, true);
+      const payload = await api.keepDuplicate(group.id);
+      await afterDecision(payload.group);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Dismiss failed");
+      setReviewError(err instanceof Error ? err.message : "Keep failed");
     } finally {
-      setBusy(false);
+      setActing(false);
     }
   }
 
-  async function merge(group: DuplicateGroup) {
-    const modelIds = [...new Set(group.assets.map((asset) => asset.model_id))];
-    if (modelIds.length < 2) {
-      setError("Already one model. Keep or dismiss — merge does not delete files.");
-      return;
-    }
-    setBusy(true);
-    setError(null);
+  async function dismissGroup(group: DuplicateGroup) {
+    if (!canReview || acting) return;
+    setActing(true);
+    setReviewError(null);
     try {
-      const payload = await api.mergeDuplicateGroup(group.id, {
-        title,
-        target_id: modelIds[0],
-        source_ids: modelIds.slice(1)
-      });
-      setNote(`Merged into ${payload.model.title}. Files were moved, not deleted.`);
-      if (libraryId !== "") await loadGroups(libraryId, true);
+      const payload = await api.dismissDuplicate(group.id);
+      await afterDecision(payload.group);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Merge failed");
+      setReviewError(err instanceof Error ? err.message : "Dismiss failed");
     } finally {
-      setBusy(false);
+      setActing(false);
     }
   }
+
+  async function mergeGroup(group: DuplicateGroup, body: { source_ids: number[]; target_id: number; title?: string }) {
+    if (!canReview || acting) return;
+    setActing(true);
+    setReviewError(null);
+    try {
+      const payload = await api.mergeDuplicate(group.id, body);
+      await afterDecision(payload.group);
+    } catch (err) {
+      setReviewError(err instanceof Error ? err.message : "Merge failed");
+    } finally {
+      setActing(false);
+    }
+  }
+
+  const lastRunLabel = useMemo(() => {
+    const when = formatWhen(lastRunAt);
+    if (analyzing) return when ? `Analyzing… last run ${when}` : "Analyzing…";
+    if (when) return `Last run ${when}`;
+    return "Empty until Analyze. Nothing is deleted from disk automatically.";
+  }, [analyzing, lastRunAt]);
+
+  const emptyCopy =
+    filter === "open"
+      ? "No open duplicates. Run Analyze after a scan if you expect more."
+      : "Nothing in this filter.";
 
   return (
     <div className="space-y-6">
@@ -152,197 +258,135 @@ export function DuplicatesPage() {
         <div>
           <h1 className="font-display text-3xl text-white">Duplicates</h1>
           <p className="mt-2 max-w-2xl text-sm text-slate-400">
-            On-demand review — not part of the scan poll. Exact content is a streamed SHA-256. Exact geometry is a
-            normalized, quantized vertex fingerprint (re-exports that hashes miss). Likely is filename + size. Keep and
-            dismiss hide a group. Merge uses the existing composer. Nothing here deletes library files.
+            Review likely copies. Nothing is deleted from disk unless you merge and choose to — and merge never
+            silent-deletes.
           </p>
         </div>
         {canReview ? (
-          <button
-            type="button"
-            disabled={busy || libraryId === "" || analyzing}
-            onClick={() => void analyze()}
-            className="rounded-lg bg-accent-500 px-3 py-1.5 text-sm text-ink-950 disabled:opacity-60"
-          >
-            {analyzing ? "Analyzing…" : "Analyze library"}
-          </button>
-        ) : null}
+          <div className="text-right">
+            <button
+              type="button"
+              disabled={analyzing || libraryId === ""}
+              onClick={() => void analyze()}
+              className="rounded-lg bg-accent-500 px-3 py-1.5 text-sm text-ink-950 disabled:opacity-60"
+            >
+              {analyzing ? "Analyzing…" : "Analyze"}
+            </button>
+            <p className="mt-1 max-w-xs text-xs text-slate-500">{lastRunLabel}</p>
+          </div>
+        ) : (
+          <p className="max-w-xs text-xs text-slate-500">{lastRunLabel}</p>
+        )}
       </div>
 
-      <div className="flex flex-wrap items-end gap-3">
-        <label className="text-sm text-slate-300">
-          Library
-          <select
-            className="mt-1 block rounded-lg border border-white/10 bg-ink-950 px-3 py-2"
-            value={libraryId}
-            onChange={(event) => setLibraryId(Number(event.target.value))}
-          >
-            {libraries.map((library) => (
-              <option key={library.id} value={library.id}>
-                {library.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        {canReview ? (
-          <input
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-            className="rounded-lg border border-white/10 bg-ink-950 px-3 py-2 text-sm"
-            placeholder="Merged folder title"
-          />
-        ) : null}
-      </div>
-
-      <div className="flex flex-wrap items-center gap-2">
-        <CalmChip
-          active={reason === "all" && status === "open"}
-          onClick={() => {
-            setReason("all");
-            setStatus("open");
-          }}
-        >
-          Open {status === "open" ? groups.length : ""}
-        </CalmChip>
-        <CalmChip
-          active={reason === "content_hash" && status === "open"}
-          onClick={() => {
-            setReason("content_hash");
-            setStatus("open");
-          }}
-        >
-          Exact content {status === "open" ? counts.content_hash : ""}
-        </CalmChip>
-        <CalmChip
-          active={reason === "geometry" && status === "open"}
-          onClick={() => {
-            setReason("geometry");
-            setStatus("open");
-          }}
-        >
-          Exact geometry {status === "open" ? counts.geometry : ""}
-        </CalmChip>
-        <CalmChip
-          active={reason === "name_size" && status === "open"}
-          onClick={() => {
-            setReason("name_size");
-            setStatus("open");
-          }}
-        >
-          Likely {status === "open" ? counts.name_size : ""}
-        </CalmChip>
-        <CalmChip active={status === "kept"} onClick={() => setStatus(status === "kept" ? "open" : "kept")}>
-          Kept
-        </CalmChip>
-        <CalmChip active={status === "dismissed"} onClick={() => setStatus(status === "dismissed" ? "open" : "dismissed")}>
-          Dismissed
-        </CalmChip>
-      </div>
-
-      {error ? <InlineError message={error} onRetry={libraryId === "" ? undefined : () => void loadGroups(libraryId)} /> : null}
-      {note ? <p className="text-sm text-accent-300">{note}</p> : null}
-
-      {loading ? <ListSkeleton rows={3} /> : null}
-
-      {!loading && sections.length === 0 ? (
-        <EmptyState
-          copy={
-            groups.length
-              ? "No groups in this filter."
-              : "Nothing persisted yet. Owner or contributor: analyze this library to fingerprint meshes and store groups."
-          }
-        />
-      ) : null}
-
-      <div className="space-y-8">
-        {sections.map((section) => (
-          <section key={section.key}>
-            <div className="mb-3">
-              <h2 className="font-display text-xl text-white">{REASON_COPY[section.key]?.label || section.key}</h2>
-              <p className="text-xs uppercase tracking-wide text-slate-500">{REASON_COPY[section.key]?.hint}</p>
-            </div>
-            <ul className="space-y-4">
-              {section.groups.map((group) => (
-                <li key={group.id} className="rounded-2xl border border-white/10 bg-ink-900/70 p-4">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <p className="text-sm text-white">
-                        {group.filename}
-                        <span className="ml-2 text-xs uppercase tracking-wide text-slate-500">
-                          {group.confidence} · {group.reason.replace("_", " ")} · {formatBytes(group.byte_size)} ·{" "}
-                          {group.assets.length} files
-                        </span>
-                      </p>
-                      {group.digest ? (
-                        <p className="mt-1 font-mono text-[11px] text-slate-500">{group.digest}</p>
-                      ) : null}
-                    </div>
-                    {canReview && group.status === "open" ? (
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={() => void keep(group.id)}
-                          className="rounded-lg bg-accent-500 px-3 py-1.5 text-sm text-ink-950 disabled:opacity-60"
-                        >
-                          Keep
-                        </button>
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={() => void dismiss(group.id)}
-                          className="rounded-lg border border-white/15 px-3 py-1.5 text-sm disabled:opacity-60"
-                        >
-                          Dismiss
-                        </button>
-                        {new Set(group.assets.map((asset) => asset.model_id)).size >= 2 ? (
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() => void merge(group)}
-                            className="rounded-lg border border-accent-500/40 px-3 py-1.5 text-sm text-accent-300 disabled:opacity-60"
-                          >
-                            Merge into one model
-                          </button>
-                        ) : null}
-                      </div>
-                    ) : (
-                      <p className="text-sm text-slate-500">{group.status === "open" ? "View only" : group.status}</p>
-                    )}
-                  </div>
-                  <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                    {group.assets.map((asset) => (
-                      <article key={asset.id} className="overflow-hidden rounded-xl border border-white/5 bg-ink-950/80">
-                        <Link to={`/models/${asset.model_id}`} className="block aspect-square">
-                          <CoverMedia
-                            model={{
-                              title: asset.model_title,
-                              cover_status: asset.cover_status,
-                              cover_url: asset.cover_url,
-                              cover_placeholder: asset.cover_placeholder
-                            }}
-                          />
-                        </Link>
-                        <div className="space-y-1 p-3">
-                          <Link
-                            to={`/models/${asset.model_id}`}
-                            className="block truncate font-display text-sm text-white hover:text-accent-400"
-                          >
-                            {asset.model_title}
-                          </Link>
-                          <p className="truncate text-xs text-slate-300">{asset.filename}</p>
-                          <p className="truncate font-mono text-[11px] text-slate-500">{asset.relative_path}</p>
-                          <p className="text-[11px] text-slate-500">{formatBytes(asset.byte_size)}</p>
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                </li>
+      <div className="flex flex-wrap items-center gap-3">
+        {libraries.length > 1 ? (
+          <label className="text-sm text-slate-300">
+            Library
+            <select
+              className="ml-2 rounded-lg border border-white/10 bg-ink-950 px-3 py-1.5"
+              value={libraryId}
+              onChange={(event) => setLibraryId(Number(event.target.value))}
+            >
+              {libraries.map((library) => (
+                <option key={library.id} value={library.id}>
+                  {library.name}
+                </option>
               ))}
-            </ul>
-          </section>
+            </select>
+          </label>
+        ) : null}
+        <div className="flex flex-wrap gap-2">
+          {STATUS_FILTERS.map((item) => (
+            <CalmChip key={item.id} active={filter === item.id} onClick={() => setFilter(item.id)}>
+              {item.label}
+            </CalmChip>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {Object.entries(CONFIDENCE_COPY).map(([key, meta]) => (
+          <span
+            key={key}
+            title={`${meta.hint} · ${key === "exact" ? "content hash" : key === "geometry" ? "geometry digest" : "name and size"}`}
+            className="rounded-full border border-white/10 px-2.5 py-1 text-[11px] uppercase tracking-wide text-slate-400"
+          >
+            {meta.label}
+          </span>
         ))}
       </div>
+
+      {error ? <InlineError message={error} onRetry={() => void refresh()} /> : null}
+
+      <section aria-busy={loading}>
+        {loading ? (
+          <ul className="space-y-3">
+            <GroupRowSkeleton />
+            <GroupRowSkeleton />
+            <GroupRowSkeleton />
+          </ul>
+        ) : (
+          <ul className="space-y-3">
+            {groups.map((group) => {
+              const thumbs = previewModels(group);
+              return (
+                <li key={group.id}>
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/duplicates/${group.id}`)}
+                    className="flex w-full flex-col rounded-2xl border border-white/10 bg-ink-900/70 p-4 text-left transition hover:border-accent-500/30"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <ConfidenceBadge confidence={group.confidence} reason={group.reason} />
+                      <span className="text-xs text-slate-500">
+                        {group.assets.length} {group.assets.length === 1 ? "member" : "members"}
+                      </span>
+                      <StatusChip status={group.status} />
+                    </div>
+                    <div className="mt-3 flex gap-2">
+                      {thumbs.map((model, index) => (
+                        <div key={model?.id ?? `placeholder-${index}`} className="h-16 w-16 overflow-hidden rounded-lg bg-ink-950">
+                          {model ? <CoverMedia model={model} /> : <div className="cover-checker h-full w-full" />}
+                        </div>
+                      ))}
+                    </div>
+                    <p className="mt-3 truncate text-sm text-slate-200">{group.filename || "Untitled group"}</p>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {!loading && groups.length === 0 && !error ? <EmptyState copy={emptyCopy} /> : null}
+      </section>
+
+      {reviewOpen ? (
+        reviewLoading && !reviewGroup ? (
+          <div className="fixed inset-0 z-40 flex justify-end bg-ink-950/65 backdrop-blur-sm">
+            <aside className="flex h-full w-full max-w-4xl flex-col border-l border-white/10 bg-ink-950 p-5 shadow-2xl">
+              <DuplicateReviewSkeleton />
+            </aside>
+          </div>
+        ) : reviewGroup ? (
+          <DuplicateReview
+            group={reviewGroup}
+            canReview={canReview}
+            busy={acting}
+            error={reviewError}
+            onKeep={() => void keepGroup(reviewGroup)}
+            onDismiss={() => void dismissGroup(reviewGroup)}
+            onMerge={(payload) => void mergeGroup(reviewGroup, payload)}
+            onClose={closeReview}
+          />
+        ) : reviewError ? (
+          <div className="fixed inset-0 z-40 grid place-items-center bg-ink-950/65 px-4">
+            <div className="w-full max-w-md rounded-2xl border border-white/10 bg-ink-900 p-5">
+              <InlineError message={reviewError} onRetry={() => navigate("/duplicates")} />
+            </div>
+          </div>
+        ) : null
+      ) : null}
     </div>
   );
 }

@@ -148,7 +148,7 @@ Likes, shelves, merge/split, and duplicates:
 
 1. Heart a card or open **Shelves** to make a personal folder. The model stays in everyone's library.
 2. Owner/contributor: select two cards → **Merge into one model**, then open the result and **Split last merge**.
-3. **Duplicates** — owner/contributor: **Analyze library** (`POST /libraries/:id/duplicates/analyze`), then review Exact content / Exact geometry / Likely. Keep, dismiss, or merge through `ModelComposer`. Viewers can list only. Nothing is auto-deleted from NFS.
+3. **Duplicates** — owner/contributor **Analyze**, then review persisted groups (Open / Kept / Dismissed / Merged). Keep (intentional copies, still in the catalog), dismiss (not a delete), or merge through `ModelComposer`. Viewers get a read-only compare. Near-dups (`geometry` / `name_size`) stay HITL; nothing is auto-deleted from NFS.
 
 ### Invite a friend
 
@@ -361,7 +361,7 @@ X-Geometry-Token: $VIBE_GEOMETRY_TOKEN
 
 In-process: `GeometryWriteback.apply!(asset_id:, geometry_digest:)` or `asset.update!(geometry_digest:)`. `GeometryFingerprint.compute` returns a `mesh:v1:` digest or `nil` for skip/timeout/empty mesh. The analyze job writes that digest through `GeometryWriteback` — there is no second writeback API. After switching prefix from `qv1:` to `mesh:v1:`, re-run Analyze so open groups refresh (mixed prefixes will not cluster).
 
-**Frontend bind.** The Duplicates page calls `POST /libraries/:id/duplicates/analyze`, then `GET /duplicates?library_id=&status=open`. Group `id` is an integer. Sections split Exact content / Exact geometry / Likely. Cover-first multi-card review; Keep / Dismiss / Merge hit `/duplicates/:id/{keep,dismiss,merge}`. Analyze and decide are hidden unless `can_curate` / `can_merge`.
+**Frontend bind.** The Duplicates page calls `POST /libraries/:id/duplicates/analyze` (busy + last-run), then `GET /duplicates?library_id=&status=` with Open / Kept / Dismissed / Merged / All. Group `id` is an integer. Cards show Exact / Geometry / Likely from `confidence`, member count, and 2–4 covers. `/duplicates/:id` is a side-by-side review drawer (cover · title · creator · path · size · content/geometry digest snippets). Owner/contributor Keep / Dismiss / Merge hit `/duplicates/:id/{keep,dismiss,merge}` (merge confirm never silent-deletes). Viewers get a read-only compare.
 
 NFS remains source of truth. The DB is an index. Merge only moves files through `ModelComposer`'s path jail. Nothing auto-deletes library files.
 
