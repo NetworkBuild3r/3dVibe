@@ -28,7 +28,7 @@ Storage is the owner's NFS mount. There is one library pile.
 - First-class archive visibility for zip/3mf
 - Token auth
 - HITL AI curation: sidecar contract, stub curator, ingest, review queue, path-jailed apply
-- Postgres `ILIKE` search (Meilisearch is optional via a compose profile)
+- Meilisearch-backed faceted search with a Postgres `ILIKE` fallback when Meili is down or unset
 - In-browser Three.js viewer that **does not** auto-load meshes on cards
 - Print-from-browser: owner printer registry, path-jailed Sidekiq dispatch, mock adapter + SDCP interface
 
@@ -39,6 +39,7 @@ web (Vite SPA) ──JSON──► api (Rails 8, API-only)
                               │
                               ├── PostgreSQL   catalog, users, invites, uploads, cursors
                               ├── Redis        Sidekiq
+                              ├── Meilisearch  vibe_models index (compose default)
                               └── NFS / disk   library root (bind-mounted, read-write)
 ```
 
@@ -61,6 +62,7 @@ Domain objects (original names):
 Background jobs:
 
 - `IncrementalScanJob` — walks a library (or one folder prefix after an upload) and updates stale folders
+- `IndexVibeModelJob` / `RemoveVibeModelIndexJob` / `ReindexSearchJob` — keep Meilisearch in sync after scan, upload, destroy, and curation apply
 - `DerivePreviewJob` — stub for stills / decimated meshes
 - `FetchCurationProposalsJob` — polls the curator sidecar (or in-process stub) and upserts pending `CurationProposal` rows
 - `ApplyCurationProposalJob` — applies an approved rename/move/merge (tags apply in-request)
@@ -88,15 +90,16 @@ Services:
 | API health | http://localhost:3000/up |
 | Postgres | localhost:5432 |
 | Redis | localhost:6379 |
-| Meilisearch (optional) | `docker compose --profile search up` → localhost:7700 |
+| Meilisearch | http://localhost:7700 (`MEILI_URL` / `MEILI_MASTER_KEY`) |
 | Curator stub (optional) | `docker compose --profile curator up` → localhost:8088 |
 
 On first boot the API runs `db:prepare`. Seed the owner and scan the sample library:
 
 ```bash
 docker compose exec api bin/rails db:seed
-# or rescan later
+# or rescan / rebuild the search index later
 docker compose exec api bin/rails vibe:scan
+docker compose exec api bin/rails vibe:reindex
 ```
 
 Default owner (override with `VIBE_OWNER_EMAIL` / `VIBE_OWNER_PASSWORD`):
@@ -104,7 +107,9 @@ Default owner (override with `VIBE_OWNER_EMAIL` / `VIBE_OWNER_PASSWORD`):
 - email: `owner@3dvibe.local`
 - password: `vibe-dev-password`
 
-Open the web app, sign in, scroll the gallery, open **Packed Minis**, and expand archive members.
+Open the web app, sign in, scroll the gallery, type in the search box (debounced, faceted), open **Packed Minis**, and expand archive members.
+
+Search indexes title, folder path, tags, asset filenames/paths, archive-member paths, uploader, `updated_at`, and `has_preview` (mesh or previewable archive member). If Meilisearch is unreachable, `GET /api/v1/search` answers from Postgres and sets `fallback: true`.
 
 ### Print from browser (mock printer)
 
@@ -187,6 +192,10 @@ Environment variables (see `.env.example`):
 | `VIBE_CURATOR_TIMEOUT` | HTTP timeout in seconds (default 8) |
 | `VIBE_PRINT_TIMEOUT` | Adapter timeout in seconds (default 15). Timeouts mark the job failed; they do not 502 the UI |
 | `VIBE_PRINT_MOCK_DELAY_MS` | Mock adapter step delay (compose default 400; unset/0 in tests) |
+| `MEILI_URL` | Meilisearch base URL (`http://meilisearch:7700` in compose). Alias: `MEILISEARCH_URL` |
+| `MEILI_MASTER_KEY` | Admin key used to create the index and write documents |
+| `MEILI_SEARCH_KEY` | Optional search-only key. When blank, search uses the master key |
+| `MEILI_TIMEOUT` | HTTP timeout in seconds for Meili calls (default 2). Failures fall back to Postgres |
 
 Each first-level directory under the library root becomes a `VibeModel`. Hidden first-level folders (including `.vibe-incoming` used during uploads) are ignored. Files beneath a model folder become `Asset` rows. Zip/3mf files are opened only far enough to read the central directory and, on demand, a single member stream.
 
@@ -202,7 +211,7 @@ All endpoints except `POST /api/v1/session`, invite preview/redeem, and `GET /up
 - `GET /api/v1/models/:id/archive_members`
 - `GET /api/v1/assets/:id/content` (lazy mesh / file stream)
 - `GET /api/v1/archive_members/:id/preview`
-- `GET /api/v1/search?q=`
+- `GET /api/v1/search?q=&tag=&tags[]=&has_preview=&library_id=&uploaded_by_id=&offset=&limit=` (Meilisearch when configured; Postgres `ILIKE` fallback)
 - `GET /api/v1/curation_proposals?status=`
 - `POST /api/v1/curation_proposals` `{ library_id, curation_proposal: { kind, summary, payload, sidecar_ref? } }`
 - `POST /api/v1/curation_proposals/fetch` `{ library_id }` (owner/contributor; polls sidecar)
@@ -239,7 +248,7 @@ api/                 Rails 8 API-only application
 web/                 React + Vite SPA
 curator/             Dev stub curator (compose profile `curator`)
 fixtures/library/    Sample on-disk collection used by seed/scan
-docker-compose.yml   api, worker, db, redis, web (+ optional curator, meilisearch)
+docker-compose.yml   api, worker, db, redis, web, meilisearch (+ optional curator)
 ```
 
 ## Curation sidecar contract

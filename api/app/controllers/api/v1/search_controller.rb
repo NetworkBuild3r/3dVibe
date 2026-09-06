@@ -2,26 +2,39 @@ module API
   module V1
     class SearchController < ApplicationController
       def index
-        query = params[:q].to_s
-        scope = accessible_models.includes(:tags, :library, :uploaded_by)
-        models = ModelSearch.new(scope, query: query).results.recent.limit(50)
+        result = ModelSearch.new(
+          accessible_models,
+          query: params[:q],
+          filters: {
+            tags: search_tags,
+            library_id: params[:library_id],
+            uploaded_by_id: params[:uploaded_by_id],
+            has_preview: params[:has_preview]
+          },
+          offset: params.fetch(:offset, 0),
+          limit: params.fetch(:limit, 18)
+        ).call
 
         render json: {
-          query: query,
-          engine: ENV["MEILISEARCH_URL"].present? ? "meilisearch" : "postgres",
-          models: models.map do |model|
-            {
-              id: model.id,
-              title: model.title,
-              folder_name: model.folder_name,
-              synopsis: model.synopsis,
-              tags: model.tags.map(&:name),
-              library_id: model.library_id,
-              library_name: model.library.name,
-              uploaded_by: model.uploaded_by && { id: model.uploaded_by.id, display_name: model.uploaded_by.display_name }
-            }
-          end
+          query: result.query,
+          engine: result.engine,
+          fallback: result.fallback,
+          offset: result.offset,
+          limit: result.limit,
+          estimated_total: result.estimated_total,
+          next_offset: result.next_offset,
+          facets: result.facets,
+          models: result.models.map(&:as_card)
         }
+      end
+
+      private
+
+      def search_tags
+        values = []
+        values.concat(Array(params[:tags]))
+        values << params[:tag]
+        values.flatten.compact
       end
     end
   end

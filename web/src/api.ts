@@ -36,6 +36,7 @@ export type ModelCard = {
   tags: string[];
   updated_at: string;
   uploaded_by?: Author | null;
+  has_preview?: boolean;
 };
 
 export type Asset = {
@@ -229,7 +230,32 @@ export const api = {
   model: (id: string | number) => request<{ model: ModelDetail }>(`/models/${id}`),
   archiveMembers: (modelId: string | number) =>
     request<{ members: ArchiveMember[] }>(`/models/${modelId}/archive_members`),
-  search: (q: string) => request<{ models: ModelCard[]; engine: string }>(`/search?q=${encodeURIComponent(q)}`),
+  search: (options: {
+    q?: string;
+    tag?: string;
+    has_preview?: boolean | "";
+    offset?: number;
+    limit?: number;
+    library_id?: number | string;
+  }) => {
+    const params = new URLSearchParams();
+    if (options.q) params.set("q", options.q);
+    if (options.tag) params.set("tag", options.tag);
+    if (options.has_preview === true || options.has_preview === false) {
+      params.set("has_preview", String(options.has_preview));
+    }
+    if (options.offset != null) params.set("offset", String(options.offset));
+    if (options.limit != null) params.set("limit", String(options.limit));
+    if (options.library_id) params.set("library_id", String(options.library_id));
+    return request<{
+      models: ModelCard[];
+      engine: string;
+      fallback: boolean;
+      next_offset: number | null;
+      estimated_total: number;
+      facets: { tags: Record<string, number>; has_preview: Record<string, number> };
+    }>(`/search?${params}`);
+  },
   proposals: (status?: string) => {
     const suffix = status ? `?status=${encodeURIComponent(status)}` : "";
     return request<{ proposals: CurationProposal[] }>(`/curation_proposals${suffix}`);

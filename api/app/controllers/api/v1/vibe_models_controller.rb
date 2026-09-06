@@ -2,7 +2,7 @@ module API
   module V1
     class VibeModelsController < ApplicationController
       def index
-        scope = accessible_models.includes(:tags, :library, :uploaded_by).recent
+        scope = accessible_models.includes(:tags, :library, :uploaded_by, :assets).recent
         scope = scope.where(library_id: params[:library_id]) if params[:library_id].present?
         limit = [[params.fetch(:limit, 24).to_i, 1].max, 60].min
 
@@ -21,7 +21,7 @@ module API
         models = models.first(limit)
 
         render json: {
-          models: models.map { |model| card_payload(model) },
+          models: models.map(&:as_card),
           next_cursor: has_more ? models.last&.id : nil
         }
       end
@@ -33,24 +33,8 @@ module API
 
       private
 
-      def card_payload(model)
-        {
-          id: model.id,
-          title: model.title,
-          folder_name: model.folder_name,
-          synopsis: model.synopsis,
-          asset_count: model.asset_count,
-          byte_size: model.byte_size,
-          library_id: model.library_id,
-          library_name: model.library.name,
-          tags: model.tags.map(&:name),
-          updated_at: model.updated_at,
-          uploaded_by: author_payload(model.uploaded_by)
-        }
-      end
-
       def detail_payload(model)
-        card_payload(model).merge(
+        model.as_card.merge(
           folder_mtime: model.folder_mtime,
           assets: model.assets.order(:relative_path).map do |asset|
             {
@@ -63,16 +47,10 @@ module API
               archive: asset.archive?,
               mesh: asset.mesh?,
               archive_member_count: asset.archive_members.size,
-              uploaded_by: author_payload(asset.uploaded_by)
+              uploaded_by: asset.uploaded_by && { id: asset.uploaded_by.id, display_name: asset.uploaded_by.display_name }
             }
           end
         )
-      end
-
-      def author_payload(user)
-        return if user.blank?
-
-        { id: user.id, display_name: user.display_name }
       end
     end
   end

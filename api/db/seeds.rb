@@ -63,4 +63,11 @@ Invite.find_or_create_by!(library: library, email: "friend@3dvibe.local") do |in
   invite.expires_at = 30.days.from_now
 end
 
+if MeilisearchClient.configured?
+  reindexed = SearchIndex.new.reindex_all!(library.vibe_models)
+  puts "Search index: #{reindexed.inspect} via #{MeilisearchClient.url}"
+else
+  puts "Search index: skipped (MEILI_URL unset; Postgres fallback)"
+end
+
 puts "Seeded owner #{owner.email} / library #{library.name} (#{library.vibe_models.count} models, #{library.printers.count} printers)"

@@ -86,6 +86,7 @@ class LibraryScanner
     model.assets.where.not(relative_path: seen_paths).find_each(&:destroy)
     model.update!(asset_count: model.assets.count)
     assign_default_tags(model)
+    SearchIndex.enqueue(model)
   end
 
   def upsert_asset(model, path, relative_path)

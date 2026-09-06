@@ -73,9 +73,31 @@ class APIV1Test < ActionDispatch::IntegrationTest
   test "search uses postgres ilike fallback" do
     get "/api/v1/search", params: { q: "horn" }, headers: auth_header(@owner)
     assert_response :success
-    titles = response.parsed_body.fetch("models").map { |model| model["title"] }
+    body = response.parsed_body
+    titles = body.fetch("models").map { |model| model["title"] }
     assert titles.any? { |title| title.downcase.include?("horn") }
-    assert_equal "postgres", response.parsed_body["engine"]
+    assert_equal "postgres", body["engine"]
+    refute body["fallback"]
+    assert body["models"].first.key?("has_preview")
+    assert body["facets"]["tags"].present?
+  end
+
+  test "search filters by tag and paginates with offset" do
+    headers = auth_header(@owner)
+    get "/api/v1/search", params: { q: "", tag: "stl", limit: 1 }, headers: headers
+    assert_response :success
+    body = response.parsed_body
+    assert body.fetch("models").all? { |model| model["tags"].include?("stl") }
+    assert body["estimated_total"] >= 1
+
+    get "/api/v1/search", params: { q: "lid" }, headers: headers
+    assert_response :success
+    titles = response.parsed_body.fetch("models").map { |model| model["title"] }
+    assert titles.any? { |title| title.downcase.include?("crate") }
+
+    get "/api/v1/search", params: { has_preview: true, limit: 1, offset: 0 }, headers: headers
+    assert_response :success
+    assert response.parsed_body.fetch("models").all? { |model| model["has_preview"] }
   end
 
   test "owner can approve and reject curation proposals" do
