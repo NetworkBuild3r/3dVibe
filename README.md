@@ -14,9 +14,9 @@ Storage is the owner's NFS mount. There is one library pile.
 
 | Role | Who | What they can do |
 | --- | --- | --- |
-| `owner` | The library admin | Invite/revoke, upload, trigger/schedule library scans, review/apply curation, manage printers |
-| `contributor` | Default for invited friends | Browse/search the whole catalog, upload, review/apply curation, and queue prints |
-| `viewer` | Optional read-only invite | Browse/search the catalog, see the curation queue, and request a print |
+| `owner` | The library admin | Invite/revoke, upload, trigger/schedule library scans, review/apply curation, manage printers, **send print jobs** |
+| `contributor` | Default for invited friends | Browse/search the whole catalog, upload, like/bookmark, review/apply curation, merge/split models |
+| `viewer` | Optional read-only invite | Browse/search the catalog, like/bookmark, see the curation queue |
 
 ## What you get
 
@@ -30,7 +30,10 @@ Storage is the owner's NFS mount. There is one library pile.
 - HITL AI curation: sidecar contract, stub curator, ingest, review queue, path-jailed apply
 - Meilisearch-backed faceted search with a Postgres `ILIKE` fallback when Meili is down or unset
 - In-browser Three.js viewer that **does not** auto-load meshes on cards
-- Print-from-browser: owner printer registry, path-jailed Sidekiq dispatch, mock adapter + SDCP interface
+- Print-from-browser: owner printer registry, **owner-only** enqueue, private print history, path-jailed Sidekiq dispatch, mock adapter + SDCP interface
+- Personal likes and bookmark folders (organize the shared catalog; they never hide models)
+- Path-jailed model merge/split (move archives/STLs on disk, never load them into RAM)
+- Duplicate review (content hash + filename/size heuristics)
 
 ## Architecture
 
@@ -58,7 +61,9 @@ Domain objects (original names):
 | `ScanCursor` | Incremental NFS fingerprint per folder prefix (mtime, size, inode, nlink, deep-scan time) |
 | `ScanRun` | One walk/prune attempt: status, file/folder counts, errors, resume cursor |
 | `Printer` | Owner-managed registry entry (name, host/IP, protocol, enabled) |
-| `PrintDispatch` | Print job: queued → sending → printing → succeeded/failed/cancelled |
+| `PrintDispatch` | Print job private to the requester: queued → sending → printing → succeeded/failed/cancelled |
+| `Like` / `BookmarkFolder` / `Bookmark` | Personal catalog organization (not visibility) |
+| `ModelMerge` | Recorded merge so a split can restore first-level folders |
 
 Background jobs:
 
@@ -69,6 +74,8 @@ Background jobs:
 - `FetchCurationProposalsJob` — polls the curator sidecar (or in-process stub) and upserts pending `CurationProposal` rows
 - `ApplyCurationProposalJob` — applies an approved rename/move/merge (tags apply in-request)
 - `DispatchPrintJob` — path-jails a library file and sends it through a printer adapter (mock simulates progress)
+- `ModelComposer` — merge/split first-level folders and selected files inside the path jail
+- `DuplicateFinder` — groups assets by SHA-256 and filename+size (streams hashes; does not slurp archives)
 
 The curation sidecar is `CurationSidecar`. In development/test a blank or `stub` URL generates deterministic fixture proposals. A compose profile runs the same contract as HTTP.
 
@@ -121,10 +128,16 @@ The browser never talks to a printer. It only calls the 3dvibe API. The API/work
 ```bash
 docker compose exec api bin/rails db:seed          # seeds a "Studio mock" printer
 # Owner: Printers page → add/edit/remove (or keep the seeded mock)
-# Anyone signed in: open Signal Horn → Print → job walks queued → succeeded
-# Shared history: Prints
+# Owner only: open Signal Horn → Print → job walks queued → succeeded
+# Personal history: Prints (other users cannot see this job)
 docker compose exec api bin/rails vibe:print       # same path without the UI
 ```
+
+Likes, shelves, merge/split, and duplicates:
+
+1. Heart a card or open **Shelves** to make a personal folder. The model stays in everyone's library.
+2. Owner/contributor: select two cards → **Merge into one model**, then open the result and **Split last merge**.
+3. **Duplicates** lists exact hashes and same-name/size groups. Select files and merge if you want one folder.
 
 ### Invite a friend
 
@@ -271,8 +284,16 @@ All endpoints except `POST /api/v1/session`, invite preview/redeem, and `GET /up
 - `GET /api/v1/me`
 - `GET /api/v1/libraries` · `GET /api/v1/libraries/:id` (owner payload includes `scan`, `scan_settings`, `cursors`)
 - `POST /api/v1/libraries/:id/scan` `{ path_prefix? }` owner-only; `202` + latest scan status
-- `GET /api/v1/models?cursor=&limit=` (cursor pagination; no owner ACL filter)
+- `GET /api/v1/models?cursor=&limit=` (cursor pagination; no owner ACL filter; includes `liked`, `like_count`, `bookmark_folder_ids`)
 - `GET /api/v1/models/:id`
+- `POST /api/v1/models/:id/like` · `DELETE /api/v1/models/:id/like`
+- `POST /api/v1/models/merge` `{ library_id, source_ids?|asset_ids?, target_id?|title? }` (owner/contributor)
+- `POST /api/v1/models/:id/split` `{ merge_id? }`
+- `GET /api/v1/likes`
+- `GET /api/v1/bookmark_folders` · `POST /api/v1/bookmark_folders` `{ name }`
+- `GET /api/v1/bookmark_folders/:id` · `PATCH` · `DELETE`
+- `POST /api/v1/bookmark_folders/:id/bookmarks` `{ model_id }` · `DELETE .../bookmarks/:model_id`
+- `GET /api/v1/duplicates?library_id=`
 - `GET /api/v1/models/:id/archive_members?asset_id=&prefix=&q=&view=tree|flat&limit=&offset=` (nested children by default; `q` searches paths; `view=flat` paginates every member)
 - `GET /api/v1/archive_members/:id` (size, path, content type, streamable)
 - `GET /api/v1/archive_members/:id/content` (stream one member; `?download=1` for attachment)
@@ -287,9 +308,9 @@ All endpoints except `POST /api/v1/session`, invite preview/redeem, and `GET /up
 - `POST /api/v1/curation_proposals/:id/approve` · `POST .../reject`
 - `GET /api/v1/printers` · `POST /api/v1/printers` `{ library_id, name, host, protocol_type, enabled?, notes? }` (create/update/delete: owner)
 - `PATCH /api/v1/printers/:id` · `DELETE /api/v1/printers/:id`
-- `GET /api/v1/print_jobs?status=` · `GET /api/v1/print_jobs/:id`
-- `POST /api/v1/print_jobs` `{ printer_id, model_id, asset_id }` → `202` + `queued` (worker updates status)
-- `POST /api/v1/print_jobs/:id/cancel`
+- `GET /api/v1/print_jobs?status=` · `GET /api/v1/print_jobs/:id` (the signed-in user's jobs only)
+- `POST /api/v1/print_jobs` `{ printer_id, model_id, asset_id }` → `202` + `queued` (**library owner** only)
+- `POST /api/v1/print_jobs/:id/cancel` (requester only)
 - `GET /api/v1/invites` · `POST /api/v1/invites` `{ library_id, email?, role?, expires_in_days? }`
 - `GET /api/v1/invites/token/:token` (public preview)
 - `POST /api/v1/invites/:token/redeem` `{ email, password, display_name }`

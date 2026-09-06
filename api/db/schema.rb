@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_09_06_040000) do
+ActiveRecord::Schema[8.0].define(version: 2026_09_06_050000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -62,6 +62,29 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_06_040000) do
     t.index ["uploaded_by_id"], name: "index_assets_on_uploaded_by_id"
     t.index ["vibe_model_id", "relative_path"], name: "index_assets_on_vibe_model_id_and_relative_path", unique: true
     t.index ["vibe_model_id"], name: "index_assets_on_vibe_model_id"
+  end
+
+  create_table "bookmark_folders", force: :cascade do |t|
+    t.bigint "user_id", null: false
+    t.string "name", null: false
+    t.integer "position", default: 0, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["user_id", "name"], name: "index_bookmark_folders_on_user_id_and_name", unique: true
+    t.index ["user_id"], name: "index_bookmark_folders_on_user_id"
+  end
+
+  create_table "bookmarks", force: :cascade do |t|
+    t.bigint "user_id", null: false
+    t.bigint "vibe_model_id", null: false
+    t.bigint "bookmark_folder_id", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["bookmark_folder_id", "vibe_model_id"], name: "index_bookmarks_on_bookmark_folder_id_and_vibe_model_id", unique: true
+    t.index ["bookmark_folder_id"], name: "index_bookmarks_on_bookmark_folder_id"
+    t.index ["user_id", "vibe_model_id"], name: "index_bookmarks_on_user_id_and_vibe_model_id"
+    t.index ["user_id"], name: "index_bookmarks_on_user_id"
+    t.index ["vibe_model_id"], name: "index_bookmarks_on_vibe_model_id"
   end
 
   create_table "curation_proposals", force: :cascade do |t|
@@ -127,6 +150,16 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_06_040000) do
     t.index ["uploaded_by_id"], name: "index_library_uploads_on_uploaded_by_id"
   end
 
+  create_table "likes", force: :cascade do |t|
+    t.bigint "user_id", null: false
+    t.bigint "vibe_model_id", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["user_id", "vibe_model_id"], name: "index_likes_on_user_id_and_vibe_model_id", unique: true
+    t.index ["user_id"], name: "index_likes_on_user_id"
+    t.index ["vibe_model_id"], name: "index_likes_on_vibe_model_id"
+  end
+
   create_table "memberships", force: :cascade do |t|
     t.bigint "user_id", null: false
     t.bigint "library_id", null: false
@@ -136,6 +169,22 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_06_040000) do
     t.index ["library_id"], name: "index_memberships_on_library_id"
     t.index ["user_id", "library_id"], name: "index_memberships_on_user_id_and_library_id", unique: true
     t.index ["user_id"], name: "index_memberships_on_user_id"
+  end
+
+  create_table "model_merges", force: :cascade do |t|
+    t.bigint "library_id", null: false
+    t.bigint "target_vibe_model_id", null: false
+    t.bigint "performed_by_id"
+    t.string "kind", null: false
+    t.jsonb "parts", default: [], null: false
+    t.jsonb "result", default: {}, null: false
+    t.datetime "split_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["library_id", "target_vibe_model_id"], name: "index_model_merges_on_library_id_and_target_vibe_model_id"
+    t.index ["library_id"], name: "index_model_merges_on_library_id"
+    t.index ["performed_by_id"], name: "index_model_merges_on_performed_by_id"
+    t.index ["target_vibe_model_id"], name: "index_model_merges_on_target_vibe_model_id"
   end
 
   create_table "print_dispatches", force: :cascade do |t|
@@ -273,14 +322,23 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_06_040000) do
   add_foreign_key "archive_members", "assets"
   add_foreign_key "assets", "users", column: "uploaded_by_id"
   add_foreign_key "assets", "vibe_models"
+  add_foreign_key "bookmark_folders", "users"
+  add_foreign_key "bookmarks", "bookmark_folders"
+  add_foreign_key "bookmarks", "users"
+  add_foreign_key "bookmarks", "vibe_models"
   add_foreign_key "curation_proposals", "libraries"
   add_foreign_key "curation_proposals", "users", column: "reviewed_by_id"
   add_foreign_key "invites", "libraries"
   add_foreign_key "invites", "users", column: "invited_by_id"
   add_foreign_key "library_uploads", "libraries"
   add_foreign_key "library_uploads", "users", column: "uploaded_by_id"
+  add_foreign_key "likes", "users"
+  add_foreign_key "likes", "vibe_models"
   add_foreign_key "memberships", "libraries"
   add_foreign_key "memberships", "users"
+  add_foreign_key "model_merges", "libraries"
+  add_foreign_key "model_merges", "users", column: "performed_by_id"
+  add_foreign_key "model_merges", "vibe_models", column: "target_vibe_model_id"
   add_foreign_key "print_dispatches", "assets"
   add_foreign_key "print_dispatches", "libraries"
   add_foreign_key "print_dispatches", "printers"

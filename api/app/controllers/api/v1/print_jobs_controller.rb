@@ -2,13 +2,13 @@ module API
   module V1
     class PrintJobsController < ApplicationController
       def index
-        jobs = PrintDispatch.includes(:printer, :vibe_model, :asset, :requested_by, :library).recent.limit(100)
+        jobs = own_jobs.includes(:printer, :vibe_model, :asset, :requested_by, :library).recent.limit(100)
         jobs = jobs.where(status: params[:status]) if params[:status].present?
         render json: { print_jobs: jobs.map { |job| serialize(job) } }
       end
 
       def show
-        job = PrintDispatch.find(params[:id])
+        job = own_jobs.find(params[:id])
         render json: { print_job: serialize(job) }
       end
 
@@ -41,7 +41,7 @@ module API
       end
 
       def cancel
-        job = PrintDispatch.find(params[:id])
+        job = own_jobs.find(params[:id])
         unless can_cancel?(job)
           render json: { error: "forbidden" }, status: :forbidden
           return
@@ -75,8 +75,12 @@ module API
         printer
       end
 
+      def own_jobs
+        PrintDispatch.where(requested_by: current_user)
+      end
+
       def can_cancel?(job)
-        job.requested_by_id == current_user.id || current_user.owner_of?(job.library || job.vibe_model&.library)
+        job.requested_by_id == current_user.id
       end
 
       def serialize(job)

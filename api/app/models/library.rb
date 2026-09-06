@@ -9,6 +9,7 @@ class Library < ApplicationRecord
   has_many :library_uploads, dependent: :destroy
   has_many :printers, dependent: :destroy
   has_many :print_dispatches, dependent: :nullify
+  has_many :model_merges, dependent: :destroy
 
   validates :name, presence: true
   validates :root_path, presence: true

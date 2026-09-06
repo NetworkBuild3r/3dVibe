@@ -21,7 +21,7 @@ module API
         models = models.first(limit)
 
         render json: {
-          models: models.map(&:as_card),
+          models: VibeModel.card_payloads(models, viewer: current_user),
           next_cursor: has_more ? models.last&.id : nil
         }
       end
@@ -31,11 +31,56 @@ module API
         render json: { model: detail_payload(model) }
       end
 
+      def like
+        model = accessible_models.find(params[:id])
+        current_user.likes.find_or_create_by!(vibe_model: model)
+        render json: { model: detail_payload(model.reload), liked: true }
+      end
+
+      def unlike
+        model = accessible_models.find(params[:id])
+        current_user.likes.where(vibe_model: model).delete_all
+        render json: { model: detail_payload(model.reload), liked: false }
+      end
+
+      def merge
+        library = accessible_libraries.find(params.require(:library_id))
+        return if require_curator!(library)
+
+        record = ModelComposer.new(library, performed_by: current_user).merge!(
+          source_ids: params[:source_ids] || params[:model_ids],
+          asset_ids: params[:asset_ids],
+          target_id: params[:target_id],
+          title: params[:title],
+          folder_name: params[:folder_name]
+        )
+        target = accessible_models.includes(:tags, :uploaded_by, assets: %i[archive_members uploaded_by])
+                                 .find(record.target_vibe_model_id)
+        render json: { merge: record.as_api, model: detail_payload(target) }, status: :created
+      end
+
+      def split
+        model = accessible_models.find(params[:id])
+        return if require_curator!(model.library)
+
+        record = ModelComposer.new(model.library, performed_by: current_user).split!(
+          model,
+          merge_id: params[:merge_id]
+        )
+        restored = restored_models(record)
+        render json: {
+          merge: record.as_api,
+          models: VibeModel.card_payloads(restored, viewer: current_user)
+        }
+      end
+
       private
 
       def detail_payload(model)
-        model.as_card.merge(
+        card = VibeModel.card_payloads([model], viewer: current_user).first
+        card.merge(
           folder_mtime: model.folder_mtime,
+          merges: model.model_merges.includes(:performed_by).recent.map(&:as_api),
           assets: model.assets.order(:relative_path).map do |asset|
             {
               id: asset.id,
@@ -53,6 +98,11 @@ module API
             }
           end
         )
+      end
+
+      def restored_models(record)
+        names = Array(record.result["restored"]).filter_map { |part| part["folder_name"] }
+        record.library.vibe_models.where(folder_name: names).includes(:tags, :library, :uploaded_by, :assets)
       end
     end
   end

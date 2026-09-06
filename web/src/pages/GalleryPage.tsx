@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
-import { api, type ModelCard } from "../api";
+import { Link, useNavigate } from "react-router-dom";
+import { api, type BookmarkFolder, type ModelCard } from "../api";
+import { useAuth } from "../auth";
 
 const PAGE_SIZE = 18;
 const SEARCH_DEBOUNCE_MS = 280;
@@ -16,7 +17,13 @@ function searching(query: string, tag: string, preview: boolean) {
 }
 
 export function GalleryPage() {
+  const { user } = useAuth();
+  const navigate = useNavigate();
   const [models, setModels] = useState<ModelCard[]>([]);
+  const [selected, setSelected] = useState<number[]>([]);
+  const [folders, setFolders] = useState<BookmarkFolder[]>([]);
+  const [mergeTitle, setMergeTitle] = useState("Merged models");
+  const [mergeStatus, setMergeStatus] = useState("");
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
@@ -127,6 +134,13 @@ export function GalleryPage() {
   }, [loadMore]);
 
   useEffect(() => {
+    api
+      .bookmarkFolders()
+      .then((payload) => setFolders(payload.bookmark_folders))
+      .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
     queryRef.current = query;
     tagRef.current = tag;
     previewRef.current = hasPreview;
@@ -140,13 +154,46 @@ export function GalleryPage() {
     setTag((current) => (current === name ? "" : name));
   }
 
+  function toggleSelected(id: number) {
+    setSelected((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
+  }
+
+  async function toggleLike(model: ModelCard) {
+    const payload = model.liked ? await api.unlikeModel(model.id) : await api.likeModel(model.id);
+    setModels((current) => current.map((item) => (item.id === model.id ? { ...item, ...payload.model } : item)));
+  }
+
+  async function bookmark(modelId: number, folderId: number) {
+    const payload = await api.addBookmark(folderId, modelId);
+    setModels((current) => current.map((item) => (item.id === modelId ? { ...item, ...payload.model } : item)));
+  }
+
+  async function mergeSelected() {
+    const first = models.find((model) => selected.includes(model.id));
+    if (!first || selected.length < 2) return;
+    setMergeStatus("Merging…");
+    try {
+      const payload = await api.mergeModels({
+        library_id: first.library_id,
+        source_ids: selected,
+        title: mergeTitle
+      });
+      setMergeStatus(`Merged into ${payload.model.title}`);
+      setSelected([]);
+      navigate(`/models/${payload.model.id}`);
+    } catch (err) {
+      setMergeStatus(err instanceof Error ? err.message : "Merge failed");
+    }
+  }
+
   return (
     <div>
       <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="font-display text-3xl text-white">Library</h1>
           <p className="mt-1 text-sm text-slate-400">
-            One shared catalog. Every signed-in friend sees the same folders. Cards never auto-load meshes.
+            One shared catalog. Likes and shelves are personal; they do not hide folders from anyone. Cards never
+            auto-load meshes.
           </p>
         </div>
         <input
@@ -181,37 +228,92 @@ export function GalleryPage() {
         ))}
         {activeSearch && engine ? <span className="ml-auto text-xs text-slate-500">{engine}</span> : null}
       </div>
+      {user?.can_merge && selected.length >= 2 ? (
+        <div className="mb-5 flex flex-wrap items-center gap-3 rounded-2xl border border-accent-500/20 bg-accent-500/5 px-4 py-3">
+          <span className="text-sm text-slate-200">{selected.length} selected</span>
+          <input
+            value={mergeTitle}
+            onChange={(event) => setMergeTitle(event.target.value)}
+            className="rounded-lg border border-white/10 bg-ink-950 px-3 py-1.5 text-sm"
+          />
+          <button type="button" className="text-sm text-accent-300" onClick={() => void mergeSelected()}>
+            Merge into one model
+          </button>
+          {mergeStatus ? <span className="text-xs text-slate-500">{mergeStatus}</span> : null}
+        </div>
+      ) : null}
       <div className="card-grid">
         {models.map((model) => (
-          <Link
+          <div
             key={model.id}
-            to={`/models/${model.id}`}
             className="group rounded-2xl border border-white/10 bg-ink-900/70 p-4 transition hover:-translate-y-0.5 hover:border-accent-500/40"
           >
-            <div className="mb-4 grid h-28 place-items-center rounded-xl bg-ink-800 text-xs uppercase tracking-widest text-slate-500">
-              {model.has_preview ? "Preview ready" : "Mesh idle"}
+            <div className="mb-3 flex items-center justify-between gap-2">
+              {user?.can_merge ? (
+                <label className="text-xs text-slate-500">
+                  <input
+                    type="checkbox"
+                    className="mr-2"
+                    checked={selected.includes(model.id)}
+                    onChange={() => toggleSelected(model.id)}
+                  />
+                  Select
+                </label>
+              ) : (
+                <span />
+              )}
+              <button
+                type="button"
+                className={`text-sm ${model.liked ? "text-rose-300" : "text-slate-500"}`}
+                onClick={() => void toggleLike(model)}
+              >
+                {model.liked ? "♥" : "♡"} {model.like_count || 0}
+              </button>
             </div>
-            <h2 className="font-display text-lg text-white group-hover:text-accent-400">{model.title}</h2>
-            <p className="mt-1 line-clamp-2 text-sm text-slate-400">{model.synopsis || model.folder_name}</p>
+            <Link to={`/models/${model.id}`}>
+              <div className="mb-4 grid h-28 place-items-center rounded-xl bg-ink-800 text-xs uppercase tracking-widest text-slate-500">
+                {model.has_preview ? "Preview ready" : "Mesh idle"}
+              </div>
+              <h2 className="font-display text-lg text-white group-hover:text-accent-400">{model.title}</h2>
+              <p className="mt-1 line-clamp-2 text-sm text-slate-400">{model.synopsis || model.folder_name}</p>
+            </Link>
             <div className="mt-3 flex flex-wrap gap-1.5">
               {model.tags.slice(0, 4).map((name) => (
-                <span
+                <button
                   key={name}
+                  type="button"
                   className="rounded-full bg-white/5 px-2 py-0.5 text-xs text-slate-300"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    toggleTag(name);
-                  }}
+                  onClick={() => toggleTag(name)}
                 >
                   {name}
-                </span>
+                </button>
               ))}
             </div>
             <p className="mt-3 text-xs text-slate-500">
               {model.asset_count} files · {formatBytes(model.byte_size)}
               {model.uploaded_by ? ` · uploaded by ${model.uploaded_by.display_name}` : ""}
+              {model.merged ? " · merged" : ""}
             </p>
-          </Link>
+            {folders.length ? (
+              <select
+                className="mt-3 w-full rounded-lg border border-white/10 bg-ink-950 px-2 py-1 text-xs"
+                defaultValue=""
+                onChange={(event) => {
+                  const folderId = Number(event.target.value);
+                  if (folderId) void bookmark(model.id, folderId);
+                  event.target.value = "";
+                }}
+              >
+                <option value="">Save to shelf…</option>
+                {folders.map((folder) => (
+                  <option key={folder.id} value={folder.id}>
+                    {folder.name}
+                    {model.bookmark_folder_ids?.includes(folder.id) ? " ✓" : ""}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+          </div>
         ))}
       </div>
       <div ref={sentinel} className="h-10" />

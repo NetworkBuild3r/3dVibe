@@ -12,7 +12,17 @@ Rails.application.routes.draw do
 
       resources :models, controller: "vibe_models", only: %i[index show] do
         resources :archive_members, only: :index
+        post :like, on: :member
+        delete :like, on: :member, action: :unlike
+        post :split, on: :member
+        post :merge, on: :collection
       end
+
+      resources :likes, only: :index
+      resources :bookmark_folders, only: %i[index show create update destroy] do
+        resources :bookmarks, only: %i[create destroy]
+      end
+      resources :duplicates, only: :index
 
       resources :assets, only: :show do
         get :content, on: :member

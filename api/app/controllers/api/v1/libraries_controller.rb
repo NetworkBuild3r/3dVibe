@@ -58,6 +58,7 @@ module API
           role: membership&.role || Membership::VIEWER,
           can_upload: current_user.can_upload?(library),
           can_print: current_user.can_print?(library),
+          can_merge: current_user.can_merge?(library),
           can_manage_printers: owner,
           can_scan: owner
         }

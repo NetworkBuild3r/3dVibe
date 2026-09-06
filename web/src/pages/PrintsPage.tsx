@@ -57,10 +57,10 @@ export function PrintsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="font-display text-3xl text-white">Print jobs</h1>
+        <h1 className="font-display text-3xl text-white">Your print history</h1>
         <p className="mt-2 max-w-2xl text-sm text-slate-400">
-          Shared queue for the studio library. Status is written by the worker after it path-jails the file and talks to
-          the printer adapter.
+          Only you can see jobs you queued. Sending a file to a printer is limited to the library owner; contributors
+          and viewers can still share into the catalog. Status is written by the worker after it path-jails the file.
         </p>
       </div>
 
