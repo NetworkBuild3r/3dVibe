@@ -82,7 +82,9 @@ class LibrariesScanTest < ActionDispatch::IntegrationTest
   end
 
   test "library without a scan run reports idle plus budgets" do
-    empty = Library.create!(name: "Empty", root_path: @root.to_s)
+    empty_root = Rails.root.join("tmp/api-scan-idle-#{SecureRandom.hex(4)}")
+    FileUtils.mkdir_p(empty_root)
+    empty = Library.create!(name: "Empty", root_path: empty_root.to_s)
     Membership.create!(user: @owner, library: empty, role: Membership::OWNER)
 
     get "/api/v1/libraries/#{empty.id}/scan", headers: auth_header(@owner)
@@ -93,6 +95,8 @@ class LibrariesScanTest < ActionDispatch::IntegrationTest
     assert_nil body["current"]
     assert_nil body["last"]
     assert_nil body.dig("scan", "resume")
+  ensure
+    FileUtils.rm_rf(empty_root) if defined?(empty_root) && empty_root
   end
 
   test "contributor and viewer can read scan status but cannot trigger" do
