@@ -101,21 +101,26 @@ class JobsTest < ActiveJob::TestCase
     assert user.present?
   end
 
-  test "analyze duplicates job persists groups and geometry stub no-ops" do
+  test "analyze duplicates job persists groups and geometry job writes a digest" do
     root = Rails.root.join("tmp/dup-job-#{SecureRandom.hex(4)}")
     FileUtils.mkdir_p(root.join("a"))
     FileUtils.mkdir_p(root.join("b"))
     File.write(root.join("a/horn.stl"), "solid horn\nendsolid horn\n")
     File.write(root.join("b/horn.stl"), "solid horn\nendsolid horn\n")
+    write_ascii_stl(root.join("a/cube.stl"))
     library = Library.create!(name: "Dup jobs", root_path: root.to_s)
     LibraryScanner.new(library, budget: ScanBudget.unlimited).scan!
-    asset = library.vibe_models.first.assets.find_by!(filename: "horn.stl")
+    empty = library.vibe_models.find_by!(folder_name: "a").assets.find_by!(filename: "horn.stl")
+    cube = library.vibe_models.find_by!(folder_name: "a").assets.find_by!(filename: "cube.stl")
 
     AnalyzeDuplicatesJob.perform_now(library.id)
     assert library.duplicate_groups.open.exists?(reason: DuplicateGroup::REASON_CONTENT_HASH)
+    assert cube.reload.geometry_digest.to_s.start_with?("qv1:")
 
-    assert_nothing_raised { ComputeGeometryDigestJob.perform_now(asset.id) }
-    assert_nil asset.reload.geometry_digest
+    assert_nothing_raised { ComputeGeometryDigestJob.perform_now(empty.id) }
+    assert_nil empty.reload.geometry_digest
+    ComputeGeometryDigestJob.perform_now(cube.id)
+    assert cube.reload.geometry_digest.to_s.start_with?("qv1:")
   ensure
     FileUtils.rm_rf(root)
   end

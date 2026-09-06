@@ -54,7 +54,7 @@ Domain objects (original names):
 | --- | --- |
 | `Library` | Root path on disk (your NFS mount) |
 | `VibeModel` | One folder under that root |
-| `Asset` | An on-disk file, with a content digest when the file is small enough and an optional `geometry_digest` from Rendering |
+| `Asset` | An on-disk file, with a content digest when the file is small enough and an optional `geometry_digest` from `GeometryFingerprint` |
 | `DuplicateGroup` | Persisted cluster (`content_hash` / `geometry` / `name_size`) with HITL status `open` \| `kept` \| `dismissed` \| `merged` |
 | `DuplicateGroupMember` | Asset (and optional model) in a group |
 | `DuplicateReview` | Keep / dismiss / merge decision + payload |
@@ -82,7 +82,7 @@ Background jobs:
 - `DispatchPrintJob` — path-jails a library file and sends it through a printer adapter (mock simulates progress)
 - `ModelComposer` — merge/split first-level folders and selected files inside the path jail
 - `AnalyzeDuplicatesJob` — on-demand (not every NFS poll): size-prefilter, stream SHA-256, upsert `open` groups, enqueue geometry fingerprints
-- `ComputeGeometryDigestJob` — stub hook for Rendering; no-ops when `geometry_digest` is blank (never loads archives)
+- `ComputeGeometryDigestJob` / `GeometryFingerprint` — path-jailed stl/obj/3mf fingerprint (center + unit AABB, quantized vertices, SHA-256 `qv1:…`). Writes via `GeometryWriteback.apply!`. Huge meshes skip / time out; 3MF streams the `.model` member
 - `DuplicateFinder` / `DuplicateAnalyzer` — cluster by content hash, geometry digest, then name+size; persist only; never delete NFS files
 - `GeometryWriteback` — Rendering sets `assets.geometry_digest` (`POST /api/v1/geometry/writeback` or `GeometryWriteback.apply!`)
 - `GenerateCoverJob` — path-jails the locked cover payload, generates a budgeted libvips webp (or fails for mesh-without-preview), writes back via `CoverWriteback.apply!`
@@ -148,7 +148,7 @@ Likes, shelves, merge/split, and duplicates:
 
 1. Heart a card or open **Shelves** to make a personal folder. The model stays in everyone's library.
 2. Owner/contributor: select two cards → **Merge into one model**, then open the result and **Split last merge**.
-3. **Duplicates** — owner/contributor `POST .../duplicates/analyze`, then review persisted groups. Keep (intentional copies), dismiss, or merge through `ModelComposer`. Viewers can list only. Near-dups (`geometry` / `name_size`) stay HITL; nothing is auto-deleted from NFS.
+3. **Duplicates** — owner/contributor: **Analyze library** (`POST /libraries/:id/duplicates/analyze`), then review Exact content / Exact geometry / Likely. Keep, dismiss, or merge through `ModelComposer`. Viewers can list only. Nothing is auto-deleted from NFS.
 
 ### Invite a friend
 
@@ -276,6 +276,10 @@ Owner API `GET /api/v1/libraries` (and show) includes the latest `scan` object. 
 | `VIBE_GEOMETRY_TOKEN` | Shared token for `POST /api/v1/geometry/writeback` (`X-Geometry-Token` or Bearer). Owner/contributor can also write back |
 | `VIBE_DUP_MAX_SECONDS` | Wall-clock cap per analyze job (default 60). `0` = unlimited |
 | `VIBE_DUP_MAX_FILES` | Streamed hashes per analyze job (default 2000). `0` = unlimited |
+| `VIBE_GEOM_MAX_SECONDS` | Mesh fingerprint time cap (default 20). `0` = unlimited |
+| `VIBE_GEOM_MAX_BYTES` | Skip meshes larger than this (default 48 MiB) |
+| `VIBE_GEOM_MAX_FACES` | Skip meshes with more faces than this (default 500000) |
+| `VIBE_GEOM_MAX_ASSETS` | Meshes fingerprinted inline per analyze (default 40) |
 | `VIBE_COVER_MAX_PX` | Cover generate budget, pixels (default 512). Passed through on the enqueue payload |
 | `VIBE_COVER_MAX_BYTES` | Cover generate budget, bytes (default 250000). Passed through on the enqueue payload |
 
@@ -329,7 +333,7 @@ Model card / index fields:
 
 Analyze is on-demand — it is **not** hooked to every NFS poll. `POST /api/v1/libraries/:id/duplicates/analyze` queues `AnalyzeDuplicatesJob`.
 
-The worker size-prefilters (only files that share a byte size are streamed for SHA-256), path-jails every hash (`LibraryPathJail#resolve_file` + `Digest::SHA256.file`), and never loads archives into RAM. Mesh assets missing `geometry_digest` enqueue `ComputeGeometryDigestJob` (stub until Rendering fills it).
+The worker size-prefilters (only files that share a byte size are streamed for SHA-256), path-jails every hash (`LibraryPathJail#resolve_file` + `Digest::SHA256.file`), and never loads archives into RAM. Pending `stl` / `obj` / `3mf` meshes are fingerprinted in-process (`GeometryFingerprint.compute` → `GeometryWriteback.apply!`) so the same analyze pass can open geometry groups. Leftovers enqueue `ComputeGeometryDigestJob`.
 
 Clustering, highest confidence first:
 
@@ -352,9 +356,9 @@ X-Geometry-Token: $VIBE_GEOMETRY_TOKEN
 { "asset_id": 99, "geometry_digest": "mesh:stable-fingerprint" }
 ```
 
-In-process: `GeometryWriteback.apply!(asset_id:, geometry_digest:)` or `asset.update!(geometry_digest:)`. `ComputeGeometryDigestJob` / `GeometryFingerprint.compute` is the hook to replace — today it path-jails the file and returns `nil`.
+In-process: `GeometryWriteback.apply!(asset_id:, geometry_digest:)` or `asset.update!(geometry_digest:)`. `GeometryFingerprint.compute` returns a `qv1:` digest (center + unit AABB, quantized sorted vertices) or `nil` for skip/timeout/empty mesh. The analyze job writes that digest through `GeometryWriteback` — there is no second writeback API.
 
-**Frontend bind.** `GET /duplicates` reads the index only (empty until analyze). Group `id` is an integer. Send `status=open` for the review queue. Keep/dismiss/merge hit the new member routes; `POST /models/merge` still works for ad-hoc merges. Show `status`, `geometry_digest`, and model cards on each group.
+**Frontend bind.** The Duplicates page calls `POST /libraries/:id/duplicates/analyze`, then `GET /duplicates?library_id=&status=open`. Group `id` is an integer. Sections split Exact content / Exact geometry / Likely. Cover-first multi-card review; Keep / Dismiss / Merge hit `/duplicates/:id/{keep,dismiss,merge}`. Analyze and decide are hidden unless `can_curate` / `can_merge`.
 
 NFS remains source of truth. The DB is an index. Merge only moves files through `ModelComposer`'s path jail. Nothing auto-deletes library files.
 

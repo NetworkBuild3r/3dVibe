@@ -84,6 +84,27 @@ class DuplicatesTest < ActionDispatch::IntegrationTest
     assert_includes ids, near_b.id
   end
 
+  test "analyze fingerprints re-exports and opens a geometry group" do
+    FileUtils.mkdir_p(@root.join("cube-stl"))
+    FileUtils.mkdir_p(@root.join("cube-obj"))
+    write_ascii_stl(@root.join("cube-stl/part.stl"))
+    write_obj(@root.join("cube-obj/part.obj"))
+    LibraryScanner.new(@library, budget: ScanBudget.unlimited).scan!
+
+    AnalyzeDuplicatesJob.perform_now(@library.id)
+
+    get "/api/v1/duplicates",
+        params: { library_id: @library.id, status: "open" },
+        headers: auth_header(@owner)
+    geo = response.parsed_body.fetch("groups").find { |group| group["reason"] == "geometry" }
+    assert geo
+    assert_equal "geometry", geo["confidence"]
+    assert geo["digest"].to_s.start_with?("qv1:")
+    names = geo.fetch("assets").map { |asset| asset["filename"] }
+    assert_includes names, "part.stl"
+    assert_includes names, "part.obj"
+  end
+
   test "keep and dismiss record a review and leave terminal groups on re-analyze" do
     AnalyzeDuplicatesJob.perform_now(@library.id)
     horn = DuplicateGroup.open.find_by!(reason: DuplicateGroup::REASON_CONTENT_HASH)
