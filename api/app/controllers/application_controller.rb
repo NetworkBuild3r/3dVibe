@@ -64,6 +64,12 @@ class ApplicationController < ActionController::API
     render json: { error: "forbidden" }, status: :forbidden
   end
 
+  def require_print!(library)
+    return if current_user.can_print?(library)
+
+    render json: { error: "forbidden" }, status: :forbidden
+  end
+
   def curator_authorized?
     expected = ENV["VIBE_CURATOR_TOKEN"].to_s
     return false if expected.blank?

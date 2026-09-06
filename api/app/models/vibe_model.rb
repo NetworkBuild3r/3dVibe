@@ -6,6 +6,7 @@ class VibeModel < ApplicationRecord
   has_many :archive_members, through: :assets
   has_many :tag_assignments, as: :taggable, dependent: :destroy
   has_many :tags, through: :tag_assignments
+  has_many :print_dispatches, dependent: :nullify
 
   validates :folder_name, presence: true, uniqueness: { scope: :library_id }
   validates :title, presence: true

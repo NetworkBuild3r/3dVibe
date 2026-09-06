@@ -45,7 +45,9 @@ module API
           model_count: library.vibe_models.count,
           shared: true,
           role: membership&.role || Membership::VIEWER,
-          can_upload: current_user.can_upload?(library)
+          can_upload: current_user.can_upload?(library),
+          can_print: current_user.can_print?(library),
+          can_manage_printers: current_user.owner_of?(library)
         }
         return payload unless detail
 

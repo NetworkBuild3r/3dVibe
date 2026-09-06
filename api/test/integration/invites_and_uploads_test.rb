@@ -67,7 +67,9 @@ class InvitesAndUploadsTest < ActionDispatch::IntegrationTest
     assert_equal Membership::CONTRIBUTOR, body.dig("user", "role")
     assert body.dig("user", "can_upload")
     assert body.dig("user", "can_curate")
+    assert body.dig("user", "can_print")
     refute body.dig("user", "can_invite")
+    refute body.dig("user", "can_manage_printers")
 
     get "/api/v1/me", headers: { "Authorization" => "Bearer #{body['token']}" }
     assert_response :success

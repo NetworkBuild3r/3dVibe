@@ -32,6 +32,14 @@ export function Layout() {
               <NavLink to="/curation" className={link}>
                 Curation
               </NavLink>
+              <NavLink to="/prints" className={link}>
+                Prints
+              </NavLink>
+              {user?.can_manage_printers ? (
+                <NavLink to="/printers" className={link}>
+                  Printers
+                </NavLink>
+              ) : null}
             </nav>
           </div>
           <div className="flex items-center gap-3 text-sm text-slate-400">

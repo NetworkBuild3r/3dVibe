@@ -14,9 +14,9 @@ Storage is the owner's NFS mount. There is one library pile.
 
 | Role | Who | What they can do |
 | --- | --- | --- |
-| `owner` | The library admin | Invite/revoke, upload, trigger a full scan, review/apply curation |
-| `contributor` | Default for invited friends | Browse/search the whole catalog, upload, and review/apply curation |
-| `viewer` | Optional read-only invite | Browse/search the catalog and see the curation queue |
+| `owner` | The library admin | Invite/revoke, upload, trigger a full scan, review/apply curation, manage printers |
+| `contributor` | Default for invited friends | Browse/search the whole catalog, upload, review/apply curation, and queue prints |
+| `viewer` | Optional read-only invite | Browse/search the catalog, see the curation queue, and request a print |
 
 ## What you get
 
@@ -30,7 +30,7 @@ Storage is the owner's NFS mount. There is one library pile.
 - HITL AI curation: sidecar contract, stub curator, ingest, review queue, path-jailed apply
 - Postgres `ILIKE` search (Meilisearch is optional via a compose profile)
 - In-browser Three.js viewer that **does not** auto-load meshes on cards
-- Print-from-browser API + UI placeholder
+- Print-from-browser: owner printer registry, path-jailed Sidekiq dispatch, mock adapter + SDCP interface
 
 ## Architecture
 
@@ -55,7 +55,8 @@ Domain objects (original names):
 | `LibraryUpload` | Resumable upload session that lands inside the library jail |
 | `CurationProposal` | Sidecar suggestion: pending / approved / rejected |
 | `ScanCursor` | Incremental index fingerprint per folder prefix |
-| `PrintDispatch` | Stubbed print-bridge request |
+| `Printer` | Owner-managed registry entry (name, host/IP, protocol, enabled) |
+| `PrintDispatch` | Print job: queued → sending → printing → succeeded/failed/cancelled |
 
 Background jobs:
 
@@ -63,6 +64,7 @@ Background jobs:
 - `DerivePreviewJob` — stub for stills / decimated meshes
 - `FetchCurationProposalsJob` — polls the curator sidecar (or in-process stub) and upserts pending `CurationProposal` rows
 - `ApplyCurationProposalJob` — applies an approved rename/move/merge (tags apply in-request)
+- `DispatchPrintJob` — path-jails a library file and sends it through a printer adapter (mock simulates progress)
 
 The curation sidecar is `CurationSidecar`. In development/test a blank or `stub` URL generates deterministic fixture proposals. A compose profile runs the same contract as HTTP.
 
@@ -103,6 +105,18 @@ Default owner (override with `VIBE_OWNER_EMAIL` / `VIBE_OWNER_PASSWORD`):
 - password: `vibe-dev-password`
 
 Open the web app, sign in, scroll the gallery, open **Packed Minis**, and expand archive members.
+
+### Print from browser (mock printer)
+
+The browser never talks to a printer. It only calls the 3dvibe API. The API/worker reads the file from the library jail and hands it to an adapter.
+
+```bash
+docker compose exec api bin/rails db:seed          # seeds a "Studio mock" printer
+# Owner: Printers page → add/edit/remove (or keep the seeded mock)
+# Anyone signed in: open Signal Horn → Print → job walks queued → succeeded
+# Shared history: Prints
+docker compose exec api bin/rails vibe:print       # same path without the UI
+```
 
 ### Invite a friend
 
@@ -171,6 +185,8 @@ Environment variables (see `.env.example`):
 | `VIBE_CURATOR_URL` | Curator base URL, or `stub` for the in-process fixture generator |
 | `VIBE_CURATOR_TOKEN` | Shared bearer token for poll + webhook ingest |
 | `VIBE_CURATOR_TIMEOUT` | HTTP timeout in seconds (default 8) |
+| `VIBE_PRINT_TIMEOUT` | Adapter timeout in seconds (default 15). Timeouts mark the job failed; they do not 502 the UI |
+| `VIBE_PRINT_MOCK_DELAY_MS` | Mock adapter step delay (compose default 400; unset/0 in tests) |
 
 Each first-level directory under the library root becomes a `VibeModel`. Hidden first-level folders (including `.vibe-incoming` used during uploads) are ignored. Files beneath a model folder become `Asset` rows. Zip/3mf files are opened only far enough to read the central directory and, on demand, a single member stream.
 
@@ -193,7 +209,11 @@ All endpoints except `POST /api/v1/session`, invite preview/redeem, and `GET /up
 - `POST /api/v1/curation_proposals/ingest` webhook (`X-Curator-Token` or user auth)
 - `POST /api/v1/curation_proposals/bulk` `{ ids, decision: "approve"|"reject" }`
 - `POST /api/v1/curation_proposals/:id/approve` · `POST .../reject`
-- `POST /api/v1/print_jobs` (always returns `unavailable` in this MVP)
+- `GET /api/v1/printers` · `POST /api/v1/printers` `{ library_id, name, host, protocol_type, enabled?, notes? }` (create/update/delete: owner)
+- `PATCH /api/v1/printers/:id` · `DELETE /api/v1/printers/:id`
+- `GET /api/v1/print_jobs?status=` · `GET /api/v1/print_jobs/:id`
+- `POST /api/v1/print_jobs` `{ printer_id, model_id, asset_id }` → `202` + `queued` (worker updates status)
+- `POST /api/v1/print_jobs/:id/cancel`
 - `GET /api/v1/invites` · `POST /api/v1/invites` `{ library_id, email?, role?, expires_in_days? }`
 - `GET /api/v1/invites/token/:token` (public preview)
 - `POST /api/v1/invites/:token/redeem` `{ email, password, display_name }`
@@ -276,6 +296,31 @@ Rename/move destinations must be a single non-hidden segment. `../`, `.hidden`, 
 4. Keep this Rails app unchanged — fetch, HITL, and apply stay here.
 
 Webhook alternative: the curator can `POST /api/v1/curation_proposals/ingest` with the same proposal array and `X-Curator-Token`.
+
+## Printer adapters
+
+`PrinterAdapters` is the only place a printer protocol should live. The SPA has no printer host/port fields on the wire beyond what the owner stored in `Printer`.
+
+```
+PrinterAdapters.for(printer) → Mock | Sdcp | YourAdapter
+PrinterBridge                 → jail file, call adapter, persist status
+DispatchPrintJob              → Sidekiq; rescues and fail_soft! so the UI keeps 2xx
+LibraryPathJail#resolve_file  → regular file under the library root only
+```
+
+| `protocol_type` | Behavior |
+| --- | --- |
+| `mock` | Reads the jailed file, simulates sending/printing, marks `succeeded`. No sockets. |
+| `sdcp` | Interface only. `submit` raises `NotConfigured`; the job is `failed` with a clear note. |
+
+### Adding a real LAN adapter
+
+1. Implement `PrinterAdapters::Sdcp#submit(absolute_path, job:)` (and optionally `#poll` / `#cancel`) using `printer.host` and `printer.settings`.
+2. Keep all I/O inside `Timeout` / `VIBE_PRINT_TIMEOUT`. Never raise out of `PrinterBridge` — call `job.fail_soft!(message)` instead.
+3. Leave the Rails controllers and React pages unchanged. Point the printer row at the LAN IP and set `protocol_type=sdcp`.
+4. Do not proxy printer APIs through the browser. The worker is the only process that should see the printer.
+
+Resin studio, camera, and consumables are out of scope for this slice.
 
 ## License
 

@@ -6,6 +6,8 @@ import { GalleryPage } from "./pages/GalleryPage";
 import { InvitesPage } from "./pages/InvitesPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ModelPage } from "./pages/ModelPage";
+import { PrintersPage } from "./pages/PrintersPage";
+import { PrintsPage } from "./pages/PrintsPage";
 import { RedeemPage } from "./pages/RedeemPage";
 import { UploadPage } from "./pages/UploadPage";
 
@@ -45,6 +47,15 @@ export default function App() {
         <Route path="/" element={<GalleryPage />} />
         <Route path="/models/:id" element={<ModelPage />} />
         <Route path="/curation" element={<CurationPage />} />
+        <Route path="/prints" element={<PrintsPage />} />
+        <Route
+          path="/printers"
+          element={
+            <OwnerGuard>
+              <PrintersPage />
+            </OwnerGuard>
+          }
+        />
         <Route
           path="/invites"
           element={

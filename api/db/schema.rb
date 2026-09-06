@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_09_06_010000) do
+ActiveRecord::Schema[8.0].define(version: 2026_09_06_020000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -132,14 +132,42 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_06_010000) do
     t.bigint "vibe_model_id"
     t.bigint "asset_id"
     t.bigint "requested_by_id", null: false
-    t.string "status", default: "unavailable", null: false
+    t.string "status", default: "queued", null: false
     t.string "printer_hint"
     t.text "note"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.bigint "library_id"
+    t.bigint "printer_id"
+    t.integer "progress", default: 0, null: false
+    t.string "protocol_type"
+    t.string "filename"
+    t.string "remote_ref"
+    t.text "error_message"
+    t.datetime "started_at"
+    t.datetime "finished_at"
     t.index ["asset_id"], name: "index_print_dispatches_on_asset_id"
+    t.index ["library_id", "status"], name: "index_print_dispatches_on_library_id_and_status"
+    t.index ["library_id"], name: "index_print_dispatches_on_library_id"
+    t.index ["printer_id", "created_at"], name: "index_print_dispatches_on_printer_id_and_created_at"
+    t.index ["printer_id"], name: "index_print_dispatches_on_printer_id"
     t.index ["requested_by_id"], name: "index_print_dispatches_on_requested_by_id"
     t.index ["vibe_model_id"], name: "index_print_dispatches_on_vibe_model_id"
+  end
+
+  create_table "printers", force: :cascade do |t|
+    t.bigint "library_id", null: false
+    t.string "name", null: false
+    t.string "host", null: false
+    t.string "protocol_type", default: "mock", null: false
+    t.boolean "enabled", default: true, null: false
+    t.text "notes"
+    t.jsonb "settings", default: {}, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["library_id", "enabled"], name: "index_printers_on_library_id_and_enabled"
+    t.index ["library_id", "name"], name: "index_printers_on_library_id_and_name", unique: true
+    t.index ["library_id"], name: "index_printers_on_library_id"
   end
 
   create_table "scan_cursors", force: :cascade do |t|
@@ -210,8 +238,11 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_06_010000) do
   add_foreign_key "memberships", "libraries"
   add_foreign_key "memberships", "users"
   add_foreign_key "print_dispatches", "assets"
+  add_foreign_key "print_dispatches", "libraries"
+  add_foreign_key "print_dispatches", "printers"
   add_foreign_key "print_dispatches", "users", column: "requested_by_id"
   add_foreign_key "print_dispatches", "vibe_models"
+  add_foreign_key "printers", "libraries"
   add_foreign_key "scan_cursors", "libraries"
   add_foreign_key "tag_assignments", "tags"
   add_foreign_key "vibe_models", "libraries"

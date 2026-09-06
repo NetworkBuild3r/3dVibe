@@ -24,6 +24,15 @@ class LibraryPathJailTest < ActiveSupport::TestCase
     assert_raises(ArgumentError) { @jail.normalize_relative(".vibe-incoming/x") }
   end
 
+  test "resolve_file requires a regular file inside the root" do
+    FileUtils.mkdir_p(@root.join("signal-horn"))
+    File.write(@root.join("signal-horn/horn.stl"), "solid x\n")
+    path = @jail.resolve_file("signal-horn", "horn.stl")
+    assert_equal @root.join("signal-horn/horn.stl").realpath.to_s, path.to_s
+    assert_raises(ArgumentError) { @jail.resolve_file("signal-horn", "missing.stl") }
+    assert_raises(ArgumentError) { @jail.resolve_file("signal-horn", "../../etc/passwd") }
+  end
+
   test "model folders must stay first-level" do
     assert_equal "dragon-kit", @jail.normalize_model_folder("dragon-kit")
     assert_raises(ArgumentError) { @jail.normalize_model_folder("kits/dragon") }
