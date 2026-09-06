@@ -22,6 +22,21 @@ class CurationSidecar
   FetchResult = Struct.new(:drafts, :provider, keyword_init: true)
   SAMPLE_PATH_LIMIT = 5
   CREATORS_INDEX_LIMIT = 50
+  OPTIONAL_HINT_KEYS = %w[rationale reason explanation confidence].freeze
+
+  def self.payload_with_hints(data)
+    source = data.respond_to?(:to_unsafe_h) ? data.to_unsafe_h : data
+    source = (source.presence || {}).stringify_keys
+    payload = (source["payload"].presence || {}).to_h.stringify_keys
+    OPTIONAL_HINT_KEYS.each do |key|
+      next unless source.key?(key)
+      next if !payload[key].nil? && payload[key] != ""
+      value = source[key]
+      next if value.nil? || value == ""
+      payload[key] = value
+    end
+    payload
+  end
 
   def initialize(library, endpoint: ENV["VIBE_CURATOR_URL"], token: ENV["VIBE_CURATOR_TOKEN"],
                  provider_hint: ENV["VIBE_CURATOR_PROVIDER"], client: nil)

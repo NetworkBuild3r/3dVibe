@@ -166,7 +166,7 @@ Likes, shelves, merge/split, and duplicates:
 ### HITL curation
 
 1. Sign in as the owner or a contributor and open **Curation**.
-2. Click **Fetch proposals** (or `docker compose exec api bin/rails vibe:curate`).
+2. Click **Refresh proposals** (or `docker compose exec api bin/rails vibe:curate`).
 3. Review before/after, then approve, reject, or use bulk actions.
 4. Tags write immediately. Rename/move/merge run through `ApplyCurationProposalJob` inside the library path jail, then enqueue a targeted incremental scan.
 5. Poll status (`last_polled_at`, `last_provider`, `last_error`) is on Curation, Libraries, and `GET /me`. A success clears a stale error. Nothing is auto-approved.
