@@ -1,52 +1,49 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { api, type BookmarkFolder, type ModelCard } from "../api";
-import { InlineError } from "../components/UiStates";
-import { SaveToShelf } from "../components/SaveToShelf";
-import { useAuth } from "../auth";
+import { useSearchParams } from "react-router-dom";
+import { api, type Creator, type ModelCard } from "../api";
+import { CalmChip, ChipDropdown, ChipOption } from "../components/CalmChip";
+import { ModelCard as ModelCardView } from "../components/ModelCard";
+import { CardGridSkeleton, EmptyState, InlineError } from "../components/UiStates";
+import { hasReadyCover } from "../covers";
 
 const PAGE_SIZE = 18;
 const SEARCH_DEBOUNCE_MS = 280;
 
-function formatBytes(value: number) {
-  if (value < 1024) return `${value} B`;
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
-  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function searching(query: string, tag: string, preview: boolean) {
-  return Boolean(query.trim() || tag || preview);
+function catalogQuery(query: string, tag: string, creatorSlug: string, hasCover: boolean) {
+  return Boolean(query.trim() || tag || creatorSlug || hasCover);
 }
 
 export function GalleryPage() {
-  const { user } = useAuth();
-  const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
+  const query = params.get("q") || "";
+  const tag = params.get("tag") || "";
+  const creatorSlug = params.get("creator") || "";
+  const hasCover = params.get("cover") === "1";
+
   const [models, setModels] = useState<ModelCard[]>([]);
-  const [selected, setSelected] = useState<number[]>([]);
-  const [folders, setFolders] = useState<BookmarkFolder[]>([]);
-  const [mergeTitle, setMergeTitle] = useState("Merged models");
-  const [mergeStatus, setMergeStatus] = useState("");
+  const [creators, setCreators] = useState<Creator[]>([]);
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(false);
-  const [query, setQuery] = useState("");
-  const [tag, setTag] = useState("");
-  const [hasPreview, setHasPreview] = useState(false);
   const [status, setStatus] = useState("");
   const [engine, setEngine] = useState("");
+  const [estimatedTotal, setEstimatedTotal] = useState<number | null>(null);
+  const [libraryTotal, setLibraryTotal] = useState<number | null>(null);
   const [facetTags, setFacetTags] = useState<Record<string, number>>({});
   const [actionError, setActionError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [likeBusyId, setLikeBusyId] = useState<number | null>(null);
   const sentinel = useRef<HTMLDivElement | null>(null);
-  const queryRef = useRef("");
-  const tagRef = useRef("");
-  const previewRef = useRef(false);
+  const queryRef = useRef(query);
+  const tagRef = useRef(tag);
+  const creatorRef = useRef(creatorSlug);
+  const coverRef = useRef(hasCover);
   const cursorRef = useRef<string | null>(null);
   const offsetRef = useRef(0);
   const hasMoreRef = useRef(true);
   const loadingRef = useRef(false);
   const requestRef = useRef(0);
 
-  const activeSearch = searching(query, tag, hasPreview);
+  const activeSearch = catalogQuery(query, tag, creatorSlug, hasCover);
 
   const tagOptions = useMemo(() => {
     const counts = { ...facetTags };
@@ -58,23 +55,48 @@ export function GalleryPage() {
     return Object.entries(counts).sort((a, b) => a[0].localeCompare(b[0]));
   }, [facetTags, models]);
 
+  const visibleModels = useMemo(
+    () => (hasCover ? models.filter(hasReadyCover) : models),
+    [hasCover, models]
+  );
+
+  const creatorOptions = useMemo(() => {
+    return [...creators].sort((a, b) => a.name.localeCompare(b.name));
+  }, [creators]);
+
+  const selectedCreator = creators.find((item) => item.slug === creatorSlug);
+
+  const patchParams = useCallback(
+    (updates: Record<string, string | null>) => {
+      const next = new URLSearchParams(params);
+      Object.entries(updates).forEach(([key, value]) => {
+        if (value) next.set(key, value);
+        else next.delete(key);
+      });
+      setParams(next, { replace: true });
+    },
+    [params, setParams]
+  );
+
   const loadMore = useCallback(async () => {
     if (loadingRef.current || !hasMoreRef.current) return;
     const q = queryRef.current.trim();
     const selectedTag = tagRef.current;
-    const previewOnly = previewRef.current;
-    const useSearch = searching(q, selectedTag, previewOnly);
+    const slug = creatorRef.current;
+    const coverOnly = coverRef.current;
+    const useSearch = catalogQuery(q, selectedTag, slug, coverOnly);
     const ticket = ++requestRef.current;
 
     loadingRef.current = true;
     setLoading(true);
+    setLoadError(null);
     setStatus("Loading more…");
     try {
       if (useSearch) {
         const page = await api.search({
           q,
           tag: selectedTag || undefined,
-          has_preview: previewOnly ? true : "",
+          creator_slug: slug || undefined,
           offset: offsetRef.current,
           limit: PAGE_SIZE
         });
@@ -87,6 +109,7 @@ export function GalleryPage() {
         offsetRef.current = page.next_offset ?? offsetRef.current + page.models.length;
         hasMoreRef.current = page.next_offset != null;
         setHasMore(page.next_offset != null);
+        setEstimatedTotal(page.estimated_total);
         const label = page.fallback ? `${page.engine} fallback` : page.engine;
         setEngine(label);
         setStatus(
@@ -106,8 +129,13 @@ export function GalleryPage() {
         hasMoreRef.current = Boolean(next);
         setHasMore(Boolean(next));
         setEngine("");
+        setEstimatedTotal(null);
         setStatus(next ? "" : "End of library");
       }
+    } catch (err) {
+      if (ticket !== requestRef.current) return;
+      setLoadError(err instanceof Error ? err.message : "Could not load models");
+      setStatus("");
     } finally {
       if (ticket === requestRef.current) {
         loadingRef.current = false;
@@ -139,27 +167,32 @@ export function GalleryPage() {
 
   useEffect(() => {
     api
-      .bookmarkFolders()
-      .then((payload) => setFolders(payload.bookmark_folders))
+      .creators()
+      .then((payload) => setCreators(payload.creators))
+      .catch(() => undefined);
+    api
+      .libraries()
+      .then((payload) => setLibraryTotal(payload.libraries.reduce((sum, library) => sum + (library.model_count || 0), 0)))
+      .catch(() => undefined);
+    api
+      .search({ limit: 1 })
+      .then((page) => setFacetTags(page.facets?.tags || {}))
       .catch(() => undefined);
   }, []);
 
   useEffect(() => {
     queryRef.current = query;
     tagRef.current = tag;
-    previewRef.current = hasPreview;
+    creatorRef.current = creatorSlug;
+    coverRef.current = hasCover;
     const handle = window.setTimeout(() => {
       resetAndLoad();
     }, SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(handle);
-  }, [query, tag, hasPreview, resetAndLoad]);
+  }, [query, tag, creatorSlug, hasCover, resetAndLoad]);
 
-  function toggleTag(name: string) {
-    setTag((current) => (current === name ? "" : name));
-  }
-
-  function toggleSelected(id: number) {
-    setSelected((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
+  function clearFilters() {
+    patchParams({ tag: null, creator: null, cover: null });
   }
 
   async function toggleLike(model: ModelCard) {
@@ -176,156 +209,109 @@ export function GalleryPage() {
     }
   }
 
-  async function bookmark(modelId: number, folderId: number) {
-    setActionError(null);
-    try {
-      const payload = await api.addBookmark(folderId, modelId);
-      setModels((current) => current.map((item) => (item.id === modelId ? { ...item, ...payload.model } : item)));
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Could not save to shelf");
-    }
-  }
-
-  async function mergeSelected() {
-    const first = models.find((model) => selected.includes(model.id));
-    if (!first || selected.length < 2) return;
-    setMergeStatus("Merging…");
-    try {
-      const payload = await api.mergeModels({
-        library_id: first.library_id,
-        source_ids: selected,
-        title: mergeTitle
-      });
-      setMergeStatus(`Merged into ${payload.model.title}`);
-      setSelected([]);
-      navigate(`/models/${payload.model.id}`);
-    } catch (err) {
-      setMergeStatus(err instanceof Error ? err.message : "Merge failed");
-    }
-  }
+  const headerCount = activeSearch ? estimatedTotal : libraryTotal;
+  const showInitialSkeleton = loading && models.length === 0 && !loadError;
+  const coverPendingOnly =
+    !loading && models.length > 0 && visibleModels.length === 0 && hasCover;
 
   return (
     <div>
-      <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
-        <div>
+      <div className="mb-5">
+        <div className="flex flex-wrap items-baseline gap-3">
           <h1 className="font-display text-3xl text-white">Library</h1>
-          <p className="mt-1 text-sm text-slate-400">
-            One shared catalog. Likes and shelves are personal; they do not hide folders from anyone. Cards never
-            auto-load meshes.
-          </p>
+          {headerCount != null ? (
+            <p className="text-sm text-slate-500">
+              {headerCount.toLocaleString()} model{headerCount === 1 ? "" : "s"}
+            </p>
+          ) : null}
         </div>
-        <input
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search title, folder, tags, files…"
-          className="w-full max-w-sm rounded-full border border-white/10 bg-ink-900 px-4 py-2 text-sm outline-none ring-accent-500 focus:ring-2"
-        />
       </div>
-      <div className="mb-5 flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={() => setHasPreview((current) => !current)}
-          className={`rounded-full px-3 py-1 text-xs ${
-            hasPreview ? "bg-accent-500/20 text-accent-300" : "bg-white/5 text-slate-400"
-          }`}
+
+      <div className="mb-6 flex flex-wrap items-center gap-2">
+        <CalmChip active={!tag && !creatorSlug && !hasCover} onClick={clearFilters}>
+          All
+        </CalmChip>
+        <ChipDropdown
+          label="Creators"
+          active={Boolean(creatorSlug)}
+          activeLabel={selectedCreator?.name || creatorSlug}
+          empty={creatorOptions.length ? undefined : "No creators yet"}
         >
-          Has preview
-        </button>
-        {tagOptions.slice(0, 12).map(([name, count]) => (
-          <button
-            key={name}
-            type="button"
-            onClick={() => toggleTag(name)}
-            className={`rounded-full px-3 py-1 text-xs ${
-              tag === name ? "bg-accent-500/20 text-accent-300" : "bg-white/5 text-slate-400"
-            }`}
-          >
-            {name}
-            {count ? <span className="ml-1 text-slate-500">{count}</span> : null}
-          </button>
-        ))}
+          {creatorOptions.map((item) => (
+            <ChipOption
+              key={item.slug}
+              selected={creatorSlug === item.slug}
+              onSelect={() => patchParams({ creator: creatorSlug === item.slug ? null : item.slug })}
+            >
+              <span>{item.name}</span>
+              {item.model_count != null ? <span className="text-xs text-slate-500">{item.model_count}</span> : null}
+            </ChipOption>
+          ))}
+        </ChipDropdown>
+        <ChipDropdown
+          label="Tags"
+          active={Boolean(tag)}
+          activeLabel={tag}
+          empty={tagOptions.length ? undefined : "No tags yet"}
+        >
+          {tagOptions.map(([name, count]) => (
+            <ChipOption
+              key={name}
+              selected={tag === name}
+              onSelect={() => patchParams({ tag: tag === name ? null : name })}
+            >
+              <span>{name}</span>
+              {count ? <span className="text-xs text-slate-500">{count}</span> : null}
+            </ChipOption>
+          ))}
+        </ChipDropdown>
+        <CalmChip active={hasCover} onClick={() => patchParams({ cover: hasCover ? null : "1" })}>
+          Has cover
+        </CalmChip>
         {activeSearch && engine ? <span className="ml-auto text-xs text-slate-500">{engine}</span> : null}
       </div>
-      {actionError ? <div className="mb-5"><InlineError message={actionError} /></div> : null}
-      {user?.can_merge && selected.length >= 2 ? (
-        <div className="mb-5 flex flex-wrap items-center gap-3 rounded-2xl border border-accent-500/20 bg-accent-500/5 px-4 py-3">
-          <span className="text-sm text-slate-200">{selected.length} selected</span>
-          <input
-            value={mergeTitle}
-            onChange={(event) => setMergeTitle(event.target.value)}
-            className="rounded-lg border border-white/10 bg-ink-950 px-3 py-1.5 text-sm"
-          />
-          <button type="button" className="text-sm text-accent-300" onClick={() => void mergeSelected()}>
-            Merge into one model
-          </button>
-          {mergeStatus ? <span className="text-xs text-slate-500">{mergeStatus}</span> : null}
+
+      {actionError ? (
+        <div className="mb-5">
+          <InlineError message={actionError} />
         </div>
       ) : null}
-      <div className="card-grid">
-        {models.map((model) => (
-          <div
-            key={model.id}
-            className="group rounded-2xl border border-white/10 bg-ink-900/70 p-4 transition hover:-translate-y-0.5 hover:border-accent-500/40"
-          >
-            <div className="mb-3 flex items-center justify-between gap-2">
-              {user?.can_merge ? (
-                <label className="text-xs text-slate-500">
-                  <input
-                    type="checkbox"
-                    className="mr-2"
-                    checked={selected.includes(model.id)}
-                    onChange={() => toggleSelected(model.id)}
-                  />
-                  Select
-                </label>
-              ) : (
-                <span />
-              )}
-              <button
-                type="button"
-                aria-pressed={Boolean(model.liked)}
-                aria-label={model.liked ? "Unlike" : "Like"}
-                disabled={likeBusyId === model.id}
-                className={`text-sm ${model.liked ? "text-rose-300" : "text-slate-500"} disabled:opacity-60`}
-                onClick={() => void toggleLike(model)}
-              >
-                {model.liked ? "♥" : "♡"} {model.like_count || 0}
-              </button>
-            </div>
-            <Link to={`/models/${model.id}`}>
-              <div className="mb-4 grid h-28 place-items-center rounded-xl bg-ink-800 text-xs uppercase tracking-widest text-slate-500">
-                {model.has_preview ? "Preview ready" : "Mesh idle"}
-              </div>
-              <h2 className="font-display text-lg text-white group-hover:text-accent-400">{model.title}</h2>
-              <p className="mt-1 line-clamp-2 text-sm text-slate-400">{model.synopsis || model.folder_name}</p>
-            </Link>
-            <div className="mt-3 flex flex-wrap gap-1.5">
-              {model.tags.slice(0, 4).map((name) => (
-                <button
-                  key={name}
-                  type="button"
-                  className="rounded-full bg-white/5 px-2 py-0.5 text-xs text-slate-300"
-                  onClick={() => toggleTag(name)}
-                >
-                  {name}
-                </button>
-              ))}
-            </div>
-            <p className="mt-3 text-xs text-slate-500">
-              {model.asset_count} files · {formatBytes(model.byte_size)}
-              {model.uploaded_by ? ` · uploaded by ${model.uploaded_by.display_name}` : ""}
-              {model.merged ? " · merged" : ""}
-            </p>
-            <SaveToShelf
-              folders={folders}
-              folderIds={model.bookmark_folder_ids}
-              onSave={(folderId) => void bookmark(model.id, folderId)}
-              className="mt-3 inline-block text-xs text-accent-400"
-              selectClassName="mt-3 w-full rounded-lg border border-white/10 bg-ink-950 px-2 py-1 text-xs"
+      {loadError ? (
+        <div className="mb-5">
+          <InlineError message={loadError} onRetry={() => resetAndLoad()} />
+        </div>
+      ) : null}
+
+      {showInitialSkeleton ? <CardGridSkeleton /> : null}
+
+      {!showInitialSkeleton && visibleModels.length === 0 && !loadError ? (
+        <EmptyState
+          copy={
+            coverPendingOnly
+              ? "No ready covers yet. Unscanned or pending models stay on the checker until Rendering writes back."
+              : activeSearch
+                ? "No models match these filters."
+                : "The library is empty. Scan the NFS mount to index folders."
+          }
+          ctaTo={coverPendingOnly || activeSearch ? undefined : "/libraries"}
+          ctaLabel={coverPendingOnly || activeSearch ? undefined : "Open libraries"}
+        />
+      ) : null}
+
+      {visibleModels.length > 0 ? (
+        <div className="card-grid">
+          {visibleModels.map((model) => (
+            <ModelCardView
+              key={model.id}
+              model={model}
+              likeBusy={likeBusyId === model.id}
+              onLike={(item) => void toggleLike(item)}
+              onTag={(name) => patchParams({ tag: tag === name ? null : name })}
             />
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      ) : null}
+
       <div ref={sentinel} className="h-10" />
       <p className="py-4 text-center text-sm text-slate-500">
         {loading ? "Loading more…" : status || (hasMore ? "" : "End of library")}
