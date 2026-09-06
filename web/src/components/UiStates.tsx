@@ -55,19 +55,36 @@ export function InlineError({ message, onRetry }: { message: string; onRetry?: (
   );
 }
 
+export function ChipRowSkeleton() {
+  return (
+    <div className="flex flex-wrap items-center gap-2" aria-hidden>
+      <Pulse className="h-8 w-14 rounded-full" />
+      <Pulse className="h-8 w-24 rounded-full" />
+      <Pulse className="h-8 w-20 rounded-full" />
+      <Pulse className="h-8 w-24 rounded-full" />
+    </div>
+  );
+}
+
 export function EmptyState({
   copy,
   ctaTo,
-  ctaLabel
+  ctaLabel,
+  onCta
 }: {
   copy: string;
   ctaTo?: string;
   ctaLabel?: string;
+  onCta?: () => void;
 }) {
   return (
     <div className="rounded-2xl border border-dashed border-white/10 px-4 py-8 text-center">
       <p className="text-sm text-slate-400">{copy}</p>
-      {ctaTo && ctaLabel ? (
+      {onCta && ctaLabel ? (
+        <button type="button" onClick={onCta} className="mt-3 text-sm text-accent-400 hover:text-accent-300">
+          {ctaLabel}
+        </button>
+      ) : ctaTo && ctaLabel ? (
         <Link to={ctaTo} className="mt-3 inline-block text-sm text-accent-400 hover:text-accent-300">
           {ctaLabel}
         </Link>

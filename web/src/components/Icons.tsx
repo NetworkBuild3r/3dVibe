@@ -111,6 +111,17 @@ export function IconHeart({ className = "h-5 w-5", filled = false }: IconProps &
   );
 }
 
+export function IconGrid({ className = "h-4 w-4" }: IconProps) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden>
+      <rect x="4" y="4" width="6" height="6" rx="1" />
+      <rect x="14" y="4" width="6" height="6" rx="1" />
+      <rect x="4" y="14" width="6" height="6" rx="1" />
+      <rect x="14" y="14" width="6" height="6" rx="1" />
+    </svg>
+  );
+}
+
 export function IconMark({ className = "h-7 w-7" }: IconProps) {
   return (
     <svg className={className} viewBox="0 0 32 32" fill="none" aria-hidden>

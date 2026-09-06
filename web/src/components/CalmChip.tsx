@@ -70,7 +70,7 @@ export function ChipDropdown({
       {open ? (
         <div
           role="listbox"
-          className="absolute left-0 z-30 mt-2 max-h-72 min-w-[14rem] overflow-auto rounded-2xl border border-white/10 bg-ink-900 p-1.5 shadow-2xl"
+          className="absolute left-0 z-40 mt-2 max-h-72 min-w-[14rem] overflow-auto rounded-2xl border border-white/10 bg-ink-900 p-1.5 shadow-2xl"
           onClick={() => setOpen(false)}
         >
           {children}
@@ -78,6 +78,28 @@ export function ChipDropdown({
         </div>
       ) : null}
     </div>
+  );
+}
+
+export function FilterPill({
+  label,
+  onRemove
+}: {
+  label: string;
+  onRemove: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onRemove}
+      className={`${chipBase} ${chipActive}`}
+      aria-label={`Remove ${label} filter`}
+    >
+      <span>{label}</span>
+      <span aria-hidden className="text-ink-950/70">
+        ×
+      </span>
+    </button>
   );
 }
 

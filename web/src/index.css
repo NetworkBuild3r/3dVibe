@@ -4,6 +4,7 @@
 
 :root {
   color-scheme: dark;
+  --app-header-height: 4.25rem;
 }
 
 body {
@@ -22,6 +23,22 @@ body {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 1.25rem;
+}
+
+.card-grid-host {
+  position: relative;
+  width: 100%;
+}
+
+.gallery-filter-bar {
+  position: sticky;
+  top: var(--app-header-height, 4.25rem);
+  z-index: 15;
+  margin: 0 -1.5rem 1.25rem;
+  padding: 0.75rem 1.5rem;
+  background: rgba(11, 15, 20, 0.88);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 .cover-checker {

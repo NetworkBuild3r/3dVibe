@@ -522,11 +522,27 @@ All endpoints except `POST /api/v1/session`, invite preview/redeem, and `GET /up
 
 `has_cover=true` ≡ `cover_status=ready`. Unfiltered `GET /models?cursor=&limit=` is unchanged. Search response includes `engine`, `fallback`, `capped`, `estimated_total`, `next_offset`, and `facets`.
 
+### Library gallery (Frontend / Design bind)
+
+Cover-first Library at `/`. Slim rail + top search stay in the chrome. Sticky chips sit under the top search and stay URL-synced.
+
+| SPA URL | Request |
+| --- | --- |
+| (none) | `GET /models?cursor=&limit=` (cursor-stable, no client cover filter) |
+| `?q=` | `GET /search?q=` (`offset` / `limit` — never a model-id `cursor`) |
+| `?creator=` | `creator_slug=` on `/search` (when `q` is set) or `/models` (chips only) |
+| `?tag=` | `tag=` |
+| `?cover=1` | `has_cover=true` (ready cover only). Do **not** `models.filter(hasReadyCover)` |
+
+Facets (`tags`, `creator_slug`, `cover_status`, `has_cover`) drive the Creators / Tags dropdowns. Active pills show the creator **name**, never a raw slug. Null `creator` on a card is omitted (never “Unknown creator”). Failed covers may show a “Cover failed” checker line.
+
+When Meili is down the search payload is `engine: "postgres"`, `fallback: true`. If `capped: true`, `estimated_total` is a floor.
+
 ## Tests
 
 ```bash
 cd api && RAILS_ENV=test bin/rails db:prepare && bin/rails test
-cd ../web && npm run build
+cd ../web && npm test && npm run build
 cd ../curator && ruby test/run.rb
 ```
 
