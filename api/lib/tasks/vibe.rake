@@ -7,6 +7,12 @@ namespace :vibe do
       LibraryScanner.new(library).scan!
       puts "  -> #{library.vibe_models.count} models"
     end
+    if MeilisearchClient.configured?
+      result = SearchIndex.new.reindex_all!(
+        ENV["LIBRARY_ID"].present? ? VibeModel.where(library_id: ENV["LIBRARY_ID"]) : VibeModel.all
+      )
+      puts "Search reindex: #{result.inspect}"
+    end
   end
 
   desc "Queue IncrementalScanJob for every library"
@@ -54,6 +60,13 @@ namespace :vibe do
     puts "Print job #{job.id} #{job.status} progress=#{job.progress} file=#{job.filename} printer=#{printer.name}"
     puts "  #{job.note}" if job.note.present?
     abort "print failed" if job.status == PrintDispatch::FAILED
+  end
+
+  desc "Rebuild the Meilisearch vibe_models index (no-op if MEILI_URL is blank or Meili is down)"
+  task reindex: :environment do
+    scope = ENV["LIBRARY_ID"].present? ? VibeModel.where(library_id: ENV["LIBRARY_ID"]) : VibeModel.all
+    result = SearchIndex.new.reindex_all!(scope)
+    puts "Reindex: #{result.inspect} (#{scope.count} catalog models, url=#{MeilisearchClient.url || 'unset'})"
   end
 
   desc "Poll the curation sidecar (or in-process stub) and upsert pending proposals"

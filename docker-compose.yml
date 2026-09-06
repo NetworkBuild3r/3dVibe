@@ -44,7 +44,11 @@ services:
       VIBE_CURATOR_TIMEOUT: ${VIBE_CURATOR_TIMEOUT:-8}
       VIBE_PRINT_TIMEOUT: ${VIBE_PRINT_TIMEOUT:-15}
       VIBE_PRINT_MOCK_DELAY_MS: ${VIBE_PRINT_MOCK_DELAY_MS:-400}
-      MEILISEARCH_URL: ${MEILISEARCH_URL:-}
+      MEILI_URL: ${MEILI_URL:-http://meilisearch:7700}
+      MEILISEARCH_URL: ${MEILI_URL:-http://meilisearch:7700}
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-vibe_dev_meili_key}
+      MEILI_SEARCH_KEY: ${MEILI_SEARCH_KEY:-}
+      MEILI_TIMEOUT: ${MEILI_TIMEOUT:-2}
       WEB_ORIGIN: http://localhost:${WEB_PORT:-5173}
     volumes:
       - ./api:/app
@@ -57,6 +61,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      meilisearch:
+        condition: service_started
     command: >
       bash -lc "bundle check || bundle install;
       bin/rails db:prepare;
@@ -79,7 +85,11 @@ services:
       VIBE_CURATOR_TIMEOUT: ${VIBE_CURATOR_TIMEOUT:-8}
       VIBE_PRINT_TIMEOUT: ${VIBE_PRINT_TIMEOUT:-15}
       VIBE_PRINT_MOCK_DELAY_MS: ${VIBE_PRINT_MOCK_DELAY_MS:-400}
-      MEILISEARCH_URL: ${MEILISEARCH_URL:-}
+      MEILI_URL: ${MEILI_URL:-http://meilisearch:7700}
+      MEILISEARCH_URL: ${MEILI_URL:-http://meilisearch:7700}
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-vibe_dev_meili_key}
+      MEILI_SEARCH_KEY: ${MEILI_SEARCH_KEY:-}
+      MEILI_TIMEOUT: ${MEILI_TIMEOUT:-2}
     volumes:
       - ./api:/app
       - ${VIBE_LIBRARY_HOST_PATH:-./fixtures/library}:${VIBE_LIBRARY_ROOT:-/library}
@@ -89,6 +99,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      meilisearch:
+        condition: service_started
     command: >
       bash -lc "bundle check || bundle install;
       bundle exec sidekiq -C config/sidekiq.yml"
@@ -123,7 +135,6 @@ services:
 
   meilisearch:
     image: getmeili/meilisearch:v1.11
-    profiles: ["search"]
     environment:
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-vibe_dev_meili_key}
       MEILI_ENV: development
@@ -131,6 +142,11 @@ services:
       - "7700:7700"
     volumes:
       - meili_data:/meili_data
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--spider", "http://127.0.0.1:7700/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 volumes:
   postgres_data:

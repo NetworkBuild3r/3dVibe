@@ -33,6 +33,7 @@ class CurationApplier
     if result[:ok]
       record_success(result)
       enqueue_scans!
+      enqueue_search!(result)
     else
       record_error(result[:error].presence || "apply_failed", result)
     end
@@ -248,6 +249,16 @@ class CurationApplier
       next if prefix.blank?
 
       IncrementalScanJob.perform_later(@library.id, prefix)
+    end
+  end
+
+  def enqueue_search!(result)
+    ids = Array(result[:model_ids])
+    ids << result[:source_id]
+    ids << result[:target_id]
+    ids.compact.uniq.each do |model_id|
+      model = @library.vibe_models.find_by(id: model_id)
+      SearchIndex.enqueue(model)
     end
   end
 end

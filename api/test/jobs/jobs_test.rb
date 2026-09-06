@@ -65,6 +65,19 @@ class JobsTest < ActiveJob::TestCase
     FileUtils.rm_rf(root)
   end
 
+  test "search index jobs no-op without Meili" do
+    user = create_owner!
+    library = Library.create!(name: "Search jobs", root_path: "/tmp/unused")
+    model = library.vibe_models.create!(folder_name: "x", title: "X")
+
+    assert_nothing_raised do
+      IndexVibeModelJob.perform_now(model.id)
+      RemoveVibeModelIndexJob.perform_now(model.id)
+      ReindexSearchJob.perform_now(library.id)
+    end
+    assert user.present?
+  end
+
   test "fetch job upserts stub proposals" do
     root = Rails.root.join("tmp/fetch-lib-#{SecureRandom.hex(4)}")
     FileUtils.mkdir_p(root.join("only"))
