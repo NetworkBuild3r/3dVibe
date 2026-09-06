@@ -101,4 +101,20 @@ class ApplicationController < ActionController::API
     bearer = header.split(" ", 2).last if header.start_with?("Bearer ")
     request.headers["X-Curator-Token"].presence || bearer
   end
+
+  def geometry_authorized?
+    expected = ENV["VIBE_GEOMETRY_TOKEN"].to_s
+    return false if expected.blank?
+
+    presented = geometry_token.to_s
+    return false if presented.blank?
+
+    ActiveSupport::SecurityUtils.secure_compare(presented, expected)
+  end
+
+  def geometry_token
+    header = request.headers["Authorization"].to_s
+    bearer = header.split(" ", 2).last if header.start_with?("Bearer ")
+    request.headers["X-Geometry-Token"].presence || bearer
+  end
 end

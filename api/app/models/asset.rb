@@ -11,6 +11,7 @@ class Asset < ApplicationRecord
   belongs_to :vibe_model
   belongs_to :uploaded_by, class_name: "User", optional: true
   has_many :archive_members, dependent: :destroy
+  has_many :duplicate_group_members, dependent: :destroy
 
   validates :relative_path, presence: true, uniqueness: { scope: :vibe_model_id }
 

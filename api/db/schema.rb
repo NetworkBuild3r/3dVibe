@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_09_06_140000) do
+ActiveRecord::Schema[8.0].define(version: 2026_09_06_160000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -58,7 +58,9 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_06_140000) do
     t.boolean "archive_truncated", default: false, null: false
     t.string "archive_support"
     t.bigint "inode"
+    t.string "geometry_digest"
     t.index ["content_digest"], name: "index_assets_on_content_digest"
+    t.index ["geometry_digest"], name: "index_assets_on_geometry_digest"
     t.index ["uploaded_by_id"], name: "index_assets_on_uploaded_by_id"
     t.index ["vibe_model_id", "relative_path"], name: "index_assets_on_vibe_model_id_and_relative_path", unique: true
     t.index ["vibe_model_id"], name: "index_assets_on_vibe_model_id"
@@ -115,6 +117,41 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_06_140000) do
     t.index ["library_id", "status"], name: "index_curation_proposals_on_library_id_and_status"
     t.index ["library_id"], name: "index_curation_proposals_on_library_id"
     t.index ["reviewed_by_id"], name: "index_curation_proposals_on_reviewed_by_id"
+  end
+
+  create_table "duplicate_group_members", force: :cascade do |t|
+    t.bigint "duplicate_group_id", null: false
+    t.bigint "asset_id", null: false
+    t.bigint "vibe_model_id"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["asset_id"], name: "index_duplicate_group_members_on_asset_id"
+    t.index ["duplicate_group_id", "asset_id"], name: "idx_dup_group_members_on_group_and_asset", unique: true
+    t.index ["duplicate_group_id"], name: "index_duplicate_group_members_on_duplicate_group_id"
+    t.index ["vibe_model_id"], name: "index_duplicate_group_members_on_vibe_model_id"
+  end
+
+  create_table "duplicate_groups", force: :cascade do |t|
+    t.bigint "library_id", null: false
+    t.string "reason", null: false
+    t.string "confidence", null: false
+    t.string "digest"
+    t.string "status", default: "open", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["library_id", "status"], name: "index_duplicate_groups_on_library_id_and_status"
+    t.index ["library_id"], name: "index_duplicate_groups_on_library_id"
+  end
+
+  create_table "duplicate_reviews", force: :cascade do |t|
+    t.bigint "duplicate_group_id", null: false
+    t.bigint "user_id", null: false
+    t.string "decision", null: false
+    t.jsonb "payload", default: {}, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["duplicate_group_id"], name: "index_duplicate_reviews_on_duplicate_group_id"
+    t.index ["user_id"], name: "index_duplicate_reviews_on_user_id"
   end
 
   create_table "invites", force: :cascade do |t|
@@ -347,6 +384,12 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_06_140000) do
   add_foreign_key "bookmarks", "vibe_models"
   add_foreign_key "curation_proposals", "libraries"
   add_foreign_key "curation_proposals", "users", column: "reviewed_by_id"
+  add_foreign_key "duplicate_group_members", "assets"
+  add_foreign_key "duplicate_group_members", "duplicate_groups"
+  add_foreign_key "duplicate_group_members", "vibe_models"
+  add_foreign_key "duplicate_groups", "libraries"
+  add_foreign_key "duplicate_reviews", "duplicate_groups"
+  add_foreign_key "duplicate_reviews", "users"
   add_foreign_key "invites", "libraries"
   add_foreign_key "invites", "users", column: "invited_by_id"
   add_foreign_key "library_uploads", "libraries"
