@@ -18,6 +18,7 @@ class ArchiveMemberExtractor
 
     rescan!(target.folder_name)
     target.reload
+    target.update!(title: title) if title.present?
 
     assets = written.map { |row| target.assets.find_by!(relative_path: row[:relative_path]) }
     extracted = written.zip(assets).map { |row, asset| extracted_row(row, asset, target) }
@@ -177,6 +178,13 @@ class ArchiveMemberExtractor
   def rescan!(prefix)
     return if prefix.blank?
 
+    # Same-second writes often leave dir mtime unchanged (1s NFS resolution).
+    # Expire the cursor so this targeted walk always indexes the new files.
+    @library.scan_cursors.where(path_prefix: prefix).update_all(
+      last_deep_scanned_at: nil,
+      last_dir_mtime: nil
+    )
+    FileUtils.touch(@jail.folder_path(prefix))
     LibraryScanner.new(@library, uploaded_by: @user, trigger: ScanRun::TRIGGER_CURATION)
                   .scan!(path_prefix: prefix)
   end

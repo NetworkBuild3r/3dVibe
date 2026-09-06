@@ -70,7 +70,7 @@ module API
 
         result = ArchiveMemberExtractor.new(group.library, performed_by: current_user).extract!(
           archive_member_ids: extract_member_ids(group),
-          target_id: extract_target_id || default_extract_target_id(group),
+          target_id: extract_destination_id(group),
           title: params[:title],
           folder_name: params[:folder_name]
         )
@@ -86,7 +86,7 @@ module API
           archive_member_ids: extract_member_ids(group),
           source_ids: params[:source_ids] || params[:model_ids],
           asset_ids: params.key?(:asset_ids) ? params[:asset_ids] : default_loose_asset_ids(group),
-          target_id: extract_target_id || default_extract_target_id(group),
+          target_id: extract_destination_id(group),
           title: params[:title],
           folder_name: params[:folder_name]
         )
@@ -143,6 +143,13 @@ module API
 
       def extract_target_id
         params[:target_model_id].presence || params[:target_id].presence
+      end
+
+      def extract_destination_id(group)
+        return extract_target_id if extract_target_id
+        return if params[:folder_name].present? || params[:title].present?
+
+        default_extract_target_id(group)
       end
 
       def extract_member_ids(group)

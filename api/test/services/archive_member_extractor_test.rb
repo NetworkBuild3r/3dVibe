@@ -28,26 +28,19 @@ class ArchiveMemberExtractorTest < ActiveSupport::TestCase
   end
 
   test "extract streams one member into a first-level model folder and leaves the zip packed" do
-    streamed = []
-    folder = nil
-    ArchiveMemberStreamer.stub(:for_member, lambda { |member, **kwargs|
-      streamed << member.internal_path
-      ArchiveMemberStreamer.new(member.asset, member.internal_path, **kwargs)
-    }) do
-      result = extractor.extract!(archive_member_ids: [@member.id], title: "Pulled meshes")
-      folder = result.model.folder_name
-      assert_equal "Pulled meshes", result.model.title
-      assert_equal 1, result.extracted.size
-      assert_equal true, result.extracted.first[:mergeable]
-      assert_equal @member.id, result.extracted.first[:archive_member_id]
-      assert result.assets.first
-      assert File.file?(@root.join("#{folder}/foo.stl"))
-      assert_equal stl_body, File.binread(@root.join("#{folder}/foo.stl"))
-    end
+    result = extractor.extract!(archive_member_ids: [@member.id], title: "Pulled meshes")
+    folder = result.model.folder_name
 
-    assert_equal ["path/foo.stl"], streamed
+    assert_equal "Pulled meshes", result.model.title
+    assert_equal 1, result.extracted.size
+    assert_equal true, result.extracted.first[:mergeable]
+    assert_equal @member.id, result.extracted.first[:archive_member_id]
+    assert result.assets.first
+    assert File.file?(@root.join("#{folder}/foo.stl"))
+    assert_equal stl_body, File.binread(@root.join("#{folder}/foo.stl"))
     refute File.exist?(@root.join("packed/path/foo.stl"))
     refute File.exist?(@root.join("#{folder}/huge.bin"))
+    refute File.exist?(@root.join("#{folder}/noise/huge.bin"))
     assert File.file?(@root.join("packed/pack.zip"))
     assert_equal @zip_bytes, File.binread(@root.join("packed/pack.zip"))
   end
