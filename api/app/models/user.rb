@@ -71,6 +71,7 @@ class User < ApplicationRecord
       can_curate: can_curate_anywhere?,
       can_print: can_print_anywhere?,
       can_manage_printers: owner_anywhere?,
+      can_manage_libraries: owner_anywhere?,
       libraries: memberships.includes(:library).map do |membership|
         {
           id: membership.library_id,

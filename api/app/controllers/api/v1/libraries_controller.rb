@@ -2,7 +2,8 @@ module API
   module V1
     class LibrariesController < ApplicationController
       def index
-        render json: { libraries: accessible_libraries.order(:name).map { |library| serialize(library) } }
+        libraries = accessible_libraries.includes(:scan_runs).order(:name)
+        render json: { libraries: libraries.map { |library| serialize(library) } }
       end
 
       def show
@@ -25,8 +26,17 @@ module API
         library = accessible_libraries.find(params[:id])
         return if require_owner!(library)
 
-        IncrementalScanJob.perform_later(library.id)
-        render json: { queued: true, library_id: library.id }, status: :accepted
+        prefix = params[:path_prefix].presence
+        library.scan_runs.create!(
+          status: ScanRun::QUEUED,
+          trigger: ScanRun::TRIGGER_API,
+          path_prefix: prefix,
+          triggered_by: current_user,
+          phase: ScanRun::PHASE_WALK
+        )
+        IncrementalScanJob.perform_later(library.id, prefix, current_user.id, ScanRun::TRIGGER_API)
+        render json: { queued: true, library_id: library.id, library: serialize(library.reload, detail: true) },
+               status: :accepted
       end
 
       private
@@ -37,6 +47,7 @@ module API
 
       def serialize(library, detail: false)
         membership = current_user.memberships.find_by(library: library)
+        owner = current_user.owner_of?(library)
         payload = {
           id: library.id,
           name: library.name,
@@ -47,20 +58,38 @@ module API
           role: membership&.role || Membership::VIEWER,
           can_upload: current_user.can_upload?(library),
           can_print: current_user.can_print?(library),
-          can_manage_printers: current_user.owner_of?(library)
+          can_manage_printers: owner,
+          can_scan: owner
         }
+        payload[:scan] = serialize_scan(library) if owner
         return payload unless detail
 
-        payload.merge(
-          cursors: library.scan_cursors.order(:path_prefix).map do |cursor|
-            {
-              path_prefix: cursor.path_prefix,
-              last_mtime: cursor.last_mtime,
-              last_byte_size: cursor.last_byte_size,
-              last_scanned_at: cursor.last_scanned_at
-            }
-          end
-        )
+        extra = {}
+        extra[:scan_settings] = ScanSettings.as_api if owner
+        extra[:cursors] = library.scan_cursors.order(:path_prefix).map { |cursor| serialize_cursor(cursor) } if owner
+        payload.merge(extra)
+      end
+
+      def serialize_scan(library)
+        run = library.latest_scan_run
+        return { status: "idle" } unless run
+
+        run.as_api
+      end
+
+      def serialize_cursor(cursor)
+        {
+          path_prefix: cursor.path_prefix,
+          last_mtime: cursor.last_mtime,
+          last_byte_size: cursor.last_byte_size,
+          last_inode: cursor.last_inode,
+          last_nlink: cursor.last_nlink,
+          last_dir_mtime: cursor.last_dir_mtime,
+          last_file_count: cursor.last_file_count,
+          last_scanned_at: cursor.last_scanned_at,
+          last_deep_scanned_at: cursor.last_deep_scanned_at,
+          resume_relative_path: cursor.resume_relative_path
+        }
       end
     end
   end

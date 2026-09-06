@@ -71,6 +71,13 @@ class JobsTest < ActiveJob::TestCase
     FileUtils.rm_rf(root)
   end
 
+  test "scheduled scan job enqueues an incremental scan per library" do
+    library = Library.create!(name: "Sched", root_path: "/tmp/unused-scan")
+    assert_enqueued_with(job: IncrementalScanJob, args: [library.id, nil, nil, ScanRun::TRIGGER_SCHEDULED]) do
+      ScheduledScanJob.perform_now
+    end
+  end
+
   test "search index jobs no-op without Meili" do
     user = create_owner!
     library = Library.create!(name: "Search jobs", root_path: "/tmp/unused")

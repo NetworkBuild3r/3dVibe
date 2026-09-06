@@ -16,6 +16,7 @@ export type User = {
   can_curate: boolean;
   can_print: boolean;
   can_manage_printers: boolean;
+  can_manage_libraries?: boolean;
   libraries: MembershipInfo[];
 };
 
@@ -204,6 +205,53 @@ export type Invite = {
   revoked_at: string | null;
 };
 
+export type ScanStatus = {
+  id?: number;
+  status: string;
+  trigger?: string;
+  phase?: string;
+  path_prefix?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  resume_after?: string | null;
+  folders_seen?: number;
+  folders_indexed?: number;
+  folders_skipped?: number;
+  files_seen?: number;
+  files_changed?: number;
+  pruned_count?: number;
+  error_count?: number;
+  deep_walks?: number;
+  budget_exhausted?: boolean;
+  last_error?: string | null;
+  updated_at?: string;
+};
+
+export type ScanSettings = {
+  max_seconds: number;
+  max_files: number;
+  max_folders: number;
+  prune_batch: number;
+  deep_interval: number;
+  trust_dir_mtime: boolean;
+  allow_empty_prune: boolean;
+  schedule: boolean;
+  cron: string;
+};
+
+export type ScanCursorInfo = {
+  path_prefix: string;
+  last_mtime: string | null;
+  last_byte_size: number | null;
+  last_inode: number | null;
+  last_nlink: number | null;
+  last_dir_mtime: string | null;
+  last_file_count: number | null;
+  last_scanned_at: string | null;
+  last_deep_scanned_at: string | null;
+  resume_relative_path: string | null;
+};
+
 export type LibraryInfo = {
   id: number;
   name: string;
@@ -215,6 +263,10 @@ export type LibraryInfo = {
   can_upload: boolean;
   can_print: boolean;
   can_manage_printers: boolean;
+  can_scan?: boolean;
+  scan?: ScanStatus;
+  scan_settings?: ScanSettings;
+  cursors?: ScanCursorInfo[];
 };
 
 export type LibraryUpload = {
@@ -265,6 +317,12 @@ export const api = {
   me: () => request<{ user: User }>("/me"),
   logout: () => request<void>("/session", { method: "DELETE" }),
   libraries: () => request<{ libraries: LibraryInfo[] }>("/libraries"),
+  library: (id: number | string) => request<{ library: LibraryInfo }>(`/libraries/${id}`),
+  scanLibrary: (id: number, pathPrefix?: string) =>
+    request<{ queued: boolean; library_id: number; library: LibraryInfo }>(`/libraries/${id}/scan`, {
+      method: "POST",
+      body: JSON.stringify(pathPrefix ? { path_prefix: pathPrefix } : {})
+    }),
   models: (cursor?: string | null, limit = 18) => {
     const params = new URLSearchParams({ limit: String(limit) });
     if (cursor) params.set("cursor", cursor);

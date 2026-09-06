@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_09_06_030000) do
+ActiveRecord::Schema[8.0].define(version: 2026_09_06_040000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -57,6 +57,7 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_06_030000) do
     t.bigint "uploaded_by_id"
     t.boolean "archive_truncated", default: false, null: false
     t.string "archive_support"
+    t.bigint "inode"
     t.index ["content_digest"], name: "index_assets_on_content_digest"
     t.index ["uploaded_by_id"], name: "index_assets_on_uploaded_by_id"
     t.index ["vibe_model_id", "relative_path"], name: "index_assets_on_vibe_model_id_and_relative_path", unique: true
@@ -187,8 +188,42 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_06_030000) do
     t.datetime "last_scanned_at"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.bigint "last_inode"
+    t.integer "last_nlink"
+    t.datetime "last_dir_mtime"
+    t.integer "last_file_count"
+    t.datetime "last_deep_scanned_at"
+    t.string "resume_relative_path"
     t.index ["library_id", "path_prefix"], name: "index_scan_cursors_on_library_id_and_path_prefix", unique: true
     t.index ["library_id"], name: "index_scan_cursors_on_library_id"
+  end
+
+  create_table "scan_runs", force: :cascade do |t|
+    t.bigint "library_id", null: false
+    t.bigint "triggered_by_id"
+    t.string "status", default: "queued", null: false
+    t.string "trigger", default: "job", null: false
+    t.string "phase", default: "walk", null: false
+    t.string "path_prefix"
+    t.string "resume_after"
+    t.datetime "started_at"
+    t.datetime "finished_at"
+    t.integer "folders_seen", default: 0, null: false
+    t.integer "folders_indexed", default: 0, null: false
+    t.integer "folders_skipped", default: 0, null: false
+    t.integer "files_seen", default: 0, null: false
+    t.integer "files_changed", default: 0, null: false
+    t.integer "pruned_count", default: 0, null: false
+    t.integer "error_count", default: 0, null: false
+    t.integer "deep_walks", default: 0, null: false
+    t.boolean "budget_exhausted", default: false, null: false
+    t.text "last_error"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["library_id", "started_at"], name: "index_scan_runs_on_library_id_and_started_at"
+    t.index ["library_id", "status"], name: "index_scan_runs_on_library_id_and_status"
+    t.index ["library_id"], name: "index_scan_runs_on_library_id"
+    t.index ["triggered_by_id"], name: "index_scan_runs_on_triggered_by_id"
   end
 
   create_table "tag_assignments", force: :cascade do |t|
@@ -253,6 +288,8 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_06_030000) do
   add_foreign_key "print_dispatches", "vibe_models"
   add_foreign_key "printers", "libraries"
   add_foreign_key "scan_cursors", "libraries"
+  add_foreign_key "scan_runs", "libraries"
+  add_foreign_key "scan_runs", "users", column: "triggered_by_id"
   add_foreign_key "tag_assignments", "tags"
   add_foreign_key "vibe_models", "libraries"
   add_foreign_key "vibe_models", "users", column: "uploaded_by_id"

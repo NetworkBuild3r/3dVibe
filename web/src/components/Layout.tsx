@@ -24,6 +24,11 @@ export function Layout() {
                   Upload
                 </NavLink>
               ) : null}
+              {user?.can_invite || user?.can_manage_libraries ? (
+                <NavLink to="/libraries" className={link}>
+                  Libraries
+                </NavLink>
+              ) : null}
               {user?.can_invite ? (
                 <NavLink to="/invites" className={link}>
                   Invites
