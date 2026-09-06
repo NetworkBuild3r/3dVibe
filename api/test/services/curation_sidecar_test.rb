@@ -62,6 +62,8 @@ class CurationSidecarTest < ActiveSupport::TestCase
     assert_equal @library.name, catalog[:library_name]
     assert_equal @library.root_path, catalog[:library_root]
     assert_equal "ollama", catalog[:provider_hint]
+    assert_equal "ollama", catalog.dig(:curator_runtime, :provider)
+    refute catalog[:curator_runtime].key?(:xai_api_key)
     assert catalog[:models].all? { |row| row.key?(:id) && row.key?(:folder_name) && row.key?(:title) }
     assert catalog[:models].all? { |row| row.key?(:tags) && row.key?(:asset_count) && row.key?(:byte_size) }
 
@@ -138,6 +140,47 @@ class CurationSidecarTest < ActiveSupport::TestCase
     assert @http.last_catalog.key?("creators_index")
     assert_equal "live-xai", @library.reload.last_provider
     assert_nil @library.last_error
+    assert_equal "stub", @http.last_catalog.dig("curator_runtime", "provider")
+    refute @http.last_catalog["curator_runtime"].key?("xai_api_key")
+  end
+
+  test "HTTP catalog includes decrypted curator_runtime from owner settings" do
+    old_logger = Rails.logger
+    CuratorSetting.create!(
+      provider: "xai",
+      ollama_url: "http://ollama.ui:11434",
+      ollama_model: "llama-ui",
+      xai_api_key: "xai-ui-test-key"
+    )
+    body = {
+      proposals: [
+        {
+          kind: "tag",
+          summary: "From HTTP",
+          sidecar_ref: "http:tag:runtime",
+          payload: { tag: "remote", folder_name: "alpha-one" }
+        }
+      ]
+    }
+    logs = StringIO.new
+    old_logger = Rails.logger
+    Rails.logger = Logger.new(logs)
+    @http = MiniCuratorServer.new(JSON.generate(body), provider_header: nil)
+    port = @http.start
+
+    sidecar = CurationSidecar.new(@library, endpoint: "http://127.0.0.1:#{port}", token: "secret")
+    records = sidecar.ingest_remote!
+    assert_equal 1, records.size
+    runtime = @http.last_catalog.fetch("curator_runtime")
+    assert_equal "xai", runtime["provider"]
+    assert_equal "http://ollama.ui:11434", runtime["ollama_url"]
+    assert_equal "llama-ui", runtime["ollama_model"]
+    assert_equal "xai-ui-test-key", runtime["xai_api_key"]
+    assert_equal "xai", @library.reload.last_provider
+    refute_includes logs.string, "xai-ui-test-key"
+    refute_includes @http.last_auth, "xai-ui-test-key"
+  ensure
+    Rails.logger = old_logger
   end
 
   test "payload_with_hints copies optional keys without inventing" do
@@ -198,8 +241,9 @@ class CurationSidecarTest < ActiveSupport::TestCase
   class MiniCuratorServer
     attr_reader :last_auth, :last_catalog
 
-    def initialize(body)
+    def initialize(body, provider_header: "live-xai")
       @body = body
+      @provider_header = provider_header
     end
 
     def start
@@ -230,7 +274,8 @@ class CurationSidecarTest < ActiveSupport::TestCase
       raw = length.positive? ? socket.read(length) : "{}"
       @last_auth = headers.join
       @last_catalog = JSON.parse(raw)
-      socket.write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-Curator-Provider: live-xai\r\nContent-Length: #{@body.bytesize}\r\nConnection: close\r\n\r\n#{@body}")
+      extra = @provider_header.present? ? "X-Curator-Provider: #{@provider_header}\r\n" : ""
+      socket.write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n#{extra}Content-Length: #{@body.bytesize}\r\nConnection: close\r\n\r\n#{@body}")
       socket.close
     rescue IOError
       nil

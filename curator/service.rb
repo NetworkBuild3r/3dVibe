@@ -26,17 +26,19 @@ module VibeCurator
         "service" => service_name(provider),
         "provider" => provider,
         "contract" => {
-          "POST /proposals" => "preferred; send catalog snapshot { library_id, library_root, provider_hint, creators_index, models[] }",
-          "GET /proposals" => "fallback; lists LIBRARY_ROOT first-level folders",
+          "POST /proposals" => "preferred; send catalog snapshot { library_id, library_root, provider_hint, curator_runtime, creators_index, models[] }",
+          "GET /proposals" => "fallback; lists LIBRARY_ROOT first-level folders (no secrets on the query string)",
           "auth" => "Bearer VIBE_CURATOR_TOKEN or X-Curator-Token",
-          "providers" => "VIBE_CURATOR_PROVIDER=stub|ollama|xai"
+          "providers" => "curator_runtime.provider → VIBE_CURATOR_PROVIDER=stub|ollama|xai → provider_hint"
         }
       }
     end
 
     def proposals(payload:, query: {}, env: ENV, transport: nil)
       catalog = Catalog.normalize(payload, query: query, env: env)
+      env = Config.env_with_runtime(catalog, env)
       provider_name = Config.provider_name(catalog, env: env)
+      catalog = catalog.except("curator_runtime")
       provider = Providers.build(provider_name, env: env, transport: transport)
       raw = provider.propose(catalog)
       items = ProposalBatch.normalize(

@@ -94,6 +94,29 @@ class ProvidersTest < Minitest::Test
     assert_equal "xai_not_configured", error.code
   end
 
+  def test_curator_runtime_overrides_env_and_supplies_xai_key
+    seen = nil
+    transport = fake_openai_transport(llm_payload) do |uri, request|
+      seen = [uri.to_s, request["Authorization"], request.body.to_s]
+    end
+    catalog = sample_catalog.merge(
+      "provider_hint" => "stub",
+      "curator_runtime" => {
+        "provider" => "xai",
+        "ollama_url" => "http://ollama.ui:11434",
+        "ollama_model" => "llama-ui",
+        "xai_api_key" => "ui-secret-key"
+      }
+    )
+    env = env_hash("VIBE_CURATOR_PROVIDER" => "stub", "XAI_API_KEY" => "")
+    result = VibeCurator::Service.proposals(payload: catalog, env: env, transport: transport)
+
+    assert_equal "xai", result["provider"]
+    assert_equal "Bearer ui-secret-key", seen[1]
+    refute_includes seen[2], "ui-secret-key"
+    refute_includes VibeCurator::Prompt.user_prompt(catalog), "ui-secret-key"
+  end
+
   def test_catalog_hint_selects_ollama_when_env_blank
     seen = false
     transport = fake_ollama_transport(llm_payload) { seen = true }

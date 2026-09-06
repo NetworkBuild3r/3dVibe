@@ -13,6 +13,8 @@
 #   VIBE_CURATOR_STUB       when `1`/`true`, use in-process stub if URL is blank
 #   VIBE_CURATOR_PROVIDER   optional hint (ollama|xai|stub|…) sent as catalog
 #                           `provider_hint`. Does not replace VIBE_CURATOR_URL.
+#   Owner UI CuratorSetting overrides provider / Ollama URL+model / xAI key
+#   when set. POST /proposals also gets request-scoped `curator_runtime`.
 #
 # Live providers must return a stable `sidecar_ref` per suggestion so upsert
 # is idempotent. Pending rows update; reviewed rows are never clobbered.
@@ -39,11 +41,11 @@ class CurationSidecar
   end
 
   def initialize(library, endpoint: ENV["VIBE_CURATOR_URL"], token: ENV["VIBE_CURATOR_TOKEN"],
-                 provider_hint: ENV["VIBE_CURATOR_PROVIDER"], client: nil)
+                 provider_hint: nil, client: nil)
     @library = library
     @endpoint = endpoint.to_s.strip
     @token = token
-    @provider_hint = provider_hint.to_s.strip.presence
+    @provider_hint = provider_hint.nil? ? CuratorRuntime.provider : provider_hint.to_s.strip.presence
     @client = client
   end
 
@@ -63,6 +65,7 @@ class CurationSidecar
       library_name: @library.name,
       library_root: @library.root_path,
       provider_hint: @provider_hint,
+      curator_runtime: CuratorRuntime.for_sidecar,
       creators_index: creators_index,
       models: models.map { |model| catalog_model(model) }
     }
@@ -179,7 +182,7 @@ class CurationSidecar
   end
 
   def resolved_provider(remote = nil)
-    remote.to_s.presence || @provider_hint || (stub_mode? ? "stub" : nil)
+    remote.to_s.presence || @provider_hint || CuratorRuntime.provider
   end
 
   def truthy?(value)

@@ -169,7 +169,8 @@ Likes, shelves, merge/split, and duplicates:
 2. Click **Refresh proposals** (or `docker compose exec api bin/rails vibe:curate`).
 3. Review before/after, then approve, reject, or use bulk actions.
 4. Tags write immediately. Rename/move/merge run through `ApplyCurationProposalJob` inside the library path jail, then enqueue a targeted incremental scan.
-5. Poll status (`last_polled_at`, `last_provider`, `last_error`) is on Curation, Libraries, and `GET /me`. A success clears a stale error. Nothing is auto-approved.
+5. Poll status (`last_polled_at`, `last_provider`, `last_error`) is on Curation, Libraries, and `GET /me`. A success clears a stale error. `last_provider` is the sidecar echo or the effective UI/ENV provider used on that poll. Nothing is auto-approved.
+6. Owner-only **curator settings** (`GET`/`PATCH /api/v1/curator_settings`) choose `stub` / `ollama` / `xai` and store an encrypted xAI key. Env vars stay the compose/CI fallback when the UI is unset. The SPA never receives the decrypted key.
 
 ```bash
 # in-process stub (default in compose: VIBE_CURATOR_URL=stub) — CI path
@@ -235,7 +236,10 @@ Environment variables (see `.env.example`):
 | `VIBE_OWNER_EMAIL` / `VIBE_OWNER_PASSWORD` | Seeded owner account |
 | `VIBE_NFS_SERVER` / `VIBE_NFS_EXPORT` / `VIBE_NFS_MOUNT_OPTIONS` | Host-side mount hints only |
 | `VIBE_CURATOR_URL` | Curator base URL, or `stub` for the in-process fixture generator (CI default) |
-| `VIBE_CURATOR_PROVIDER` | Sidecar adapter (`ollama` \| `xai` \| `stub`). Rails also sends it as catalog `provider_hint`. Does **not** replace the URL. |
+| `VIBE_CURATOR_PROVIDER` | Sidecar adapter (`ollama` \| `xai` \| `stub`) when owner UI is unset. Rails also sends it as catalog `provider_hint` and `curator_runtime.provider`. Does **not** replace the URL. |
+| `VIBE_ACTIVE_RECORD_ENCRYPTION_PRIMARY_KEY` | Active Record encryption primary key (compose/CI). Or Rails credentials `active_record_encryption.primary_key`. |
+| `VIBE_ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY` | Encryption deterministic key (compose/CI). Or credentials `active_record_encryption.deterministic_key`. |
+| `VIBE_ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT` | Encryption key-derivation salt (compose/CI). Or credentials `active_record_encryption.key_derivation_salt`. |
 | `VIBE_CURATOR_TOKEN` | Shared bearer token for poll + webhook ingest |
 | `VIBE_CURATOR_TIMEOUT` | Rails HTTP poll timeout in seconds (default 8). Raise this for live inference. |
 | `VIBE_CURATOR_BATCH_SIZE` | Sidecar proposal budget (default 8, max 50) |
@@ -456,6 +460,10 @@ All endpoints except `POST /api/v1/session`, invite preview/redeem, and `GET /up
 - `GET /api/v1/search?q=&tag=&tags[]=&has_preview=&library_id=&uploaded_by_id=&creator_slug=&offset=&limit=` (Meilisearch when configured; Postgres `ILIKE` fallback; facet/filter `creator_slug`)
 - `GET /covers/:id.webp` generated cover bytes (libvips webp under `VIBE_COVER_ROOT`)
 - `POST /api/v1/covers/writeback` `{ model_id, status: "ready"|"failed", cover_url?, cover_placeholder?, asset_id?, cache_key? }` (`GenerateCoverJob` uses `CoverWriteback.apply!` in-process; `X-Cover-Token: $VIBE_COVER_TOKEN` or Bearer user)
+- `GET /api/v1/curator_settings` owner-only — `{ curator_setting: { provider, ollama_url, ollama_model, xai_api_key_status: "set"|"missing" } }`. **Never** returns the raw xAI key. 403 for everyone else.
+- `PATCH /api/v1/curator_settings` `{ provider, ollama_url, ollama_model }` owner-only. Does not accept the raw key.
+- `PUT /api/v1/curator_settings/xai_api_key` `{ "xai_api_key": "..." }` owner-only. Stores the key encrypted. Response is status only (`set`).
+- `DELETE /api/v1/curator_settings/xai_api_key` owner-only. Clears the stored key (`missing`). Compose/CI `XAI_API_KEY` remains the fallback.
 - `GET /api/v1/curation_proposals?status=` (`proposals` plus `libraries[]` with `curation` poll state for Frontend bind)
 - `POST /api/v1/curation_proposals` `{ library_id, curation_proposal: { kind, summary, payload, sidecar_ref? } }`
 - `POST /api/v1/curation_proposals/fetch` `{ library_id }` (owner/contributor; polls sidecar; returns `curation` poll state; 502 includes `curation.last_error`)
@@ -510,6 +518,12 @@ HITL only. Rails never auto-approves and never silently deletes NFS files. `VIBE
   "library_name": "Studio library",
   "library_root": "/library",
   "provider_hint": "ollama",
+  "curator_runtime": {
+    "provider": "xai",
+    "ollama_url": "http://host.docker.internal:11434",
+    "ollama_model": "llama3.1",
+    "xai_api_key": "<decrypted only on this POST; omitted when provider is stub>"
+  },
   "creators_index": [
     { "id": 3, "slug": "mz4250", "name": "Mz4250", "model_count": 12 }
   ],
@@ -532,7 +546,7 @@ HITL only. Rails never auto-approves and never silently deletes NFS files. `VIBE
 }
 ```
 
-Existing keys stay stable. New model fields: `creator` (`{ id, slug, name }` or `null`), `cover_status` (`missing` \| `pending` \| `ready` \| `failed`), `mesh_count`, `archive_count`, `has_archives`, `sample_paths` (up to 5 jail-relative asset paths — hints only). New library fields: `creators_index` (budgeted, top 50 by model count) and `provider_hint` from `VIBE_CURATOR_PROVIDER`.
+Existing keys stay stable. New model fields: `creator` (`{ id, slug, name }` or `null`), `cover_status` (`missing` \| `pending` \| `ready` \| `failed`), `mesh_count`, `archive_count`, `has_archives`, `sample_paths` (up to 5 jail-relative asset paths — hints only). New library fields: `creators_index` (budgeted, top 50 by model count), `provider_hint`, and request-scoped `curator_runtime` (POST body only).
 
 Response:
 
@@ -552,11 +566,29 @@ Response:
 
 `sidecar_ref` must be **stable** for the same suggestion. Rails upserts pending rows by `(library_id, sidecar_ref)` (unique when present). Reviewed rows are never clobbered. Live providers that rotate refs will create duplicates.
 
-Optional: return `provider` in the body and/or `X-Curator-Provider` so Rails can persist `libraries.last_provider`. When absent, Rails stores `VIBE_CURATOR_PROVIDER` or `stub`.
+Optional: return `provider` in the body and/or `X-Curator-Provider` so Rails can persist `libraries.last_provider`. When absent, Rails stores the effective provider from `curator_runtime` / owner UI / `VIBE_CURATOR_PROVIDER` / `stub`.
 
-`GET /proposals?library_id=&library_root=&provider_hint=` is a fallback when POST is not implemented.
+`GET /proposals?library_id=&library_root=&provider_hint=` is a fallback when POST is not implemented. **Do not** put `curator_runtime` or the xAI key on the query string.
 
 Auth: `Authorization: Bearer {VIBE_CURATOR_TOKEN}` and/or `X-Curator-Token`.
+
+### Owner curator settings
+
+Site-scoped singleton `CuratorSetting` (one install). HITL approve/apply is unchanged — no auto-approve, no silent NFS delete. `VIBE_CURATOR_URL=stub` stays the CI path when the owner has not set a UI provider.
+
+**Resolution order** (field by field):
+
+1. Persisted owner UI (`CuratorSetting`) when that field is present
+2. Else compose/CI env (`VIBE_CURATOR_PROVIDER`, `VIBE_OLLAMA_URL`, `VIBE_OLLAMA_MODEL`, `XAI_API_KEY` / `VIBE_XAI_API_KEY`)
+3. Else `stub` (no secrets)
+
+Rails injects the resolved hash as `curator_runtime` on `POST /proposals` only. If the effective provider is `stub`, `xai_api_key` is omitted. The decrypted key is never written to Meilisearch, never returned on proposal payloads to the SPA, and is filtered from logs (`xai_api_key`, `curator_runtime`).
+
+**Key pattern:** `PATCH` updates provider / Ollama URL / model. `PUT /api/v1/curator_settings/xai_api_key` `{ "xai_api_key": "..." }` sets the key. `DELETE` clears it. Never echo the secret.
+
+**Encryption:** `ActiveRecord::Encryption` on `curator_settings.xai_api_key`. Wire keys with `VIBE_ACTIVE_RECORD_ENCRYPTION_PRIMARY_KEY`, `VIBE_ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY`, and `VIBE_ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT`, or Rails credentials `active_record_encryption.*`. Compose and CI use documented deterministic test keys. Generate production keys with `bin/rails db:encryption:init`.
+
+**Security:** do not store the xAI key in `localStorage`, cookies, or chat paste. The SPA only shows `xai_api_key_status`. Owner-only (403 otherwise).
 
 ### Poll observability (Frontend bind)
 
@@ -565,7 +597,7 @@ Auth: `Authorization: Bearer {VIBE_CURATOR_TOKEN}` and/or `X-Curator-Token`.
 | Field | Meaning |
 | --- | --- |
 | `last_polled_at` | Last poll attempt (success or failure) |
-| `last_provider` | Sidecar `provider` / `X-Curator-Provider`, else `VIBE_CURATOR_PROVIDER`, else `stub` |
+| `last_provider` | Sidecar `provider` / `X-Curator-Provider`, else the effective UI/ENV provider used on that poll, else `stub` |
 | `last_error` | Last failure message; **cleared on the next success** |
 
 Exposed as `curation: { last_polled_at, last_provider, last_error }` on:
@@ -581,9 +613,9 @@ Exposed as `curation: { last_polled_at, last_provider, last_error }` on:
 
 | Provider | When | Notes |
 | --- | --- | --- |
-| `stub` | `VIBE_CURATOR_PROVIDER=stub` (default) or `VIBE_CURATOR_URL=stub` on Rails | Deterministic fixture proposals. CI-safe. |
-| `ollama` | `VIBE_CURATOR_PROVIDER=ollama` | Native `POST {VIBE_OLLAMA_URL}/api/chat` or OpenAI `…/v1/chat/completions` |
-| `xai` | `VIBE_CURATOR_PROVIDER=xai` | `POST {XAI_BASE_URL}/chat/completions` with `XAI_API_KEY` |
+| `stub` | `curator_runtime.provider`, else `VIBE_CURATOR_PROVIDER=stub` (default), or `VIBE_CURATOR_URL=stub` on Rails | Deterministic fixture proposals. CI-safe. No secrets on the wire. |
+| `ollama` | `curator_runtime` / UI / `VIBE_CURATOR_PROVIDER=ollama` | Native `POST {VIBE_OLLAMA_URL}/api/chat` or OpenAI `…/v1/chat/completions`. Runtime `ollama_url` / `ollama_model` override env. |
+| `xai` | `curator_runtime` / UI / `VIBE_CURATOR_PROVIDER=xai` | `POST {XAI_BASE_URL}/chat/completions` with `curator_runtime.xai_api_key` or `XAI_API_KEY` |
 
 The sidecar ranks models using `creator`, `cover_status`, mesh/archive counts, `sample_paths`, and `creators_index`. Live `sidecar_ref` values are minted from kind + payload so upsert stays stable even if the model rotates ids. Optional `rationale` / `reason` / `explanation` / `confidence` are passed through when the provider returns them and omitted otherwise.
 
@@ -605,9 +637,9 @@ Rename/move destinations must be a single non-hidden segment. `../`, `.hidden`, 
 
 1. `docker compose --profile curator up --build` (or run `curator/server.rb` on a Spark/DGX host).
 2. Set `VIBE_CURATOR_URL=http://curator:8088` (compose) or `http://<spark-host>:<port>` and a long `VIBE_CURATOR_TOKEN`.
-3. Set `VIBE_CURATOR_PROVIDER=ollama` or `xai` on **both** Rails (hint) and the sidecar (adapter). URL still wins over the hint for "which process to call".
+3. Set `VIBE_CURATOR_PROVIDER=ollama` or `xai` on **both** Rails (hint) and the sidecar (adapter), **or** save owner UI settings. `curator_runtime` on POST wins over sidecar env. URL still wins over the hint for "which process to call".
 4. Increase `VIBE_CURATOR_TIMEOUT` if inference is slow.
-5. Keep HITL approve/apply in Rails.
+5. Keep HITL approve/apply in Rails. Do not log `curator_runtime`. Do not send the key to the LLM prompt.
 
 Webhook alternative: the curator can `POST /api/v1/curation_proposals/ingest` with the same proposal array and `X-Curator-Token`.
 
