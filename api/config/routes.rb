@@ -27,6 +27,9 @@ Rails.application.routes.draw do
       resources :curation_proposals, only: %i[index create] do
         post :approve, on: :member
         post :reject, on: :member
+        post :fetch, on: :collection
+        post :ingest, on: :collection
+        post :bulk, on: :collection
       end
 
       resources :print_jobs, only: %i[index create]

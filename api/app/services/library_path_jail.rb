@@ -11,11 +11,25 @@ class LibraryPathJail
     candidate
   end
 
+  def folder_path(name)
+    path = @root.join(normalize_model_folder(name)).expand_path
+    assert_inside!(path)
+    path
+  end
+
   def normalize_folder(name)
     segment = segments(name).first
     raise ArgumentError, "invalid folder" if segment.blank? || !valid_segment?(segment)
 
     segment
+  end
+
+  # Vibe models are first-level folders. Rename/move must stay there.
+  def normalize_model_folder(name)
+    parts = segments(name)
+    raise ArgumentError, "rename/move must stay a first-level library folder" if parts.size != 1
+
+    normalize_folder(name)
   end
 
   def normalize_relative(path)

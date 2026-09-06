@@ -57,4 +57,26 @@ class ApplicationController < ActionController::API
 
     render json: { error: "forbidden" }, status: :forbidden
   end
+
+  def require_curator!(library)
+    return if current_user.can_curate?(library)
+
+    render json: { error: "forbidden" }, status: :forbidden
+  end
+
+  def curator_authorized?
+    expected = ENV["VIBE_CURATOR_TOKEN"].to_s
+    return false if expected.blank?
+
+    presented = curator_token.to_s
+    return false if presented.blank?
+
+    ActiveSupport::SecurityUtils.secure_compare(presented, expected)
+  end
+
+  def curator_token
+    header = request.headers["Authorization"].to_s
+    bearer = header.split(" ", 2).last if header.start_with?("Bearer ")
+    request.headers["X-Curator-Token"].presence || bearer
+  end
 end

@@ -13,6 +13,7 @@ export type User = {
   role: string;
   can_invite: boolean;
   can_upload: boolean;
+  can_curate: boolean;
   libraries: MembershipInfo[];
 };
 
@@ -64,6 +65,31 @@ export type ArchiveMember = {
   extension: string;
 };
 
+export type CurationTarget = {
+  id: number;
+  title: string;
+  folder_name: string;
+  tags: string[];
+  asset_count: number;
+};
+
+export type CurationPreview = {
+  filesystem: boolean;
+  targets: CurationTarget[];
+  before: {
+    model_id?: number;
+    title?: string;
+    folder_name?: string;
+    tags?: string[];
+  };
+  after: {
+    title?: string;
+    folder_name?: string;
+    tags?: string[];
+    merge_from?: string;
+  };
+};
+
 export type CurationProposal = {
   id: number;
   library_id: number;
@@ -73,6 +99,11 @@ export type CurationProposal = {
   payload: Record<string, unknown>;
   sidecar_ref: string | null;
   reviewed_at: string | null;
+  reviewed_by_id: number | null;
+  applied_at: string | null;
+  apply_error: string | null;
+  result: Record<string, unknown>;
+  preview: CurationPreview;
   created_at: string;
 };
 
@@ -176,6 +207,16 @@ export const api = {
     request<{ proposal: CurationProposal }>(`/curation_proposals/${id}/approve`, { method: "POST" }),
   rejectProposal: (id: number) =>
     request<{ proposal: CurationProposal }>(`/curation_proposals/${id}/reject`, { method: "POST" }),
+  fetchProposals: (libraryId: number) =>
+    request<{ proposals: CurationProposal[] }>("/curation_proposals/fetch", {
+      method: "POST",
+      body: JSON.stringify({ library_id: libraryId })
+    }),
+  bulkProposals: (ids: number[], action: "approve" | "reject") =>
+    request<{ proposals: CurationProposal[] }>("/curation_proposals/bulk", {
+      method: "POST",
+      body: JSON.stringify({ ids, decision: action })
+    }),
   print: (modelId: number, assetId?: number) =>
     request<{ print_job: PrintJob }>("/print_jobs", {
       method: "POST",

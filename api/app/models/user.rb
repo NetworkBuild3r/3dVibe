@@ -28,6 +28,14 @@ class User < ApplicationRecord
     memberships.exists?(role: Membership::UPLOAD_ROLES)
   end
 
+  def can_curate?(library)
+    can_upload?(library)
+  end
+
+  def can_curate_anywhere?
+    can_upload_anywhere?
+  end
+
   def owner_anywhere?
     memberships.exists?(role: Membership::OWNER)
   end
@@ -48,6 +56,7 @@ class User < ApplicationRecord
       role: primary_role,
       can_invite: owner_anywhere?,
       can_upload: can_upload_anywhere?,
+      can_curate: can_curate_anywhere?,
       libraries: memberships.includes(:library).map do |membership|
         {
           id: membership.library_id,

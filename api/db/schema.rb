@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_09_05_230000) do
+ActiveRecord::Schema[8.0].define(version: 2026_09_06_010000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -65,6 +65,10 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_05_230000) do
     t.datetime "reviewed_at"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.datetime "applied_at"
+    t.text "apply_error"
+    t.jsonb "result", default: {}, null: false
+    t.index ["library_id", "sidecar_ref"], name: "index_curation_proposals_library_sidecar_ref", unique: true, where: "((sidecar_ref IS NOT NULL) AND ((sidecar_ref)::text <> ''::text))"
     t.index ["library_id", "status"], name: "index_curation_proposals_on_library_id_and_status"
     t.index ["library_id"], name: "index_curation_proposals_on_library_id"
     t.index ["reviewed_by_id"], name: "index_curation_proposals_on_reviewed_by_id"

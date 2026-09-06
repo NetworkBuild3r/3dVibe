@@ -23,4 +23,10 @@ class LibraryPathJailTest < ActiveSupport::TestCase
     assert_raises(ArgumentError) { @jail.normalize_folder(".hidden") }
     assert_raises(ArgumentError) { @jail.normalize_relative(".vibe-incoming/x") }
   end
+
+  test "model folders must stay first-level" do
+    assert_equal "dragon-kit", @jail.normalize_model_folder("dragon-kit")
+    assert_raises(ArgumentError) { @jail.normalize_model_folder("kits/dragon") }
+    assert_raises(ArgumentError) { @jail.normalize_model_folder("../etc") }
+  end
 end
