@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { api, type Creator, type ModelCard } from "../api";
 import { CalmChip, ChipDropdown, ChipOption } from "../components/CalmChip";
 import { ModelCard as ModelCardView } from "../components/ModelCard";
+import { OpsStrip } from "../components/OpsStrip";
 import { CardGridSkeleton, EmptyState, InlineError } from "../components/UiStates";
 import { hasReadyCover } from "../covers";
 
@@ -216,8 +217,8 @@ export function GalleryPage() {
 
   return (
     <div>
-      <div className="mb-5">
-        <div className="flex flex-wrap items-baseline gap-3">
+      <div className="mb-6 flex flex-col">
+        <div className="order-1 flex flex-wrap items-baseline gap-3">
           <h1 className="font-display text-3xl text-white">Library</h1>
           {headerCount != null ? (
             <p className="text-sm text-slate-500">
@@ -225,50 +226,54 @@ export function GalleryPage() {
             </p>
           ) : null}
         </div>
-      </div>
 
-      <div className="mb-6 flex flex-wrap items-center gap-2">
-        <CalmChip active={!tag && !creatorSlug && !hasCover} onClick={clearFilters}>
-          All
-        </CalmChip>
-        <ChipDropdown
-          label="Creators"
-          active={Boolean(creatorSlug)}
-          activeLabel={selectedCreator?.name || creatorSlug}
-          empty={creatorOptions.length ? undefined : "No creators yet"}
-        >
-          {creatorOptions.map((item) => (
-            <ChipOption
-              key={item.slug}
-              selected={creatorSlug === item.slug}
-              onSelect={() => patchParams({ creator: creatorSlug === item.slug ? null : item.slug })}
-            >
-              <span>{item.name}</span>
-              {item.model_count != null ? <span className="text-xs text-slate-500">{item.model_count}</span> : null}
-            </ChipOption>
-          ))}
-        </ChipDropdown>
-        <ChipDropdown
-          label="Tags"
-          active={Boolean(tag)}
-          activeLabel={tag}
-          empty={tagOptions.length ? undefined : "No tags yet"}
-        >
-          {tagOptions.map(([name, count]) => (
-            <ChipOption
-              key={name}
-              selected={tag === name}
-              onSelect={() => patchParams({ tag: tag === name ? null : name })}
-            >
-              <span>{name}</span>
-              {count ? <span className="text-xs text-slate-500">{count}</span> : null}
-            </ChipOption>
-          ))}
-        </ChipDropdown>
-        <CalmChip active={hasCover} onClick={() => patchParams({ cover: hasCover ? null : "1" })}>
-          Has cover
-        </CalmChip>
-        {activeSearch && engine ? <span className="ml-auto text-xs text-slate-500">{engine}</span> : null}
+        <div className="order-3 mt-4 flex flex-wrap items-center gap-2 md:order-2 md:mt-5">
+          <CalmChip active={!tag && !creatorSlug && !hasCover} onClick={clearFilters}>
+            All
+          </CalmChip>
+          <ChipDropdown
+            label="Creators"
+            active={Boolean(creatorSlug)}
+            activeLabel={selectedCreator?.name || creatorSlug}
+            empty={creatorOptions.length ? undefined : "No creators yet"}
+          >
+            {creatorOptions.map((item) => (
+              <ChipOption
+                key={item.slug}
+                selected={creatorSlug === item.slug}
+                onSelect={() => patchParams({ creator: creatorSlug === item.slug ? null : item.slug })}
+              >
+                <span>{item.name}</span>
+                {item.model_count != null ? <span className="text-xs text-slate-500">{item.model_count}</span> : null}
+              </ChipOption>
+            ))}
+          </ChipDropdown>
+          <ChipDropdown
+            label="Tags"
+            active={Boolean(tag)}
+            activeLabel={tag}
+            empty={tagOptions.length ? undefined : "No tags yet"}
+          >
+            {tagOptions.map(([name, count]) => (
+              <ChipOption
+                key={name}
+                selected={tag === name}
+                onSelect={() => patchParams({ tag: tag === name ? null : name })}
+              >
+                <span>{name}</span>
+                {count ? <span className="text-xs text-slate-500">{count}</span> : null}
+              </ChipOption>
+            ))}
+          </ChipDropdown>
+          <CalmChip active={hasCover} onClick={() => patchParams({ cover: hasCover ? null : "1" })}>
+            Has cover
+          </CalmChip>
+          {activeSearch && engine ? <span className="ml-auto text-xs text-slate-500">{engine}</span> : null}
+        </div>
+
+        <div className="order-2 mt-3 empty:hidden md:order-3 md:mt-3">
+          <OpsStrip />
+        </div>
       </div>
 
       {actionError ? (

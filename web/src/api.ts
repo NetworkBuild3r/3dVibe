@@ -344,6 +344,18 @@ export type Invite = {
   revoked_at: string | null;
 };
 
+export type ScanBudgets = {
+  max_seconds?: number;
+  max_files?: number;
+  max_folders?: number;
+};
+
+export type ScanResume = {
+  resume_after?: string | null;
+  path_prefix?: string | null;
+  resume_relative_path?: string | null;
+};
+
 export type ScanStatus = {
   id?: number;
   status: string;
@@ -363,7 +375,43 @@ export type ScanStatus = {
   deep_walks?: number;
   budget_exhausted?: boolean;
   last_error?: string | null;
+  budgets?: ScanBudgets;
+  resume?: ScanResume | null;
   updated_at?: string;
+};
+
+export type LibraryScanDetail = {
+  library_id: number;
+  scan: ScanStatus;
+  current: ScanStatus | null;
+  last: ScanStatus | null;
+};
+
+export type MeiliHealth = {
+  status: "up" | "down" | "unset" | string;
+  configured?: boolean;
+  last_error?: string | null;
+};
+
+export type CoverBacklog = {
+  pending: number;
+  failed: number;
+  missing: number;
+};
+
+export type GeometryBacklog = {
+  assets_missing: number;
+  archive_members_missing: number;
+};
+
+export type OpsSnapshot = {
+  library_id: number;
+  library_name: string;
+  scan: ScanStatus;
+  curator: CurationPollStatus;
+  covers: CoverBacklog;
+  geometry: GeometryBacklog;
+  meili: MeiliHealth;
 };
 
 export type ScanSettings = {
@@ -477,6 +525,12 @@ export const api = {
   logout: () => request<void>("/session", { method: "DELETE" }),
   libraries: () => request<{ libraries: LibraryInfo[] }>("/libraries"),
   library: (id: number | string) => request<{ library: LibraryInfo }>(`/libraries/${id}`),
+  libraryScan: (id: number | string) => request<LibraryScanDetail>(`/libraries/${id}/scan`),
+  libraryOps: (id: number | string) => request<{ ops: OpsSnapshot }>(`/libraries/${id}/ops`),
+  ops: (libraryId?: number | string) => {
+    const suffix = libraryId != null ? `?library_id=${encodeURIComponent(String(libraryId))}` : "";
+    return request<{ meili?: MeiliHealth; libraries?: OpsSnapshot[]; ops?: OpsSnapshot }>(`/ops${suffix}`);
+  },
   scanLibrary: (id: number, pathPrefix?: string) =>
     request<{ queued: boolean; library_id: number; library: LibraryInfo }>(`/libraries/${id}/scan`, {
       method: "POST",
