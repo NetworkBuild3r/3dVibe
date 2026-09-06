@@ -8,8 +8,9 @@ class PrinterBridge
     ENV.fetch("VIBE_PRINT_TIMEOUT", "15").to_i
   end
 
-  def initialize(job)
+  def initialize(job, adapter: nil)
     @job = job
+    @adapter = adapter
   end
 
   def run!
@@ -27,7 +28,7 @@ class PrinterBridge
 
     @job.mark_sending!
     path = PrintFileResolver.new(@job).absolute_path
-    adapter = PrinterAdapters.for(@job.printer, timeout: self.class.timeout_seconds)
+    adapter = @adapter || PrinterAdapters.for(@job.printer, timeout: self.class.timeout_seconds)
     result = with_timeout { adapter.submit(path, job: @job) }
     return if @job.reload.terminal?
 

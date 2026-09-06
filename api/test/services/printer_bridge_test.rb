@@ -1,6 +1,5 @@
 require "test_helper"
 require "fileutils"
-require "minitest/mock"
 
 class PrinterBridgeServiceTest < ActiveSupport::TestCase
   def setup
@@ -49,9 +48,7 @@ class PrinterBridgeServiceTest < ActiveSupport::TestCase
       sleep 2
       { remote_ref: "late" }
     end
-    PrinterAdapters.stub(:for, adapter) do
-      PrinterBridge.new(job).run!
-    end
+    PrinterBridge.new(job, adapter: adapter).run!
     job.reload
     assert_equal PrintDispatch::FAILED, job.status
     assert_match(/timed out|exceeded/i, job.error_message)
