@@ -9,7 +9,7 @@ module API
         end
         raise ActiveRecord::RecordNotFound unless library
 
-        groups = library.duplicate_groups.includes(duplicate_group_members: { asset: { vibe_model: VibeModel::CARD_INCLUDES } })
+        groups = library.duplicate_groups.includes(duplicate_group_members: DuplicateGroup::MEMBER_INCLUDES)
         groups = groups.where(status: params[:status]) if params[:status].present?
         rows = groups.recent.to_a
         render json: {
@@ -35,10 +35,14 @@ module API
         decide!(DuplicateReview::DISMISS, DuplicateGroup::DISMISSED)
       end
 
+      MERGE_UNSUPPORTED = "merge_unsupported"
+      MERGE_UNSUPPORTED_MESSAGE = "Archive-resident members cannot be merged out of a zip. Keep or dismiss the group instead."
+
       def merge
         group = find_group
         return if require_curator!(group.library)
         return unless open!(group)
+        return unless mergeable_selection!(group)
 
         record = ModelComposer.new(group.library, performed_by: current_user).merge!(
           source_ids: params[:source_ids] || params[:model_ids],
@@ -80,6 +84,42 @@ module API
 
         render json: { error: "invalid", details: ["group is #{group.status}"] }, status: :unprocessable_entity
         false
+      end
+
+      def mergeable_selection!(group)
+        if archive_merge_blocked?(group)
+          render json: { error: MERGE_UNSUPPORTED, message: MERGE_UNSUPPORTED_MESSAGE },
+                 status: :unprocessable_entity
+          return false
+        end
+
+        true
+      end
+
+      def archive_merge_blocked?(group)
+        return true if selected_archive_member_ids.any?
+        return true if selected_member_payloads_include_archive?
+        return true if group.duplicate_group_members.where.not(archive_member_id: nil).exists?
+
+        false
+      end
+
+      def selected_archive_member_ids
+        ids = Array(params[:archive_member_ids])
+        ids << params[:archive_member_id] if params[:archive_member_id].present?
+        ids.map(&:to_i).reject(&:zero?)
+      end
+
+      def selected_member_payloads_include_archive?
+        raw = params[:members]
+        return false if raw.blank?
+
+        Array(raw).any? do |item|
+          hash = item.respond_to?(:to_unsafe_h) ? item.to_unsafe_h : item.to_h
+          hash["kind"].to_s == "archive_member" ||
+            hash["archive_member_id"].present? ||
+            hash.key?("mergeable") && ActiveModel::Type::Boolean.new.cast(hash["mergeable"]) == false
+        end
       end
 
       def record_review!(group, decision, payload)

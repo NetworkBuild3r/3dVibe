@@ -1,5 +1,6 @@
 class ArchiveMember < ApplicationRecord
   belongs_to :asset
+  has_many :duplicate_group_members, dependent: :destroy
 
   MESH_EXTENSIONS = %w[stl obj 3mf].freeze
   IMAGE_EXTENSIONS = %w[png jpg jpeg webp gif].freeze
@@ -79,6 +80,14 @@ class ArchiveMember < ApplicationRecord
 
   def mesh?
     MESH_EXTENSIONS.include?(extension) && !directory?
+  end
+
+  def archive_path
+    "#{asset.filename} → #{internal_path}"
+  end
+
+  def member_path
+    internal_path
   end
 
   def image?
