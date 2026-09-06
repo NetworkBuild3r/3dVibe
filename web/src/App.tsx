@@ -54,6 +54,7 @@ export default function App() {
         <Route path="/creators/:slug" element={<CreatorsPage />} />
         <Route path="/shelves" element={<BookmarksPage />} />
         <Route path="/duplicates" element={<DuplicatesPage />} />
+        <Route path="/duplicates/:id" element={<DuplicatesPage />} />
         <Route path="/curation" element={<CurationPage />} />
         <Route path="/prints" element={<PrintsPage />} />
         <Route

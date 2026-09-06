@@ -85,6 +85,10 @@ export type ModelMerge = {
   created_at: string;
 };
 
+export type DuplicateConfidence = "exact" | "geometry" | "likely";
+export type DuplicateReason = "content_hash" | "geometry" | "name_size";
+export type DuplicateStatus = "open" | "kept" | "dismissed" | "merged";
+
 export type DuplicateAsset = {
   id: number;
   filename: string;
@@ -101,28 +105,28 @@ export type DuplicateAsset = {
   cover_placeholder?: boolean;
 };
 
+export type DuplicateReview = {
+  id: number;
+  duplicate_group_id: number;
+  user_id: number;
+  decision: "keep" | "dismiss" | "merge";
+  payload: Record<string, unknown>;
+  created_at: string;
+};
+
 export type DuplicateGroup = {
   id: number;
   library_id?: number;
-  reason: "content_hash" | "geometry" | "name_size" | string;
-  confidence: "exact" | "geometry" | "likely" | string;
+  reason: DuplicateReason | string;
+  confidence: DuplicateConfidence | string;
   digest: string | null;
-  status?: "open" | "kept" | "dismissed" | "merged" | string;
+  status: DuplicateStatus | string;
   filename: string;
   byte_size: number;
   assets: DuplicateAsset[];
   models?: ModelCard[];
   created_at?: string;
   updated_at?: string;
-};
-
-export type DuplicateReview = {
-  id: number;
-  duplicate_group_id: number;
-  user_id: number;
-  decision: string;
-  payload: Record<string, unknown>;
-  created_at: string;
 };
 
 export type DuplicatesPayload = {
@@ -471,26 +475,24 @@ export const api = {
       method: "POST",
       body: JSON.stringify(mergeId ? { merge_id: mergeId } : {})
     }),
-  duplicates: (libraryId?: number, options: { status?: string } = {}) => {
+  duplicates: (libraryId?: number, status?: DuplicateStatus | "") => {
     const params = new URLSearchParams();
     if (libraryId) params.set("library_id", String(libraryId));
-    if (options.status) params.set("status", options.status);
+    if (status) params.set("status", status);
     const suffix = params.toString() ? `?${params}` : "";
     return request<DuplicatesPayload>(`/duplicates${suffix}`);
   },
   analyzeDuplicates: (libraryId: number) =>
-    request<{ queued: boolean; library_id: number }>(`/libraries/${libraryId}/duplicates/analyze`, {
-      method: "POST"
-    }),
-  keepDuplicateGroup: (id: number) =>
+    request<{ queued: boolean; library_id: number }>(`/libraries/${libraryId}/duplicates/analyze`, { method: "POST" }),
+  keepDuplicate: (id: number) =>
     request<{ group: DuplicateGroup; review: DuplicateReview }>(`/duplicates/${id}/keep`, { method: "POST" }),
-  dismissDuplicateGroup: (id: number) =>
+  dismissDuplicate: (id: number) =>
     request<{ group: DuplicateGroup; review: DuplicateReview }>(`/duplicates/${id}/dismiss`, { method: "POST" }),
-  mergeDuplicateGroup: (
+  mergeDuplicate: (
     id: number,
-    payload: { title?: string; target_id?: number; source_ids?: number[]; asset_ids?: number[] } = {}
+    payload: { source_ids?: number[]; asset_ids?: number[]; target_id?: number; title?: string }
   ) =>
-    request<{ group: DuplicateGroup; review: DuplicateReview; merge: ModelMerge; model: ModelCard }>(
+    request<{ group: DuplicateGroup; review: DuplicateReview; merge: ModelMerge; model: ModelDetail }>(
       `/duplicates/${id}/merge`,
       { method: "POST", body: JSON.stringify(payload) }
     ),
