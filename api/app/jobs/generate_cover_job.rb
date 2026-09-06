@@ -1,14 +1,19 @@
-# Enqueue contract for budgeted covers. Rendering owns generate.
-# Job args are a single JSON object (see README / CoverEnqueue#payload).
+# Budgeted cover generate. Payload is the locked CoverEnqueue JSON object.
+# Writes back ready/failed via CoverWriteback.apply! (silent status, no toasts).
 class GenerateCoverJob < ApplicationJob
   queue_as :covers
 
+  discard_on ActiveRecord::RecordNotFound
+
+  retry_on CoverGenerator::TransientError, attempts: 5, wait: :polynomially_longer do |job, error|
+    job.fail_exhausted(error)
+  end
+
   def perform(payload)
-    data = (payload.presence || {}).to_h.stringify_keys
-    Rails.logger.info(
-      "[GenerateCoverJob] stub generate model=#{data['model_id']} asset=#{data['asset_id']} " \
-      "jailed_path=#{data['jailed_path']} budget=#{data['budget'].inspect}"
-    )
-    :stubbed
+    CoverGenerator.call(payload)
+  end
+
+  def fail_exhausted(error)
+    CoverGenerator.new(arguments.first).fail!(error)
   end
 end

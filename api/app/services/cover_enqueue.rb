@@ -1,5 +1,4 @@
-# Enqueues a budgeted cover job for Rendering. Backend owns enqueue + index
-# fields only; GenerateCoverJob is a stub hook the Rendering worker replaces.
+# Enqueues a budgeted cover job. GenerateCoverJob generates and writes back.
 class CoverEnqueue
   DEFAULT_MAX_PX = 512
   DEFAULT_MAX_BYTES = 250_000

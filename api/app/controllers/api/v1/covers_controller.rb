@@ -1,10 +1,26 @@
 module API
   module V1
     class CoversController < ApplicationController
-      skip_before_action :authenticate!, only: :writeback
+      skip_before_action :authenticate!, only: %i[show writeback]
       before_action :authenticate_writeback!, only: :writeback
 
-      # Internal write-back for the Rendering worker.
+      # Generated cover bytes. Filename is "{model_id}.webp" under VIBE_COVER_ROOT.
+      def show
+        filename = params[:filename].to_s
+        unless filename.match?(/\A[0-9]+\.webp\z/)
+          return render json: { error: "not_found" }, status: :not_found
+        end
+
+        path = File.expand_path(File.join(CoverGenerator.cover_root, filename))
+        root = File.expand_path(CoverGenerator.cover_root)
+        unless path.start_with?(root + File::SEPARATOR) && File.file?(path)
+          return render json: { error: "not_found" }, status: :not_found
+        end
+
+        send_file path, type: "image/webp", disposition: "inline"
+      end
+
+      # Internal write-back for the generate worker.
       # POST /api/v1/covers/writeback
       # { model_id, status: "ready"|"failed", cover_url?, cover_placeholder?, asset_id?, cache_key? }
       def writeback
