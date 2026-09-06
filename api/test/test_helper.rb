@@ -6,6 +6,11 @@ module ActiveSupport
   class TestCase
     include ActiveSupport::Testing::TimeHelpers
 
+    setup do
+      SearchIndexBuffer.reset!
+      MeilisearchClient.reset_health_cache!
+    end
+
     def fixture_library_root
       Rails.root.join("test/fixtures/files/library").to_s
     end

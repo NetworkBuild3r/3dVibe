@@ -158,26 +158,31 @@ class ModelSearchTest < ActiveSupport::TestCase
     end
   end
 
-  test "cover writeback and creator assign enqueue search reindex when Meili is configured" do
+  test "cover writeback and creator assign enqueue a debounced bulk reindex when Meili is configured" do
     ENV["MEILI_URL"] = "http://127.0.0.1:9"
-    assert_enqueued_with(job: IndexVibeModelJob, args: [@horn.id]) do
+    assert_enqueued_jobs 1, only: BulkIndexVibeModelsJob do
       CoverWriteback.apply!("model_id" => @horn.id, "status" => "ready", "cover_url" => "/covers/horn.webp")
     end
     assert @horn.reload.has_cover?
+    assert_includes SearchIndexBuffer.pending_ids, @horn.id
     doc = SearchIndex.new.document_for(@horn)
     assert_equal true, doc[:has_cover]
     assert_equal VibeModel::COVER_READY, doc[:cover_status]
 
     creator = Creator.create!(slug: "fresh-label", name: "Fresh Label", source: Creator::SOURCE_NFS)
-    assert_enqueued_with(job: IndexVibeModelJob, args: [@horn.id]) do
+    assert_no_enqueued_jobs only: BulkIndexVibeModelsJob do
       @horn.update!(creator: creator)
     end
+    assert_includes SearchIndexBuffer.pending_ids, @horn.id
     assert_equal "fresh-label", SearchIndex.new.document_for(@horn.reload)[:creator_slug]
   ensure
     ENV.delete("MEILI_URL")
   end
 
   test "search index enqueue is a no-op without MEILI_URL" do
+    assert_no_enqueued_jobs only: BulkIndexVibeModelsJob do
+      SearchIndex.enqueue(@horn)
+    end
     assert_no_enqueued_jobs only: IndexVibeModelJob do
       SearchIndex.enqueue(@horn)
     end
@@ -185,7 +190,7 @@ class ModelSearchTest < ActiveSupport::TestCase
 
   test "search index enqueue and remove jobs when Meili is configured" do
     ENV["MEILI_URL"] = "http://127.0.0.1:9"
-    assert_enqueued_with(job: IndexVibeModelJob, args: [@horn.id]) do
+    assert_enqueued_with(job: BulkIndexVibeModelsJob) do
       SearchIndex.enqueue(@horn)
     end
     assert_enqueued_with(job: RemoveVibeModelIndexJob, args: [@horn.id]) do
@@ -193,6 +198,22 @@ class ModelSearchTest < ActiveSupport::TestCase
     end
   ensure
     ENV.delete("MEILI_URL")
+  end
+
+  test "fallback cap stays hard-clamped between 1 and 1000" do
+    previous = ENV["VIBE_SEARCH_FALLBACK_CAP"]
+    ENV["VIBE_SEARCH_FALLBACK_CAP"] = "0"
+    assert_equal 1, ModelSearch.fallback_cap
+    ENV["VIBE_SEARCH_FALLBACK_CAP"] = "99999"
+    assert_equal 1_000, ModelSearch.fallback_cap
+    ENV.delete("VIBE_SEARCH_FALLBACK_CAP")
+    assert_equal ModelSearch::DEFAULT_FALLBACK_CAP, ModelSearch.fallback_cap
+  ensure
+    if previous.nil?
+      ENV.delete("VIBE_SEARCH_FALLBACK_CAP")
+    else
+      ENV["VIBE_SEARCH_FALLBACK_CAP"] = previous
+    end
   end
 
   def library_scope

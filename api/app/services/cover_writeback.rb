@@ -34,6 +34,9 @@ class CoverWriteback
     updates[:cover_asset_id] = @attrs["asset_id"].to_i if @attrs["asset_id"].present?
     updates[:cover_cache_key] = @attrs["cache_key"].to_s if @attrs["cache_key"].present?
     model.update!(updates)
+    # after_commit also enqueues; the buffer collapses both so has_cover /
+    # cover_status land in Meili without an IndexVibeModelJob per write-back.
+    SearchIndex.enqueue(model)
     model
   end
 

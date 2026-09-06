@@ -256,9 +256,6 @@ class CurationApplier
     ids = Array(result[:model_ids])
     ids << result[:source_id]
     ids << result[:target_id]
-    ids.compact.uniq.each do |model_id|
-      model = @library.vibe_models.find_by(id: model_id)
-      SearchIndex.enqueue(model)
-    end
+    SearchIndex.enqueue_ids(ids.compact.uniq)
   end
 end

@@ -1,15 +1,33 @@
 # Builds and maintains the Meilisearch vibe_models index.
 # No-ops when Meili is not configured or is unreachable.
+# Enqueue is debounced: unique model ids flush through BulkIndexVibeModelsJob
+# so scan / cover / curation / creator spikes cannot melt Sidekiq or Meili.
 class SearchIndex
+  DEFAULT_DEBOUNCE_SECONDS = 2.0
+  DEFAULT_BATCH_SIZE = 100
+
   def initialize(client: MeilisearchClient.new)
     @client = client
   end
 
+  def self.debounce_seconds
+    [[ENV.fetch("VIBE_SEARCH_INDEX_DEBOUNCE", DEFAULT_DEBOUNCE_SECONDS).to_f, 0].max, 30].min
+  end
+
+  def self.batch_size
+    [[ENV.fetch("VIBE_SEARCH_INDEX_BATCH", DEFAULT_BATCH_SIZE).to_i, 1].max, 500].min
+  end
+
   def self.enqueue(model)
     return unless model
+
+    enqueue_ids([model.respond_to?(:id) ? model.id : model])
+  end
+
+  def self.enqueue_ids(ids)
     return unless MeilisearchClient.configured?
 
-    IndexVibeModelJob.perform_later(model.id)
+    SearchIndexBuffer.add_ids(ids)
   end
 
   def self.enqueue_remove(model_id)
@@ -20,13 +38,26 @@ class SearchIndex
   end
 
   def upsert(model)
+    upsert_many([model.id])
+  end
+
+  def upsert_many(model_ids)
+    ids = Array(model_ids).compact
+    return :skipped if ids.empty?
     return :skipped unless @client.configured?
     return :unavailable unless ready?
 
-    @client.upsert_documents([document_for(model)])
-    :ok
+    count = 0
+    VibeModel.includes(:tags, :library, :uploaded_by, :creator, assets: :archive_members)
+             .where(id: ids)
+             .find_in_batches(batch_size: self.class.batch_size) do |batch|
+      @client.upsert_documents(batch.map { |model| document_for(model) })
+      count += batch.size
+    end
+    Rails.logger.info("[SearchIndex] upserted #{count} models") if count > 1
+    count.positive? ? :ok : :empty
   rescue MeilisearchClient::Error => e
-    Rails.logger.warn("[SearchIndex] upsert failed model=#{model.id}: #{e.message}")
+    Rails.logger.warn("[SearchIndex] upsert failed models=#{ids.join(',')}: #{e.message}")
     :failed
   end
 
@@ -47,7 +78,7 @@ class SearchIndex
 
     @client.ensure_index!
     count = 0
-    scope.includes(:tags, :library, :uploaded_by, :creator, assets: :archive_members).find_in_batches(batch_size: 100) do |batch|
+    scope.includes(:tags, :library, :uploaded_by, :creator, assets: :archive_members).find_in_batches(batch_size: self.class.batch_size) do |batch|
       @client.upsert_documents(batch.map { |model| document_for(model) })
       count += batch.size
     end

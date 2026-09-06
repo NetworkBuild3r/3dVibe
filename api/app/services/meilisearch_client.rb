@@ -9,6 +9,10 @@ class MeilisearchClient
 
   INDEX_UID = "vibe_models"
   DEFAULT_TIMEOUT = 2.0
+  DEFAULT_HEALTH_TTL = 3.0
+  @health_mutex = Mutex.new
+  @health_cache = nil
+  @health_at = 0.0
 
   def self.url
     ENV["MEILI_URL"].presence || ENV["MEILISEARCH_URL"].presence
@@ -41,7 +45,45 @@ class MeilisearchClient
     health[:status] == "up"
   end
 
+  # Cheap GET /health only. Short TTL so ops polls under load do not DDOS
+  # Meili, and a down/up flip is visible within a few seconds (honest).
   def health
+    self.class.fetch_health { probe_health }
+  end
+
+  def self.health_ttl
+    [[ENV.fetch("VIBE_SEARCH_HEALTH_TTL", DEFAULT_HEALTH_TTL).to_f, 0].max, 15].min
+  end
+
+  def self.reset_health_cache!
+    health_mutex.synchronize do
+      @health_cache = nil
+      @health_at = 0.0
+    end
+  end
+
+  def self.fetch_health(ttl: health_ttl)
+    health_mutex.synchronize do
+      now = monotonic_now
+      if @health_cache && ttl.positive? && (now - @health_at) < ttl
+        return @health_cache
+      end
+
+      @health_cache = yield
+      @health_at = now
+      @health_cache
+    end
+  end
+
+  def self.health_mutex
+    @health_mutex ||= Mutex.new
+  end
+
+  def self.monotonic_now
+    Process.clock_gettime(Process::CLOCK_MONOTONIC)
+  end
+
+  def probe_health
     return { status: "unset", configured: false, last_error: nil } unless configured?
 
     response = request(:get, "/health", key: nil)
