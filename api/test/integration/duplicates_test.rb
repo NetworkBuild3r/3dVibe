@@ -99,7 +99,7 @@ class DuplicatesTest < ActionDispatch::IntegrationTest
     geo = response.parsed_body.fetch("groups").find { |group| group["reason"] == "geometry" }
     assert geo
     assert_equal "geometry", geo["confidence"]
-    assert geo["digest"].to_s.start_with?("qv1:")
+    assert geo["digest"].to_s.start_with?("mesh:v1:")
     names = geo.fetch("assets").map { |asset| asset["filename"] }
     assert_includes names, "part.stl"
     assert_includes names, "part.obj"
