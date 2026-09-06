@@ -81,8 +81,9 @@ module API
         end
 
         job.requeue!
+        payload = serialize(job)
         DispatchPrintJob.perform_later(job.id)
-        render json: { print_job: serialize(job.reload) }, status: :accepted
+        render json: { print_job: payload }, status: :accepted
       end
 
       private
