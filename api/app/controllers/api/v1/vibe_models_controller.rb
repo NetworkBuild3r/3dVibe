@@ -2,7 +2,7 @@ module API
   module V1
     class VibeModelsController < ApplicationController
       def index
-        scope = accessible_models.includes(:tags, :library).recent
+        scope = accessible_models.includes(:tags, :library, :uploaded_by).recent
         scope = scope.where(library_id: params[:library_id]) if params[:library_id].present?
         limit = [[params.fetch(:limit, 24).to_i, 1].max, 60].min
 
@@ -27,7 +27,7 @@ module API
       end
 
       def show
-        model = accessible_models.includes(:tags, assets: :archive_members).find(params[:id])
+        model = accessible_models.includes(:tags, :uploaded_by, assets: %i[archive_members uploaded_by]).find(params[:id])
         render json: { model: detail_payload(model) }
       end
 
@@ -44,7 +44,8 @@ module API
           library_id: model.library_id,
           library_name: model.library.name,
           tags: model.tags.map(&:name),
-          updated_at: model.updated_at
+          updated_at: model.updated_at,
+          uploaded_by: author_payload(model.uploaded_by)
         }
       end
 
@@ -61,10 +62,17 @@ module API
               content_digest: asset.content_digest,
               archive: asset.archive?,
               mesh: asset.mesh?,
-              archive_member_count: asset.archive_members.size
+              archive_member_count: asset.archive_members.size,
+              uploaded_by: author_payload(asset.uploaded_by)
             }
           end
         )
+      end
+
+      def author_payload(user)
+        return if user.blank?
+
+        { id: user.id, display_name: user.display_name }
       end
     end
   end

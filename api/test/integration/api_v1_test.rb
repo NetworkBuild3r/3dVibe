@@ -102,18 +102,21 @@ class APIV1Test < ActionDispatch::IntegrationTest
     assert_equal "unavailable", response.parsed_body.dig("print_job", "status")
   end
 
-  test "friend invite can be created and redeemed" do
+  test "friend invite defaults to contributor and can be redeemed" do
     post "/api/v1/invites",
          params: { library_id: @library.id, email: "pal@example.test" },
          headers: auth_header(@owner),
          as: :json
     assert_response :created
     token = response.parsed_body.dig("invite", "token")
+    assert_equal Membership::CONTRIBUTOR, response.parsed_body.dig("invite", "role")
 
     post "/api/v1/invites/#{token}/redeem", params: { password: "friendpass1" }, as: :json
     assert_response :success
     friend = User.find_by!(email: "pal@example.test")
     assert friend.member_of?(@library)
+    assert friend.can_upload?(@library)
+    assert_equal Membership::CONTRIBUTOR, response.parsed_body.dig("user", "role")
   end
 
   test "health endpoint does not require auth" do

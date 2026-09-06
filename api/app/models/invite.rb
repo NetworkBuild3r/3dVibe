@@ -4,13 +4,19 @@ class Invite < ApplicationRecord
 
   has_secure_token :token
 
-  validates :role, inclusion: { in: Membership::ROLES }
-  validates :email, presence: true
+  validates :role, inclusion: { in: Membership::INVITABLE_ROLES }
+  validates :email, format: { with: URI::MailTo::EMAIL_REGEXP }, allow_blank: true
 
-  scope :pending, -> { where(redeemed_at: nil).where("expires_at IS NULL OR expires_at > ?", Time.current) }
+  before_validation :normalize_email
+
+  scope :pending, -> { where(redeemed_at: nil, revoked_at: nil).where("expires_at IS NULL OR expires_at > ?", Time.current) }
 
   def pending?
-    redeemed_at.nil? && (expires_at.nil? || expires_at > Time.current)
+    redeemed_at.nil? && revoked_at.nil? && (expires_at.nil? || expires_at > Time.current)
+  end
+
+  def revoke!
+    update!(revoked_at: Time.current)
   end
 
   def redeem!(user)
@@ -22,5 +28,16 @@ class Invite < ApplicationRecord
       end
       update!(redeemed_at: Time.current, redeemed_by_id: user.id)
     end
+  end
+
+  def redeem_path
+    "/invite/#{token}"
+  end
+
+  private
+
+  def normalize_email
+    value = email.to_s.strip.downcase
+    self.email = value.presence
   end
 end

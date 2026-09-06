@@ -52,7 +52,7 @@ end
 
 Invite.find_or_create_by!(library: library, email: "friend@3dvibe.local") do |invite|
   invite.invited_by = owner
-  invite.role = Membership::FRIEND
+  invite.role = Membership::CONTRIBUTOR
   invite.expires_at = 30.days.from_now
 end
 

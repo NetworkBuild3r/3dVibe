@@ -54,6 +54,20 @@ class LibraryScannerTest < ActiveSupport::TestCase
     assert_equal first_scan.to_i, cursor.reload.last_scanned_at.to_i
   end
 
+  test "targeted scan indexes one folder and skips hidden incoming dirs" do
+    FileUtils.mkdir_p(@root.join(".vibe-incoming"))
+    File.write(@root.join(".vibe-incoming/partial"), "tmp")
+    FileUtils.mkdir_p(@root.join("new-clip"))
+    File.write(@root.join("new-clip/clip.stl"), stl_body)
+
+    LibraryScanner.new(@library, uploaded_by: @owner).scan!(path_prefix: "new-clip")
+
+    clip = @library.vibe_models.find_by!(folder_name: "new-clip")
+    assert_equal @owner.id, clip.uploaded_by_id
+    refute @library.vibe_models.exists?(folder_name: ".vibe-incoming")
+    refute @library.vibe_models.exists?(folder_name: "cube-gauge")
+  end
+
   test "reindexes when a file mtime or size changes" do
     LibraryScanner.new(@library).scan!
     sleep 1

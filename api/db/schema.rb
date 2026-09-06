@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_09_05_220000) do
+ActiveRecord::Schema[8.0].define(version: 2026_09_05_230000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -47,7 +47,9 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_05_220000) do
     t.datetime "mtime"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.bigint "uploaded_by_id"
     t.index ["content_digest"], name: "index_assets_on_content_digest"
+    t.index ["uploaded_by_id"], name: "index_assets_on_uploaded_by_id"
     t.index ["vibe_model_id", "relative_path"], name: "index_assets_on_vibe_model_id_and_relative_path", unique: true
     t.index ["vibe_model_id"], name: "index_assets_on_vibe_model_id"
   end
@@ -72,13 +74,14 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_05_220000) do
     t.bigint "library_id", null: false
     t.bigint "invited_by_id", null: false
     t.bigint "redeemed_by_id"
-    t.string "email", null: false
+    t.string "email"
     t.string "token", null: false
-    t.string "role", default: "friend", null: false
+    t.string "role", default: "contributor", null: false
     t.datetime "expires_at"
     t.datetime "redeemed_at"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.datetime "revoked_at"
     t.index ["invited_by_id"], name: "index_invites_on_invited_by_id"
     t.index ["library_id"], name: "index_invites_on_library_id"
     t.index ["token"], name: "index_invites_on_token", unique: true
@@ -93,10 +96,27 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_05_220000) do
     t.index ["root_path"], name: "index_libraries_on_root_path", unique: true
   end
 
+  create_table "library_uploads", force: :cascade do |t|
+    t.bigint "library_id", null: false
+    t.bigint "uploaded_by_id", null: false
+    t.string "folder_name", null: false
+    t.string "relative_path", null: false
+    t.string "filename", null: false
+    t.bigint "byte_size", null: false
+    t.bigint "byte_offset", default: 0, null: false
+    t.string "status", default: "pending", null: false
+    t.datetime "completed_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["library_id", "status"], name: "index_library_uploads_on_library_id_and_status"
+    t.index ["library_id"], name: "index_library_uploads_on_library_id"
+    t.index ["uploaded_by_id"], name: "index_library_uploads_on_uploaded_by_id"
+  end
+
   create_table "memberships", force: :cascade do |t|
     t.bigint "user_id", null: false
     t.bigint "library_id", null: false
-    t.string "role", default: "friend", null: false
+    t.string "role", default: "contributor", null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.index ["library_id"], name: "index_memberships_on_library_id"
@@ -166,18 +186,23 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_05_220000) do
     t.datetime "folder_mtime"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.bigint "uploaded_by_id"
     t.index ["library_id", "folder_name"], name: "index_vibe_models_on_library_id_and_folder_name", unique: true
     t.index ["library_id", "updated_at", "id"], name: "index_vibe_models_on_library_id_and_updated_at_and_id"
     t.index ["library_id"], name: "index_vibe_models_on_library_id"
+    t.index ["uploaded_by_id"], name: "index_vibe_models_on_uploaded_by_id"
   end
 
   add_foreign_key "access_tokens", "users"
   add_foreign_key "archive_members", "assets"
+  add_foreign_key "assets", "users", column: "uploaded_by_id"
   add_foreign_key "assets", "vibe_models"
   add_foreign_key "curation_proposals", "libraries"
   add_foreign_key "curation_proposals", "users", column: "reviewed_by_id"
   add_foreign_key "invites", "libraries"
   add_foreign_key "invites", "users", column: "invited_by_id"
+  add_foreign_key "library_uploads", "libraries"
+  add_foreign_key "library_uploads", "users", column: "uploaded_by_id"
   add_foreign_key "memberships", "libraries"
   add_foreign_key "memberships", "users"
   add_foreign_key "print_dispatches", "assets"
@@ -186,4 +211,5 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_05_220000) do
   add_foreign_key "scan_cursors", "libraries"
   add_foreign_key "tag_assignments", "tags"
   add_foreign_key "vibe_models", "libraries"
+  add_foreign_key "vibe_models", "users", column: "uploaded_by_id"
 end

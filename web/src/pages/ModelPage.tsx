@@ -44,6 +44,11 @@ export function ModelPage() {
         </Link>
         <h1 className="mt-2 font-display text-3xl text-white">{model.title}</h1>
         <p className="mt-1 text-slate-400">{model.synopsis || model.folder_name}</p>
+        {model.uploaded_by ? (
+          <p className="mt-2 text-xs text-slate-500">Uploaded by {model.uploaded_by.display_name} · shared with everyone</p>
+        ) : (
+          <p className="mt-2 text-xs text-slate-500">Indexed from the shared library disk</p>
+        )}
         <div className="mt-3 flex flex-wrap gap-2">
           {model.tags.map((tag) => (
             <span key={tag} className="rounded-full bg-white/5 px-2 py-0.5 text-xs text-slate-300">

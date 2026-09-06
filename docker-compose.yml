@@ -43,7 +43,7 @@ services:
       WEB_ORIGIN: http://localhost:${WEB_PORT:-5173}
     volumes:
       - ./api:/app
-      - ${VIBE_LIBRARY_HOST_PATH:-./fixtures/library}:${VIBE_LIBRARY_ROOT:-/library}:ro
+      - ${VIBE_LIBRARY_HOST_PATH:-./fixtures/library}:${VIBE_LIBRARY_ROOT:-/library}
       - bundle_cache:/usr/local/bundle
     ports:
       - "${API_PORT:-3000}:3000"
@@ -72,7 +72,7 @@ services:
       MEILISEARCH_URL: ${MEILISEARCH_URL:-}
     volumes:
       - ./api:/app
-      - ${VIBE_LIBRARY_HOST_PATH:-./fixtures/library}:${VIBE_LIBRARY_ROOT:-/library}:ro
+      - ${VIBE_LIBRARY_HOST_PATH:-./fixtures/library}:${VIBE_LIBRARY_ROOT:-/library}
       - bundle_cache:/usr/local/bundle
     depends_on:
       db:
