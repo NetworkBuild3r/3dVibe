@@ -14,6 +14,7 @@ import { UploadPage } from "./pages/UploadPage";
 import { BookmarksPage } from "./pages/BookmarksPage";
 import { CreatorsPage } from "./pages/CreatorsPage";
 import { DuplicatesPage } from "./pages/DuplicatesPage";
+import { CuratorSettingsPage } from "./pages/CuratorSettingsPage";
 
 function Guard({ children }: { children: React.ReactNode }) {
   const { user, ready } = useAuth();
@@ -56,6 +57,22 @@ export default function App() {
         <Route path="/duplicates" element={<DuplicatesPage />} />
         <Route path="/duplicates/:id" element={<DuplicatesPage />} />
         <Route path="/curation" element={<CurationPage />} />
+        <Route
+          path="/settings/curator"
+          element={
+            <OwnerGuard>
+              <CuratorSettingsPage />
+            </OwnerGuard>
+          }
+        />
+        <Route
+          path="/settings"
+          element={
+            <OwnerGuard>
+              <Navigate to="/settings/curator" replace />
+            </OwnerGuard>
+          }
+        />
         <Route path="/prints" element={<PrintsPage />} />
         <Route
           path="/printers"
