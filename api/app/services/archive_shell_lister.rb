@@ -112,7 +112,7 @@ class ArchiveShellLister
   private
 
   def timed_out?(started, max_seconds)
-    limit = max_seconds.to_i
+    limit = max_seconds.to_f
     return false if limit <= 0
 
     Process.clock_gettime(Process::CLOCK_MONOTONIC) - started > limit

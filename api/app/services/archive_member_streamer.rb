@@ -130,7 +130,7 @@ class ArchiveMemberStreamer
   end
 
   def with_time_budget(max_seconds)
-    limit = max_seconds.to_i
+    limit = max_seconds.to_f
     return yield if limit <= 0
 
     Timeout.timeout(limit) { yield }
