@@ -276,6 +276,10 @@ export type CurationProposal = {
   summary: string;
   payload: Record<string, unknown>;
   sidecar_ref: string | null;
+  rationale?: string | null;
+  reason?: string | null;
+  explanation?: string | null;
+  confidence?: number | string | null;
   reviewed_at: string | null;
   reviewed_by_id: number | null;
   applied_at: string | null;
@@ -426,12 +430,14 @@ export function setToken(value: string | null) {
 export class ApiError extends Error {
   status: number;
   code: string;
+  data: Record<string, unknown>;
 
-  constructor(message: string, status: number, code = "") {
+  constructor(message: string, status: number, code = "", data: Record<string, unknown> = {}) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
+    this.data = data;
   }
 }
 
@@ -452,7 +458,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const code = typeof data.error === "string" ? data.error : "";
     const message =
       details || (typeof data.message === "string" && data.message) || code || `Request failed (${response.status})`;
-    throw new ApiError(message, response.status, code);
+    throw new ApiError(message, response.status, code, data && typeof data === "object" ? data : {});
   }
   return data as T;
 }

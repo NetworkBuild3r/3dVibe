@@ -39,6 +39,7 @@ class CurationProposalsTest < ActionDispatch::IntegrationTest
     assert proposals.all? { |item| item["status"] == "pending" }
     assert proposals.any? { |item| item["preview"].is_a?(Hash) }
     assert proposals.any? { |item| item.dig("preview", "before", "folder_name").present? }
+    assert proposals.none? { |item| item.key?("rationale") || item.key?("confidence") }
     curation = response.parsed_body.fetch("curation")
     assert_nil curation["last_error"]
     assert_equal "stub", curation["last_provider"]
@@ -164,5 +165,42 @@ class CurationProposalsTest < ActionDispatch::IntegrationTest
     curation = response.parsed_body.fetch("library").fetch("curation")
     assert_equal "ollama", curation["last_provider"]
     assert_nil curation["last_error"]
+  end
+
+  test "proposal json includes optional sidecar rationale and confidence when present" do
+    proposal = @library.curation_proposals.create!(
+      kind: "tag",
+      summary: "Tag horn",
+      payload: {
+        "model_id" => @horn.id,
+        "tag" => "audio",
+        "rationale" => "Matches the audio shelf",
+        "confidence" => 0.82
+      },
+      status: CurationProposal::PENDING
+    )
+
+    get "/api/v1/curation_proposals", headers: auth_header(@owner)
+    assert_response :success
+    row = response.parsed_body.fetch("proposals").find { |item| item["id"] == proposal.id }
+    assert_equal "Matches the audio shelf", row["rationale"]
+    assert_in_delta 0.82, row["confidence"]
+  end
+
+  test "proposal json omits optional sidecar hints when absent" do
+    proposal = @library.curation_proposals.create!(
+      kind: "tag",
+      summary: "Tag horn",
+      payload: { "model_id" => @horn.id, "tag" => "audio" },
+      status: CurationProposal::PENDING
+    )
+
+    get "/api/v1/curation_proposals", headers: auth_header(@owner)
+    assert_response :success
+    row = response.parsed_body.fetch("proposals").find { |item| item["id"] == proposal.id }
+    refute row.key?("rationale")
+    refute row.key?("reason")
+    refute row.key?("explanation")
+    refute row.key?("confidence")
   end
 end

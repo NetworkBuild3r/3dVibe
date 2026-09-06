@@ -132,7 +132,7 @@ module API
         raw = params[:proposals]
         return raw if raw.is_a?(Array)
 
-        Array.wrap(params.permit(proposals: [:kind, :summary, :sidecar_ref, { payload: permitted_payload }])[:proposals])
+        Array.wrap(params.permit(proposals: [:kind, :summary, :sidecar_ref, :rationale, :reason, :explanation, :confidence, { payload: permitted_payload }])[:proposals])
       end
 
       def draft_from(item)
@@ -143,7 +143,7 @@ module API
         CurationSidecar::ProposalDraft.new(
           kind: data["kind"],
           summary: data["summary"],
-          payload: normalize_payload(data["payload"]),
+          payload: CurationSidecar.payload_with_hints(data),
           sidecar_ref: data["sidecar_ref"]
         )
       end
@@ -152,7 +152,8 @@ module API
         [
           :tag, :title, :to, :from, :folder_name, :shelf, :model_id, :source_id, :target_id,
           :left_id, :right_id, :relative_path, :destination_folder, :destination_relative_path,
-          :asset_id, { tags: [], model_ids: [], folder_names: [] }
+          :asset_id, :rationale, :reason, :explanation, :confidence,
+          { tags: [], model_ids: [], folder_names: [] }
         ]
       end
 
@@ -186,7 +187,8 @@ module API
       end
 
       def serialize(proposal)
-        {
+        payload = proposal.payload_hash
+        json = {
           id: proposal.id,
           library_id: proposal.library_id,
           kind: proposal.kind,
@@ -202,6 +204,13 @@ module API
           preview: CurationPreview.new(proposal).as_json,
           created_at: proposal.created_at
         }
+        CurationSidecar::OPTIONAL_HINT_KEYS.each do |key|
+          value = payload[key]
+          next if value.nil? || value == ""
+
+          json[key.to_sym] = value
+        end
+        json
       end
 
       def serialize_library_poll(library)

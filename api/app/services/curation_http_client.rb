@@ -97,7 +97,7 @@ class CurationHttpClient
     CurationSidecar::ProposalDraft.new(
       kind: data["kind"],
       summary: data["summary"],
-      payload: (data["payload"].presence || {}).stringify_keys,
+      payload: CurationSidecar.payload_with_hints(data),
       sidecar_ref: data["sidecar_ref"]
     )
   end

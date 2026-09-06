@@ -140,6 +140,51 @@ class CurationSidecarTest < ActiveSupport::TestCase
     assert_nil @library.last_error
   end
 
+  test "payload_with_hints copies optional keys without inventing" do
+    payload = CurationSidecar.payload_with_hints(
+      "kind" => "tag",
+      "rationale" => "Because",
+      "payload" => { "tag" => "x", "confidence" => 0.4 }
+    )
+    assert_equal "Because", payload["rationale"]
+    assert_in_delta 0.4, payload["confidence"]
+    refute payload.key?("explanation")
+
+    kept = CurationSidecar.payload_with_hints(
+      "rationale" => "top",
+      "payload" => { "rationale" => "inner" }
+    )
+    assert_equal "inner", kept["rationale"]
+
+    empty = CurationSidecar.payload_with_hints("kind" => "tag", "payload" => { "tag" => "x" })
+    refute empty.key?("rationale")
+    refute empty.key?("confidence")
+  end
+
+  test "HTTP drafts fold optional rationale and confidence into payload" do
+    body = {
+      proposals: [
+        {
+          kind: "tag",
+          summary: "From HTTP",
+          sidecar_ref: "http:tag:hints",
+          rationale: "Cover and mesh counts agree",
+          confidence: 0.7,
+          payload: { tag: "remote", folder_name: "Mz4250 - Alpha One" }
+        }
+      ]
+    }
+    @http = MiniCuratorServer.new(JSON.generate(body))
+    port = @http.start
+
+    sidecar = CurationSidecar.new(@library, endpoint: "http://127.0.0.1:#{port}", token: "secret")
+    records = sidecar.ingest_remote!
+    assert_equal 1, records.size
+    assert_equal "Cover and mesh counts agree", records.first.payload["rationale"]
+    assert_in_delta 0.7, records.first.payload["confidence"].to_f
+    refute records.first.payload.key?("explanation")
+  end
+
   class FailingCuratorClient
     def initialize(message)
       @message = message
