@@ -4,9 +4,11 @@ import type { DuplicateGroup, DuplicateMember } from "../api";
 import {
   EXTRACT_AND_MERGE_COPY,
   EXTRACT_COPY,
+  EXTRACTING_COPY,
   MERGE_UNSUPPORTED_COPY,
   allMembersMergeable,
   archiveMemberIds,
+  archiveMembersToExtract,
   canExtractArchiveMembers,
   confidenceMeta,
   coverFromMembers,
@@ -17,9 +19,12 @@ import {
   memberColumns,
   memberDisplayPath,
   memberKey,
+  mergePayloadForGroup,
+  preferredTargetId,
   reasonLabel,
   statusMeta,
-  truncateArchivePath
+  truncateArchivePath,
+  type MemberColumn
 } from "../duplicates";
 import { formatBytes } from "../format";
 import { CoverMedia } from "./CoverMedia";
@@ -105,6 +110,7 @@ export function DuplicateReview({
   group,
   canReview,
   busy,
+  busyLabel,
   error,
   onKeep,
   onDismiss,
@@ -116,10 +122,11 @@ export function DuplicateReview({
   group: DuplicateGroup;
   canReview: boolean;
   busy: boolean;
+  busyLabel?: string | null;
   error: string | null;
   onKeep: () => void;
   onDismiss: () => void;
-  onMerge: (payload: { source_ids: number[]; target_id: number; title?: string }) => void;
+  onMerge: (payload: { source_ids: number[]; asset_ids?: number[]; target_id: number; title?: string }) => void;
   onExtract?: (payload: { archive_member_ids: number[]; target_id?: number; title?: string }) => void;
   onExtractAndMerge?: (payload: {
     archive_member_ids: number[];
@@ -131,30 +138,38 @@ export function DuplicateReview({
 }) {
   const columns = useMemo(() => memberColumns(group), [group]);
   const members = useMemo(() => groupMembers(group), [group]);
+  const extractMembers = useMemo(() => archiveMembersToExtract(group), [group]);
   const open = group.status === "open";
   const showActions = canReview && open;
   const mergeableSelection = allMembersMergeable(group);
   const extractable = canExtractArchiveMembers(group);
-  const [targetId, setTargetId] = useState(columns[0]?.modelId);
-  const [confirming, setConfirming] = useState<"merge" | "extract-merge" | null>(null);
+  const [targetId, setTargetId] = useState(preferredTargetId(group));
+  const [confirming, setConfirming] = useState<"merge" | "extract" | "extract-merge" | null>(null);
 
   useEffect(() => {
-    setTargetId(columns[0]?.modelId);
+    setTargetId(preferredTargetId(group));
     setConfirming(null);
-  }, [group.id, columns]);
+  }, [group.id]);
+
+  useEffect(() => {
+    if (!columns.some((column) => column.modelId === targetId)) {
+      setTargetId(columns[0]?.modelId);
+    }
+  }, [columns, targetId]);
+
+  useEffect(() => {
+    if (error) setConfirming(null);
+  }, [error]);
 
   const target = columns.find((column) => column.modelId === targetId) || columns[0];
   const sources = columns.filter((column) => column.modelId !== target?.modelId);
   const canMerge = Boolean(target && sources.length > 0 && mergeableSelection);
+  const showTargetRadios = showActions && (canMerge || extractable);
+  const extracting = busy && (confirming === "extract" || confirming === "extract-merge");
 
   function submitMerge() {
     if (!target || !canMerge) return;
-    onMerge({
-      source_ids: sources.map((column) => column.modelId),
-      target_id: target.modelId,
-      title: target.title
-    });
-    setConfirming(null);
+    onMerge(mergePayloadForGroup(group, target.modelId, target.title));
   }
 
   function extractPayload() {
@@ -176,7 +191,6 @@ export function DuplicateReview({
       ...extractPayload(),
       asset_ids: looseAssetIds(group)
     });
-    setConfirming(null);
   }
 
   return (
@@ -227,13 +241,14 @@ export function DuplicateReview({
                       </Link>
                       {creator ? <p className="mt-0.5 truncate text-sm text-slate-400">{creator}</p> : null}
                     </div>
-                    {showActions && canMerge ? (
+                    {showTargetRadios ? (
                       <label className="flex shrink-0 items-center gap-1.5 text-xs text-slate-300">
                         <input
                           type="radio"
                           name={`merge-target-${group.id}`}
                           checked={target?.modelId === column.modelId}
                           onChange={() => setTargetId(column.modelId)}
+                          disabled={busy}
                         />
                         Target
                       </label>
@@ -304,16 +319,6 @@ export function DuplicateReview({
               >
                 Merge
               </button>
-              {extractable && onExtract ? (
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={submitExtract}
-                  className="rounded-lg border border-white/15 px-3 py-1.5 text-sm text-slate-200 disabled:opacity-60"
-                >
-                  Extract
-                </button>
-              ) : null}
               {extractable && onExtractAndMerge ? (
                 <button
                   type="button"
@@ -321,7 +326,17 @@ export function DuplicateReview({
                   onClick={() => setConfirming("extract-merge")}
                   className="rounded-lg border border-accent-500/40 px-3 py-1.5 text-sm text-accent-200 disabled:opacity-60"
                 >
-                  Extract & merge
+                  Extract & merge…
+                </button>
+              ) : null}
+              {extractable && onExtract ? (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setConfirming("extract")}
+                  className="rounded-lg border border-white/15 px-3 py-1.5 text-sm text-slate-200 disabled:opacity-60"
+                >
+                  Extract…
                 </button>
               ) : null}
             </div>
@@ -360,7 +375,7 @@ export function DuplicateReview({
                 onClick={submitMerge}
                 className="rounded-lg bg-accent-500 px-3 py-1.5 text-sm text-ink-950 disabled:opacity-60"
               >
-                Merge
+                {busy ? busyLabel || "Merging…" : "Merge"}
               </button>
               <button
                 type="button"
@@ -376,35 +391,119 @@ export function DuplicateReview({
       ) : null}
 
       {confirming === "extract-merge" && extractable && target ? (
-        <div className="absolute inset-0 z-50 grid place-items-center bg-ink-950/70 px-4">
-          <div className="w-full max-w-md rounded-2xl border border-white/10 bg-ink-900 p-5 shadow-2xl">
-            <h3 className="font-display text-xl text-white">Extract & merge into {target.title}?</h3>
-            <p className="mt-2 text-sm text-slate-400">{EXTRACT_AND_MERGE_COPY}</p>
-            <p className="mt-2 text-xs text-slate-500">
-              Selected zip members stream into <span className="text-slate-300">{target.title}</span>. The pack stays
-              where it is.
-            </p>
-            <div className="mt-5 flex flex-wrap gap-2">
-              <button
-                type="button"
-                disabled={busy}
-                onClick={submitExtractAndMerge}
-                className="rounded-lg bg-accent-500 px-3 py-1.5 text-sm text-ink-950 disabled:opacity-60"
-              >
-                Extract & merge
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => setConfirming(null)}
-                className="rounded-lg border border-white/15 px-3 py-1.5 text-sm"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
+        <ExtractConfirmSheet
+          title={`Extract & merge into ${target.title}?`}
+          copy={EXTRACT_AND_MERGE_COPY}
+          members={extractMembers}
+          columns={columns}
+          targetId={target.modelId}
+          groupId={group.id}
+          busy={busy}
+          busyLabel={extracting ? EXTRACTING_COPY : busyLabel}
+          confirmLabel="Extract & merge"
+          onTargetChange={setTargetId}
+          onConfirm={submitExtractAndMerge}
+          onCancel={() => setConfirming(null)}
+        />
       ) : null}
+
+      {confirming === "extract" && extractable && target ? (
+        <ExtractConfirmSheet
+          title={`Extract into ${target.title}?`}
+          copy={EXTRACT_COPY}
+          members={extractMembers}
+          columns={columns}
+          targetId={target.modelId}
+          groupId={group.id}
+          busy={busy}
+          busyLabel={extracting ? EXTRACTING_COPY : busyLabel}
+          confirmLabel="Extract"
+          onTargetChange={setTargetId}
+          onConfirm={submitExtract}
+          onCancel={() => setConfirming(null)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function ExtractConfirmSheet({
+  title,
+  copy,
+  members,
+  columns,
+  targetId,
+  groupId,
+  busy,
+  busyLabel,
+  confirmLabel,
+  onTargetChange,
+  onConfirm,
+  onCancel
+}: {
+  title: string;
+  copy: string;
+  members: DuplicateMember[];
+  columns: MemberColumn[];
+  targetId: number;
+  groupId: number;
+  busy: boolean;
+  busyLabel?: string | null;
+  confirmLabel: string;
+  onTargetChange: (id: number) => void;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="absolute inset-0 z-50 grid place-items-center bg-ink-950/70 px-4">
+      <div className="w-full max-w-md rounded-2xl border border-white/10 bg-ink-900 p-5 shadow-2xl">
+        <h3 className="font-display text-xl text-white">{title}</h3>
+        <p className="mt-2 text-sm text-slate-400">{copy}</p>
+        {members.length > 0 ? (
+          <ul className="mt-3 list-disc space-y-1 pl-5 font-mono text-xs text-slate-400">
+            {members.map((member) => {
+              const path = memberDisplayPath(member);
+              return (
+                <li key={memberKey(member)} title={path}>
+                  {truncateArchivePath(path)}
+                </li>
+              );
+            })}
+          </ul>
+        ) : null}
+        <fieldset className="mt-4 space-y-2" disabled={busy}>
+          <legend className="text-xs uppercase tracking-wide text-slate-500">Target model</legend>
+          {columns.map((column) => (
+            <label key={column.modelId} className="flex items-center gap-2 text-sm text-slate-200">
+              <input
+                type="radio"
+                name={`extract-target-${groupId}`}
+                checked={targetId === column.modelId}
+                onChange={() => onTargetChange(column.modelId)}
+              />
+              {column.title}
+            </label>
+          ))}
+        </fieldset>
+        <div className="mt-5 flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onConfirm}
+            className="rounded-lg bg-accent-500 px-3 py-1.5 text-sm text-ink-950 disabled:opacity-60"
+          >
+            {busy ? busyLabel || EXTRACTING_COPY : confirmLabel}
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onCancel}
+            className="rounded-lg border border-white/15 px-3 py-1.5 text-sm"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
