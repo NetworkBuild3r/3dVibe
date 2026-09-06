@@ -1,32 +1,25 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, type PrintJob } from "../api";
-import { InlineError, ListSkeleton } from "../components/UiStates";
+import { CalmChip } from "../components/CalmChip";
+import { JobProgress, JobStatus, ProtocolChip } from "../components/PrintMeta";
+import { EmptyState, InlineError, ListSkeleton } from "../components/UiStates";
 import { useAuth } from "../auth";
-
-const FILTERS = [
-  { id: "all", label: "All" },
-  { id: "queued", label: "Queued" },
-  { id: "sending", label: "Sending" },
-  { id: "printing", label: "Printing" },
-  { id: "succeeded", label: "Succeeded" },
-  { id: "failed", label: "Failed" },
-  { id: "cancelled", label: "Cancelled" }
-] as const;
-
-const ACTIVE = new Set(["queued", "sending", "printing"]);
-
-function statusClass(status: string) {
-  if (status === "succeeded") return "text-accent-400";
-  if (status === "failed") return "text-rose-300";
-  if (status === "cancelled") return "text-slate-500";
-  return "text-amber-200";
-}
+import { formatRelativeTime } from "../format";
+import {
+  HISTORY_COPY,
+  JOB_FILTERS,
+  canCancelJob,
+  canRetryJob,
+  emptyPrintsCopy,
+  isJobActive,
+  type JobFilter
+} from "../prints";
 
 export function PrintsPage() {
   const { user } = useAuth();
   const [jobs, setJobs] = useState<PrintJob[]>([]);
-  const [filter, setFilter] = useState<(typeof FILTERS)[number]["id"]>("all");
+  const [filter, setFilter] = useState<JobFilter>("all");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -54,7 +47,7 @@ export function PrintsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter]);
 
-  const watching = useMemo(() => jobs.some((job) => ACTIVE.has(job.status)), [jobs]);
+  const watching = useMemo(() => jobs.some((job) => isJobActive(job.status)), [jobs]);
 
   useEffect(() => {
     if (!watching) return;
@@ -89,24 +82,14 @@ export function PrintsPage() {
     <div className="space-y-6">
       <div>
         <h1 className="font-display text-3xl text-white">Your print history</h1>
-        <p className="mt-2 max-w-2xl text-sm text-slate-400">
-          Only you can see jobs you queued. Sending a file to a printer is limited to the library owner; contributors
-          and viewers can still share into the catalog. Status is written by the worker after it path-jails the file.
-        </p>
+        <p className="mt-2 max-w-2xl text-sm text-slate-400">{HISTORY_COPY}</p>
       </div>
 
       <div className="flex flex-wrap gap-2">
-        {FILTERS.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            onClick={() => setFilter(item.id)}
-            className={`rounded-full px-3 py-1 text-sm ${
-              filter === item.id ? "bg-accent-500/15 text-accent-400" : "text-slate-400 hover:text-white"
-            }`}
-          >
+        {JOB_FILTERS.map((item) => (
+          <CalmChip key={item.id} active={filter === item.id} onClick={() => setFilter(item.id)}>
             {item.label}
-          </button>
+          </CalmChip>
         ))}
       </div>
 
@@ -115,6 +98,8 @@ export function PrintsPage() {
       <section className="rounded-2xl border border-white/10 bg-ink-900/70 p-5" aria-busy={loading}>
         {loading ? (
           <ListSkeleton />
+        ) : jobs.length === 0 ? (
+          <EmptyState copy={emptyPrintsCopy(filter)} ctaTo="/" ctaLabel="Browse library" />
         ) : (
           <ul className="divide-y divide-white/5">
             {jobs.map((job) => (
@@ -131,36 +116,38 @@ export function PrintsPage() {
                       )}
                       <span className="ml-2 font-mono text-xs text-slate-500">{job.filename || "file"}</span>
                     </p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      {job.printer_name || "printer"} · {job.protocol_type || "adapter"}
-                      {job.requested_by ? ` · ${job.requested_by.display_name}` : ""}
-                      {` · ${new Date(job.created_at).toLocaleString()}`}
-                    </p>
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                      <span>{job.printer_name || "printer"}</span>
+                      <ProtocolChip protocol={job.protocol_type} />
+                      <span>{formatRelativeTime(job.created_at) || new Date(job.created_at).toLocaleString()}</span>
+                      {job.requested_by ? <span>{job.requested_by.display_name}</span> : null}
+                    </div>
                     {job.note ? <p className="mt-2 text-sm text-slate-400">{job.note}</p> : null}
                     {job.error_message ? <p className="mt-1 text-sm text-rose-300">{job.error_message}</p> : null}
                   </div>
                   <div className="text-right">
-                    <p className={`text-sm font-medium ${statusClass(job.status)}`}>
-                      {job.status} · {job.progress}%
-                    </p>
-                    {ACTIVE.has(job.status) && user?.id === job.requested_by?.id ? (
+                    <JobStatus status={job.status} progress={job.progress} />
+                    {canCancelJob(job, user?.id) ? (
                       <button type="button" className="mt-2 text-xs text-rose-300" onClick={() => void cancel(job.id)}>
                         Cancel
                       </button>
                     ) : null}
-                    {job.retryable && user?.can_print ? (
-                      <button type="button" className="mt-2 block text-xs text-accent-400" onClick={() => void retry(job.id)}>
+                    {canRetryJob(job, user?.can_print) ? (
+                      <button
+                        type="button"
+                        className={`mt-2 block text-xs ${job.status === "failed" ? "text-rose-300" : "text-accent-400"}`}
+                        onClick={() => void retry(job.id)}
+                      >
                         Retry
                       </button>
                     ) : null}
                   </div>
                 </div>
-                <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/5">
-                  <div className="h-full rounded-full bg-accent-500" style={{ width: `${job.progress}%` }} />
+                <div className="mt-3">
+                  <JobProgress status={job.status} progress={job.progress} />
                 </div>
               </li>
             ))}
-            {jobs.length === 0 ? <li className="py-6 text-slate-500">No jobs in this filter.</li> : null}
           </ul>
         )}
       </section>

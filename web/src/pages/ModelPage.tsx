@@ -15,13 +15,29 @@ import { ArchivePanel } from "../components/ArchivePanel";
 import { CoverMedia } from "../components/CoverMedia";
 import { ImageViewer } from "../components/ImageViewer";
 import { MeshViewer } from "../components/MeshViewer";
+import { JobProgress, JobStatus, ProtocolChip } from "../components/PrintMeta";
 import { InlineError } from "../components/UiStates";
 import { SaveToShelf } from "../components/SaveToShelf";
 import { useAuth } from "../auth";
 import { CANT_PREVIEW_COPY, CANCELLED_COPY, displayCaption, memberCaption, memberKind } from "../archives";
 import { formatBytes } from "../format";
-
-const ACTIVE_PRINT = new Set(["queued", "sending", "printing"]);
+import {
+  BROWSER_NEVER_COPY,
+  HISTORY_LINK_LABEL,
+  NO_ENABLED_PRINTERS_COPY,
+  NO_PRINTABLE_COPY,
+  OWNER_ONLY_COPY,
+  QUEUING_LABEL,
+  SEND_LABEL,
+  canRetryJob,
+  enqueueErrorMessage,
+  firstEnabledPrinterId,
+  isJobActive,
+  pickerPrinters,
+  printableAssetsOf,
+  printerOptionLabel,
+  shouldShowAssetPicker
+} from "../prints";
 
 type Viewer =
   | { kind: "idle" }
@@ -66,8 +82,9 @@ export function ModelPage() {
   }, [id]);
 
   const meshAsset = useMemo(() => model?.assets.find((asset) => asset.mesh && asset.kind === "stl"), [model]);
-  const printableAssets = useMemo(() => model?.assets.filter((asset) => !asset.archive) || [], [model]);
-  const enabledPrinters = useMemo(() => printers.filter((printer) => printer.enabled), [printers]);
+  const printableAssets = useMemo(() => (model ? printableAssetsOf(model.assets) : []), [model]);
+  const printerChoices = useMemo(() => pickerPrinters(printers), [printers]);
+  const enabledPrinters = useMemo(() => printerChoices.filter((printer) => printer.enabled), [printerChoices]);
   const archiveAssets = useMemo(() => model?.assets.filter((asset) => asset.archive) || [], [model]);
 
   useEffect(() => {
@@ -82,8 +99,8 @@ export function ModelPage() {
       .printers()
       .then((payload) => {
         setPrinters(payload.printers);
-        const first = payload.printers.find((printer) => printer.enabled);
-        if (first) setPrinterId(first.id);
+        const first = firstEnabledPrinterId(payload.printers);
+        if (first !== "") setPrinterId(first);
       })
       .catch(() => undefined);
   }, []);
@@ -95,7 +112,7 @@ export function ModelPage() {
   }, [model]);
 
   useEffect(() => {
-    if (!printJob || !ACTIVE_PRINT.has(printJob.status)) return;
+    if (!printJob || !isJobActive(printJob.status)) return;
     const timer = window.setInterval(() => {
       api
         .printJob(printJob.id)
@@ -113,7 +130,7 @@ export function ModelPage() {
       const payload = await api.print(model.id, printerId, assetId);
       setPrintJob(payload.print_job);
     } catch (err) {
-      setPrintError(err instanceof Error ? err.message : "Could not queue print");
+      setPrintError(enqueueErrorMessage(err));
     } finally {
       setPrintBusy(false);
     }
@@ -342,68 +359,82 @@ export function ModelPage() {
 
         <div className="mt-5 border-t border-white/5 pt-4">
           <h3 className="text-sm font-medium text-slate-200">Print</h3>
+          <p className="mt-2 text-sm text-slate-500">{BROWSER_NEVER_COPY}</p>
           {user?.can_print ? (
-            <div className="mt-3 flex flex-wrap items-end gap-3">
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
               <label className="text-sm text-slate-300">
                 Printer
                 <select
-                  className="mt-1 block rounded-lg border border-white/10 bg-ink-950 px-3 py-2"
+                  className="mt-1 block w-full rounded-lg border border-white/10 bg-ink-950 px-3 py-2"
                   value={printerId}
                   onChange={(event) => setPrinterId(Number(event.target.value))}
                 >
-                  {enabledPrinters.length === 0 ? <option value="">No enabled printers</option> : null}
-                  {enabledPrinters.map((printer) => (
-                    <option key={printer.id} value={printer.id}>
-                      {printer.name} ({printer.protocol_type} · {printer.host})
+                  {enabledPrinters.length === 0 ? <option value="">{NO_ENABLED_PRINTERS_COPY}</option> : null}
+                  {printerChoices.map((printer) => (
+                    <option key={printer.id} value={printer.id} disabled={!printer.enabled}>
+                      {printerOptionLabel(printer)}
                     </option>
                   ))}
                 </select>
               </label>
-              <label className="text-sm text-slate-300">
-                File
-                <select
-                  className="mt-1 block rounded-lg border border-white/10 bg-ink-950 px-3 py-2"
-                  value={assetId}
-                  onChange={(event) => setAssetId(Number(event.target.value))}
+              {shouldShowAssetPicker(printableAssets) ? (
+                <label className="text-sm text-slate-300">
+                  File
+                  <select
+                    className="mt-1 block w-full rounded-lg border border-white/10 bg-ink-950 px-3 py-2"
+                    value={assetId}
+                    onChange={(event) => setAssetId(Number(event.target.value))}
+                  >
+                    {printableAssets.map((asset) => (
+                      <option key={asset.id} value={asset.id}>
+                        {asset.filename}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : (
+                <p className="self-end text-sm text-slate-400">
+                  {printableAssets[0]?.filename || NO_PRINTABLE_COPY}
+                </p>
+              )}
+              <div className="flex flex-wrap items-center gap-3 md:col-span-2">
+                <button
+                  type="button"
+                  disabled={printBusy || printerId === "" || assetId === ""}
+                  onClick={() => void requestPrint()}
+                  className="rounded-lg bg-accent-500 px-4 py-2 text-sm font-medium text-ink-950 hover:bg-accent-400 disabled:opacity-60"
                 >
-                  {printableAssets.map((asset) => (
-                    <option key={asset.id} value={asset.id}>
-                      {asset.filename}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <button
-                type="button"
-                disabled={printBusy || printerId === "" || assetId === ""}
-                onClick={() => void requestPrint()}
-                className="rounded-lg bg-accent-500 px-4 py-2 text-sm font-medium text-ink-950 hover:bg-accent-400 disabled:opacity-60"
-              >
-                {printBusy ? "Queueing…" : "Print"}
-              </button>
-              <Link to="/prints" className="text-sm text-accent-400">
-                Job queue
-              </Link>
+                  {printBusy ? QUEUING_LABEL : SEND_LABEL}
+                </button>
+              </div>
             </div>
           ) : (
-            <p className="mt-3 text-sm text-slate-500">Only the library owner can send a job to a printer.</p>
+            <p className="mt-3 text-sm text-slate-500">{OWNER_ONLY_COPY}</p>
           )}
           {printError ? <p className="mt-3 text-sm text-rose-300">{printError}</p> : null}
           {printJob ? (
             <div className="mt-4">
-              <p className="text-sm text-amber-200">
-                {printJob.status} · {printJob.progress}%
-                {printJob.printer_name ? ` · ${printJob.printer_name}` : ""}
-              </p>
-              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/5">
-                <div className="h-full rounded-full bg-accent-500" style={{ width: `${printJob.progress}%` }} />
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <JobStatus status={printJob.status} progress={printJob.progress} />
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                    {printJob.printer_name ? <span>{printJob.printer_name}</span> : null}
+                    <ProtocolChip protocol={printJob.protocol_type} />
+                  </div>
+                </div>
+                <Link to="/prints" className="text-sm text-accent-400">
+                  {HISTORY_LINK_LABEL}
+                </Link>
+              </div>
+              <div className="mt-2">
+                <JobProgress status={printJob.status} progress={printJob.progress} />
               </div>
               {printJob.note ? <p className="mt-2 text-xs text-slate-500">{printJob.note}</p> : null}
               {printJob.error_message ? <p className="mt-2 text-xs text-rose-300">{printJob.error_message}</p> : null}
-              {printJob.retryable && user?.can_print ? (
+              {canRetryJob(printJob, user?.can_print) ? (
                 <button
                   type="button"
-                  className="mt-3 text-sm text-accent-400"
+                  className="mt-3 text-sm text-rose-300"
                   disabled={printBusy}
                   onClick={() => void retryPrint()}
                 >
