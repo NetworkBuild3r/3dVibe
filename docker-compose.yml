@@ -39,6 +39,9 @@ services:
       VIBE_LIBRARY_NAME: ${VIBE_LIBRARY_NAME:-Studio library}
       VIBE_OWNER_EMAIL: ${VIBE_OWNER_EMAIL:-owner@3dvibe.local}
       VIBE_OWNER_PASSWORD: ${VIBE_OWNER_PASSWORD:-vibe-dev-password}
+      VIBE_CURATOR_URL: ${VIBE_CURATOR_URL:-stub}
+      VIBE_CURATOR_TOKEN: ${VIBE_CURATOR_TOKEN:-vibe-dev-curator}
+      VIBE_CURATOR_TIMEOUT: ${VIBE_CURATOR_TIMEOUT:-8}
       MEILISEARCH_URL: ${MEILISEARCH_URL:-}
       WEB_ORIGIN: http://localhost:${WEB_PORT:-5173}
     volumes:
@@ -69,6 +72,9 @@ services:
       RAILS_LOG_TO_STDOUT: "1"
       VIBE_LIBRARY_ROOT: ${VIBE_LIBRARY_ROOT:-/library}
       VIBE_LIBRARY_NAME: ${VIBE_LIBRARY_NAME:-Studio library}
+      VIBE_CURATOR_URL: ${VIBE_CURATOR_URL:-stub}
+      VIBE_CURATOR_TOKEN: ${VIBE_CURATOR_TOKEN:-vibe-dev-curator}
+      VIBE_CURATOR_TIMEOUT: ${VIBE_CURATOR_TIMEOUT:-8}
       MEILISEARCH_URL: ${MEILISEARCH_URL:-}
     volumes:
       - ./api:/app
@@ -96,6 +102,20 @@ services:
       - "${WEB_PORT:-5173}:5173"
     depends_on:
       - api
+
+  curator:
+    profiles: ["curator"]
+    build:
+      context: ./curator
+      dockerfile: Dockerfile
+    environment:
+      PORT: "8088"
+      VIBE_CURATOR_TOKEN: ${VIBE_CURATOR_TOKEN:-vibe-dev-curator}
+      LIBRARY_ROOT: ${VIBE_LIBRARY_ROOT:-/library}
+    volumes:
+      - ${VIBE_LIBRARY_HOST_PATH:-./fixtures/library}:${VIBE_LIBRARY_ROOT:-/library}:ro
+    ports:
+      - "${CURATOR_PORT:-8088}:8088"
 
   meilisearch:
     image: getmeili/meilisearch:v1.11

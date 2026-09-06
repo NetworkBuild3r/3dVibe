@@ -22,7 +22,7 @@ class APIV1Test < ActionDispatch::IntegrationTest
     @library.curation_proposals.create!(
       kind: "tag",
       summary: "Tag horns as audio",
-      payload: { tag: "audio" },
+      payload: { tag: "audio", model_ids: [@library.vibe_models.where(folder_name: "signal-horn").pick(:id)].compact },
       status: CurationProposal::PENDING
     )
   end
@@ -85,6 +85,9 @@ class APIV1Test < ActionDispatch::IntegrationTest
     post "/api/v1/curation_proposals/#{pending.id}/approve", headers: headers, as: :json
     assert_response :success
     assert_equal "approved", pending.reload.status
+    assert pending.applied_at.present?
+    horn = @library.vibe_models.find_by!(folder_name: "signal-horn")
+    assert_includes horn.tags.reload.map(&:name), "audio"
 
     other = @library.curation_proposals.create!(kind: "organize", summary: "Shelf", payload: {}, status: "pending")
     post "/api/v1/curation_proposals/#{other.id}/reject", headers: headers, as: :json

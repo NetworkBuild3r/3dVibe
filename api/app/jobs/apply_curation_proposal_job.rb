@@ -1,9 +1,16 @@
 class ApplyCurationProposalJob < ApplicationJob
   queue_as :curation
 
-  # Stub: applying organize/merge/tag suggestions is HITL-approved later.
   def perform(proposal_id)
     proposal = CurationProposal.find(proposal_id)
-    Rails.logger.info("[ApplyCurationProposalJob] apply #{proposal.kind} proposal=#{proposal.id} status=#{proposal.status}")
+    unless proposal.approved?
+      Rails.logger.info("[ApplyCurationProposalJob] skip proposal=#{proposal.id} status=#{proposal.status}")
+      return
+    end
+
+    CurationApplier.new(proposal).apply!
+    Rails.logger.info(
+      "[ApplyCurationProposalJob] applied kind=#{proposal.kind} proposal=#{proposal.id} error=#{proposal.apply_error}"
+    )
   end
 end

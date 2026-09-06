@@ -14,9 +14,9 @@ Storage is the owner's NFS mount. There is one library pile.
 
 | Role | Who | What they can do |
 | --- | --- | --- |
-| `owner` | The library admin | Invite/revoke, upload, trigger a full scan, approve curation |
-| `contributor` | Default for invited friends | Browse/search the whole catalog and upload into the shared root |
-| `viewer` | Optional read-only invite | Browse/search only |
+| `owner` | The library admin | Invite/revoke, upload, trigger a full scan, review/apply curation |
+| `contributor` | Default for invited friends | Browse/search the whole catalog, upload, and review/apply curation |
+| `viewer` | Optional read-only invite | Browse/search the catalog and see the curation queue |
 
 ## What you get
 
@@ -27,7 +27,7 @@ Storage is the owner's NFS mount. There is one library pile.
 - Incremental folder scanning with mtime/size/path-prefix cursors; uploads enqueue a targeted rescan
 - First-class archive visibility for zip/3mf
 - Token auth
-- HITL curation proposals (sidecar interface is stubbed)
+- HITL AI curation: sidecar contract, stub curator, ingest, review queue, path-jailed apply
 - Postgres `ILIKE` search (Meilisearch is optional via a compose profile)
 - In-browser Three.js viewer that **does not** auto-load meshes on cards
 - Print-from-browser API + UI placeholder
@@ -61,9 +61,10 @@ Background jobs:
 
 - `IncrementalScanJob` — walks a library (or one folder prefix after an upload) and updates stale folders
 - `DerivePreviewJob` — stub for stills / decimated meshes
-- `ApplyCurationProposalJob` — stub that runs after a human approval
+- `FetchCurationProposalsJob` — polls the curator sidecar (or in-process stub) and upserts pending `CurationProposal` rows
+- `ApplyCurationProposalJob` — applies an approved rename/move/merge (tags apply in-request)
 
-The optional curation sidecar is `CurationSidecar`. It does not need to be running.
+The curation sidecar is `CurationSidecar`. In development/test a blank or `stub` URL generates deterministic fixture proposals. A compose profile runs the same contract as HTTP.
 
 ## Quick start (Docker Compose)
 
@@ -86,6 +87,7 @@ Services:
 | Postgres | localhost:5432 |
 | Redis | localhost:6379 |
 | Meilisearch (optional) | `docker compose --profile search up` → localhost:7700 |
+| Curator stub (optional) | `docker compose --profile curator up` → localhost:8088 |
 
 On first boot the API runs `db:prepare`. Seed the owner and scan the sample library:
 
@@ -113,6 +115,22 @@ Open the web app, sign in, scroll the gallery, open **Packed Minis**, and expand
 1. Contributors (and the owner) open **Upload**.
 2. Drop files or a folder. Name the destination folder under the library root.
 3. Files upload in 1 MB resumable chunks, then a targeted scan indexes them for everyone.
+
+### HITL curation
+
+1. Sign in as the owner or a contributor and open **Curation**.
+2. Click **Fetch proposals** (or `docker compose exec api bin/rails vibe:curate`).
+3. Review before/after, then approve, reject, or use bulk actions.
+4. Tags write immediately. Rename/move/merge run through `ApplyCurationProposalJob` inside the library path jail, then enqueue a targeted incremental scan.
+
+```bash
+# in-process stub (default in compose: VIBE_CURATOR_URL=stub)
+docker compose exec api bin/rails vibe:curate
+
+# HTTP stub curator (same JSON contract a Spark box should implement)
+docker compose --profile curator up --build
+# set VIBE_CURATOR_URL=http://curator:8088 in .env and restart api/worker
+```
 
 ## Host install (`bin/dev` without Docker)
 
@@ -150,6 +168,9 @@ Environment variables (see `.env.example`):
 | `VIBE_MAX_UPLOAD_BYTES` | Per-file upload cap (default 5 GiB) |
 | `VIBE_OWNER_EMAIL` / `VIBE_OWNER_PASSWORD` | Seeded owner account |
 | `VIBE_NFS_SERVER` / `VIBE_NFS_EXPORT` / `VIBE_NFS_MOUNT_OPTIONS` | Host-side mount hints only |
+| `VIBE_CURATOR_URL` | Curator base URL, or `stub` for the in-process fixture generator |
+| `VIBE_CURATOR_TOKEN` | Shared bearer token for poll + webhook ingest |
+| `VIBE_CURATOR_TIMEOUT` | HTTP timeout in seconds (default 8) |
 
 Each first-level directory under the library root becomes a `VibeModel`. Hidden first-level folders (including `.vibe-incoming` used during uploads) are ignored. Files beneath a model folder become `Asset` rows. Zip/3mf files are opened only far enough to read the central directory and, on demand, a single member stream.
 
@@ -166,7 +187,12 @@ All endpoints except `POST /api/v1/session`, invite preview/redeem, and `GET /up
 - `GET /api/v1/assets/:id/content` (lazy mesh / file stream)
 - `GET /api/v1/archive_members/:id/preview`
 - `GET /api/v1/search?q=`
-- `GET /api/v1/curation_proposals` · `POST .../approve` · `POST .../reject`
+- `GET /api/v1/curation_proposals?status=`
+- `POST /api/v1/curation_proposals` `{ library_id, curation_proposal: { kind, summary, payload, sidecar_ref? } }`
+- `POST /api/v1/curation_proposals/fetch` `{ library_id }` (owner/contributor; polls sidecar)
+- `POST /api/v1/curation_proposals/ingest` webhook (`X-Curator-Token` or user auth)
+- `POST /api/v1/curation_proposals/bulk` `{ ids, decision: "approve"|"reject" }`
+- `POST /api/v1/curation_proposals/:id/approve` · `POST .../reject`
 - `POST /api/v1/print_jobs` (always returns `unavailable` in this MVP)
 - `GET /api/v1/invites` · `POST /api/v1/invites` `{ library_id, email?, role?, expires_in_days? }`
 - `GET /api/v1/invites/token/:token` (public preview)
@@ -191,9 +217,65 @@ CI runs both jobs on GitHub Actions.
 ```
 api/                 Rails 8 API-only application
 web/                 React + Vite SPA
+curator/             Dev stub curator (compose profile `curator`)
 fixtures/library/    Sample on-disk collection used by seed/scan
-docker-compose.yml   api, worker, db, redis, web (+ optional meilisearch)
+docker-compose.yml   api, worker, db, redis, web (+ optional curator, meilisearch)
 ```
+
+## Curation sidecar contract
+
+The sidecar never talks to the GPU from this repo. 3dvibe posts a catalog snapshot and upserts whatever comes back.
+
+`POST {VIBE_CURATOR_URL}/proposals`
+
+```json
+{
+  "library_id": 1,
+  "library_name": "Studio library",
+  "library_root": "/library",
+  "models": [
+    { "id": 12, "folder_name": "signal-horn", "title": "Signal Horn", "tags": ["stl"], "asset_count": 2, "byte_size": 1200 }
+  ]
+}
+```
+
+Response:
+
+```json
+{
+  "proposals": [
+    {
+      "sidecar_ref": "stable-id-for-upsert",
+      "kind": "tag",
+      "summary": "Tag Signal Horn as audio",
+      "payload": { "model_id": 12, "folder_name": "signal-horn", "tag": "audio", "tags": ["audio"] }
+    }
+  ]
+}
+```
+
+`GET /proposals?library_id=&library_root=` is a fallback when POST is not implemented.
+
+Auth: `Authorization: Bearer {VIBE_CURATOR_TOKEN}` and/or `X-Curator-Token`.
+
+| `kind` | Payload | Apply |
+| --- | --- | --- |
+| `tag` | `model_id` / `model_ids` / `folder_name`, `tag` or `tags` | Immediate catalog write |
+| `rename` | `model_id` or `folder_name`, `to`, optional `title` | First-level folder rename inside the jail, then scan |
+| `move` | same as rename, or `relative_path` + `destination_folder` for one file | Path-jailed move, then scan |
+| `merge` | `source_id`/`left_id` + `target_id`/`right_id` (or `from`/`to`) | Move files into `target/source/…`; remove the source dir only if empty |
+| `organize` | `shelf` + `model_ids` (tags) or `to` (folder rename) | Tag unless a destination folder is present |
+
+Rename/move destinations must be a single non-hidden segment. `../`, `.hidden`, and `kits/nested` are rejected. Apply never deletes user files.
+
+### Pointing at a Spark / DGX curator later
+
+1. Run your real curator (vision model, NudeNet, etc.) so it implements `POST /proposals` above.
+2. Set `VIBE_CURATOR_URL=http://<spark-host>:<port>` and a long `VIBE_CURATOR_TOKEN`.
+3. Increase `VIBE_CURATOR_TIMEOUT` if inference is slow.
+4. Keep this Rails app unchanged — fetch, HITL, and apply stay here.
+
+Webhook alternative: the curator can `POST /api/v1/curation_proposals/ingest` with the same proposal array and `X-Curator-Token`.
 
 ## License
 

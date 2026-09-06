@@ -66,6 +66,7 @@ class InvitesAndUploadsTest < ActionDispatch::IntegrationTest
     assert_equal "pal@example.test", body.dig("user", "email")
     assert_equal Membership::CONTRIBUTOR, body.dig("user", "role")
     assert body.dig("user", "can_upload")
+    assert body.dig("user", "can_curate")
     refute body.dig("user", "can_invite")
 
     get "/api/v1/me", headers: { "Authorization" => "Bearer #{body['token']}" }
