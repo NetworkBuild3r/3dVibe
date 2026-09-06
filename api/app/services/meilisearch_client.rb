@@ -38,12 +38,20 @@ class MeilisearchClient
   end
 
   def available?
-    return false unless configured?
+    health[:status] == "up"
+  end
+
+  def health
+    return { status: "unset", configured: false, last_error: nil } unless configured?
 
     response = request(:get, "/health", key: nil)
-    response.code.to_i.between?(200, 299)
-  rescue Error, Timeout::Error, Errno::ECONNREFUSED, Errno::EHOSTUNREACH, SocketError
-    false
+    if response.code.to_i.between?(200, 299)
+      { status: "up", configured: true, last_error: nil }
+    else
+      { status: "down", configured: true, last_error: "HTTP #{response.code}" }
+    end
+  rescue Error, Timeout::Error, Errno::ECONNREFUSED, Errno::EHOSTUNREACH, SocketError => e
+    { status: "down", configured: true, last_error: e.message.to_s.truncate(500) }
   end
 
   def ensure_index!

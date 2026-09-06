@@ -8,9 +8,13 @@ Rails.application.routes.draw do
       get :me, to: "sessions#show"
 
       resources :libraries, only: %i[index show create] do
+        get :scan, on: :member, action: :show_scan
         post :scan, on: :member
+        get :ops, on: :member
         post "duplicates/analyze", on: :member, to: "duplicates#analyze"
       end
+
+      get :ops, to: "ops#show"
 
       resources :creators, only: %i[index show]
       post "covers/writeback", to: "covers#writeback"

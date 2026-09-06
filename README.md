@@ -24,7 +24,7 @@ Storage is the owner's NFS mount. There is one library pile.
 - React + Vite + TypeScript gallery with infinite scroll and a dark Tailwind UI
 - Owner invite links (optional email, role, expiry) plus a redeem/signup page
 - Chunked, resumable uploads (1 MB patches, TUS-style offset) path-jailed to the library root
-- Production NFS library scanning: scheduled + on-demand incremental sync, mtime/size/inode cursors, per-job budgets with resume, batched prune, owner-visible scan status
+- Production NFS library scanning: scheduled + on-demand incremental sync, mtime/size/inode cursors, per-job budgets with resume, batched prune, library-visible scan status plus a read-only ops snapshot for calm chips
 - Deep archive visibility: nested zip/3mf tree, single-member streaming, image thumbs, lazy mesh members
 - Token auth
 - HITL AI curation: sidecar contract, stub curator, ingest, review queue, path-jailed apply
@@ -293,7 +293,9 @@ Each first-level directory under the library root becomes a `VibeModel`. Hidden 
 
 **Budgets and resume.** `VIBE_SCAN_MAX_SECONDS` / `VIBE_SCAN_MAX_FILES` / `VIBE_SCAN_MAX_FOLDERS` stop a job before it OOMs or pins a worker. Progress is stored on `ScanRun.resume_after` (folder) and `ScanCursor.resume_relative_path` (file). A budgeted full scan re-enqueues `IncrementalScanJob`. Prune of disappeared paths runs only after a complete walk, in `VIBE_SCAN_PRUNE_BATCH` batches, then `ReindexSearchJob` refreshes Meilisearch. Destroying a `VibeModel` also removes its Meili document.
 
-Owner API `GET /api/v1/libraries` (and show) includes the latest `scan` object. The **Libraries** page shows last started/finished, files seen, errors, cursors, and a Scan now button.
+`GET /api/v1/libraries` (and show) includes the latest `scan` object for anyone who can see the library (owner, contributor, viewer). Dedicated `GET /api/v1/libraries/:id/scan` returns current + last `ScanRun` plus a resume-cursor summary. The **Libraries** page shows last started/finished, files seen, errors, cursors, and a Scan now button (POST remains owner-only).
+
+Owner/contributor **ops chips** use `GET /api/v1/libraries/:id/ops` or `GET /api/v1/ops` (see below). Counts are cheap SQL — the endpoint never walks NFS and never deletes.
 
 | Variable | Role |
 | --- | --- |
@@ -435,8 +437,11 @@ All endpoints except `POST /api/v1/session`, invite preview/redeem, and `GET /up
 
 - `POST /api/v1/session` `{ email, password }`
 - `GET /api/v1/me` (each `user.libraries[]` includes `curation: { last_polled_at, last_provider, last_error }`)
-- `GET /api/v1/libraries` · `GET /api/v1/libraries/:id` (every library includes `curation` poll state; owner payload also includes `scan`, `scan_settings`, `cursors`)
+- `GET /api/v1/libraries` · `GET /api/v1/libraries/:id` (every library includes `curation` poll state and latest `scan`; owner detail also includes `scan_settings` and `cursors`)
+- `GET /api/v1/libraries/:id/scan` current + last `ScanRun` (`status`, `phase`, `path_prefix`, `budgets`, counts, errors, started/finished, `resume` summary). Same read access as the library (viewers included)
 - `POST /api/v1/libraries/:id/scan` `{ path_prefix? }` owner-only; `202` + latest scan status
+- `GET /api/v1/libraries/:id/ops` read-only ops snapshot (owner/contributor). See **Calm ops chips**
+- `GET /api/v1/ops` · `GET /api/v1/ops?library_id=` same snapshot for every library the caller can curate (or one library)
 - `GET /api/v1/creators` (`id`, `slug`, `name`, `source`, `model_count`)
 - `GET /api/v1/creators/:id` or `GET /api/v1/creators/:slug` (paginated models; `cursor` / `limit` like the catalog)
 - `GET /api/v1/models?cursor=&limit=` (cursor pagination; no owner ACL filter; includes `liked`, `like_count`, `bookmark_folder_ids`, nullable `creator: { id, slug, name }`, `cover_status`, `cover_url`, `cover_placeholder`)
@@ -608,6 +613,78 @@ Exposed as `curation: { last_polled_at, last_provider, last_error }` on:
 - `GET /api/v1/me` → `user.libraries[].curation`
 - `GET /api/v1/curation_proposals` → `libraries[].curation`
 - `POST /api/v1/curation_proposals/fetch` → top-level `curation` (also on 502)
+- `GET /api/v1/libraries/:id/ops` and `GET /api/v1/ops` → `ops.curator` / `libraries[].curator`
+
+### Calm ops chips (Frontend / Design bind)
+
+Read-only trust strip for scan / curator / covers / geometry / Meili. **Do not** treat any of these endpoints as a mutate or a delete. NFS stays source of truth; ops never prunes, never walks the mount, and never enqueues jobs.
+
+| Who | Scan status | Ops snapshot |
+| --- | --- | --- |
+| Owner | read + **Scan now** (`POST …/scan`) | read |
+| Contributor | read | read |
+| Viewer | read if they can already see the library (shared catalog) | **403** |
+
+**Scan chip** — prefer `library.scan` on `GET /libraries` / show, or `GET /libraries/:id/scan` when you need current vs last:
+
+```json
+{
+  "library_id": 1,
+  "scan": {
+    "id": 12,
+    "status": "budgeted",
+    "phase": "walk",
+    "path_prefix": null,
+    "started_at": "2026-09-06T12:00:00Z",
+    "finished_at": "2026-09-06T12:02:00Z",
+    "folders_seen": 40,
+    "files_seen": 5000,
+    "error_count": 0,
+    "last_error": "budget exhausted: files",
+    "budget_exhausted": true,
+    "budgets": { "max_seconds": 120, "max_files": 5000, "max_folders": 200 },
+    "resume": {
+      "resume_after": "horn",
+      "path_prefix": "horn",
+      "resume_relative_path": "notes.txt"
+    }
+  },
+  "current": { "id": 12, "status": "budgeted" },
+  "last": { "id": 11, "status": "completed", "phase": "done" }
+}
+```
+
+`status` is `idle` \| `queued` \| `running` \| `budgeted` \| `completed` \| `failed`. Idle means no `ScanRun` yet (`budgets` still present, `resume` null). `current` is the active run (`queued` / `running` / `budgeted`) or `null`. `last` is the most recent `completed` / `failed` run or `null`. `resume` is omitted-as-null unless the run has `resume_after` or a `ScanCursor.resume_relative_path`.
+
+Calm copy suggestions: idle → hidden or “Ready”; running/queued → “Scanning…”; budgeted → “Paused (budget)”; completed → “Last scan OK”; failed → “Scan error” + `last_error`. Do not flash raw NFS paths as alarms — `path_prefix` / `resume.resume_relative_path` are progress, not failures.
+
+**Ops chip strip** — `GET /api/v1/libraries/:id/ops` (one library) or `GET /api/v1/ops` (every library the user can curate; optional `?library_id=`):
+
+```json
+{
+  "ops": {
+    "library_id": 1,
+    "library_name": "Studio",
+    "scan": { "status": "completed", "phase": "done", "budgets": { "max_files": 5000 } },
+    "curator": { "last_polled_at": "2026-09-06T12:00:00Z", "last_provider": "stub", "last_error": null },
+    "covers": { "pending": 2, "failed": 1, "missing": 4 },
+    "geometry": { "assets_missing": 3, "archive_members_missing": 5 },
+    "meili": { "status": "up", "configured": true, "last_error": null }
+  }
+}
+```
+
+`GET /api/v1/ops` wraps the same rows as `{ meili, libraries: [ops…] }` so a global header can ping Meili once.
+
+| Chip | Fields | Calm default |
+| --- | --- | --- |
+| Scan | `ops.scan` (same shape as library `scan`) | see scan chip above |
+| Curator | `last_polled_at`, `last_provider`, `last_error` | error only when `last_error` is set; success clears it |
+| Covers | `pending` / `failed` / `missing` | quiet unless `failed > 0`; `pending` is work-in-progress, not an outage |
+| Geometry | `assets_missing` + `archive_members_missing` (mesh `stl`/`obj`/`3mf` with a blank digest) | backlog count; not a red error |
+| Meili | `up` \| `down` \| `unset` + `last_error` | `unset` = Postgres fallback (dev/CI); `down` = search still works via `ILIKE` |
+
+Cover and geometry numbers are `COUNT(*)` / `GROUP BY` only. Do not call Analyze or Scan from the chip refresh. Poll `/ops` on an interval (or after Scan now / Refresh proposals) — a few seconds is enough.
 
 ### Live sidecar (Rendering)
 
