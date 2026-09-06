@@ -34,8 +34,8 @@ jobs:
       CI: "true"
     steps:
       - uses: actions/checkout@v4
-      - name: Install libvips
-        run: sudo apt-get update && sudo apt-get install -y libvips42 libvips-dev
+      - name: Install libvips and p7zip
+        run: sudo apt-get update && sudo apt-get install -y libvips42 libvips-dev p7zip-full
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.3"
