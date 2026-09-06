@@ -1,17 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, type Creator, type ModelCard } from "../api";
 import { CreatorHeader } from "../components/CreatorHeader";
 import { CreatorListItem } from "../components/CreatorListItem";
+import { CreatorPackCard } from "../components/CreatorPackCard";
 import { ModelCard as ModelCardView } from "../components/ModelCard";
 import { CardGridSkeleton, EmptyState, InlineError, SidebarSkeleton } from "../components/UiStates";
-
-const PAGE_SIZE = 24;
+import {
+  CREATOR_PAGE_SIZE,
+  creatorHref,
+  creatorsIndexHref,
+  emptyCreatorModelsCopy,
+  emptyCreatorsIndexCopy,
+  filterCreators,
+  isMissingCreatorError,
+  missingCreatorCopy
+} from "../creators";
 
 export function CreatorsPage() {
   const { slug } = useParams();
   const [params] = useSearchParams();
-  const query = (params.get("q") || "").trim().toLowerCase();
+  const query = (params.get("q") || "").trim();
 
   const [creators, setCreators] = useState<Creator[]>([]);
   const [mosaics, setMosaics] = useState<Record<string, ModelCard[]>>({});
@@ -30,38 +39,36 @@ export function CreatorsPage() {
   const hasMoreRef = useRef(false);
   const loadingRef = useRef(false);
   const requestRef = useRef(0);
+  const listRequestRef = useRef(0);
   const sentinel = useRef<HTMLDivElement | null>(null);
 
-  const filtered = useMemo(() => {
-    if (!query) return creators;
-    return creators.filter(
-      (creator) => creator.name.toLowerCase().includes(query) || creator.slug.toLowerCase().includes(query)
-    );
-  }, [creators, query]);
-
-  const selectedSlug = slug || filtered[0]?.slug;
+  const filtered = useMemo(() => filterCreators(creators, query), [creators, query]);
+  const packHome = Boolean(slug);
 
   const loadList = useCallback(async () => {
+    const ticket = ++listRequestRef.current;
     setListLoading(true);
     setListError(null);
     try {
       const payload = await api.creators();
+      if (ticket !== listRequestRef.current) return;
       setCreators(payload.creators);
-      const covers: Record<string, ModelCard[]> = {};
+      setListLoading(false);
       await Promise.all(
         payload.creators.map(async (creator) => {
           try {
             const page = await api.creator(creator.slug, null, 4);
-            covers[creator.slug] = page.models;
+            if (ticket !== listRequestRef.current) return;
+            setMosaics((current) => ({ ...current, [creator.slug]: page.models }));
           } catch {
-            covers[creator.slug] = [];
+            if (ticket !== listRequestRef.current) return;
+            setMosaics((current) => ({ ...current, [creator.slug]: [] }));
           }
         })
       );
-      setMosaics(covers);
     } catch (err) {
+      if (ticket !== listRequestRef.current) return;
       setListError(err instanceof Error ? err.message : "Could not load creators");
-    } finally {
       setListLoading(false);
     }
   }, []);
@@ -84,7 +91,7 @@ export function CreatorsPage() {
       setActive(null);
     }
     try {
-      const page = await api.creator(creatorSlug, reset ? null : cursorRef.current, PAGE_SIZE);
+      const page = await api.creator(creatorSlug, reset ? null : cursorRef.current, CREATOR_PAGE_SIZE);
       if (ticket !== requestRef.current) return;
       setActive(page.creator);
       setModels((current) => {
@@ -99,13 +106,12 @@ export function CreatorsPage() {
       setHasMore(Boolean(next));
     } catch (err) {
       if (ticket !== requestRef.current) return;
-      const message = err instanceof Error ? err.message : "Could not load creator";
-      if (message === "not_found" || /not_found|404/.test(message)) {
+      if (isMissingCreatorError(err)) {
         setMissing(true);
         setActive(null);
         setModels([]);
       } else {
-        setDetailError(message);
+        setDetailError(err instanceof Error ? err.message : "Could not load creator");
       }
     } finally {
       if (ticket === requestRef.current) {
@@ -116,26 +122,30 @@ export function CreatorsPage() {
   }, []);
 
   useEffect(() => {
-    if (!selectedSlug) {
+    if (!slug) {
+      requestRef.current += 1;
+      loadingRef.current = false;
       setActive(null);
       setModels([]);
-      setMissing(Boolean(slug));
+      setMissing(false);
+      setDetailError(null);
+      setHasMore(false);
       return;
     }
-    void loadModels(selectedSlug, true);
-  }, [selectedSlug, slug, loadModels]);
+    void loadModels(slug, true);
+  }, [slug, loadModels]);
 
   useEffect(() => {
-    if (!sentinel.current) return;
+    if (!sentinel.current || !slug) return;
     const node = sentinel.current;
     const observer = new IntersectionObserver((entries) => {
-      if (entries.some((entry) => entry.isIntersecting) && selectedSlug) {
-        void loadModels(selectedSlug, false);
+      if (entries.some((entry) => entry.isIntersecting)) {
+        void loadModels(slug, false);
       }
     });
     observer.observe(node);
     return () => observer.disconnect();
-  }, [loadModels, selectedSlug]);
+  }, [loadModels, slug, models.length, missing]);
 
   async function toggleLike(model: ModelCard) {
     if (likeBusyId != null) return;
@@ -150,14 +160,55 @@ export function CreatorsPage() {
     }
   }
 
+  if (!packHome) {
+    const empty = emptyCreatorsIndexCopy(query);
+    return (
+      <div>
+        <div className="mb-6 flex flex-wrap items-baseline gap-3">
+          <h1 className="font-display text-3xl text-white">Creators</h1>
+          {!listLoading && !listError ? (
+            <p className="text-sm text-slate-500">
+              {filtered.length} creator{filtered.length === 1 ? "" : "s"}
+            </p>
+          ) : null}
+        </div>
+        {listError ? (
+          <div className="mb-5">
+            <InlineError message={listError} onRetry={() => void loadList()} />
+          </div>
+        ) : null}
+        {listLoading ? <CardGridSkeleton /> : null}
+        {!listLoading && !listError && filtered.length === 0 ? (
+          <EmptyState copy={empty.copy} ctaTo={empty.ctaTo} ctaLabel={empty.ctaLabel} />
+        ) : null}
+        {!listLoading && filtered.length > 0 ? (
+          <div className="card-grid">
+            {filtered.map((creator) => (
+              <CreatorPackCard
+                key={creator.id}
+                creator={creator}
+                covers={mosaics[creator.slug] || []}
+                to={creatorHref(creator.slug, query)}
+              />
+            ))}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
   const showDetailSkeleton = detailLoading && models.length === 0 && !missing && !detailError;
+  const missingCopy = missingCreatorCopy();
+  const emptyModels = slug ? emptyCreatorModelsCopy(slug) : null;
 
   return (
     <div className="-mx-6 -my-6 flex min-h-[calc(100vh-4.25rem)]">
-      <aside className="flex w-80 shrink-0 flex-col border-r border-white/5 bg-ink-950/40">
+      <aside className="hidden w-80 shrink-0 flex-col border-r border-white/5 bg-ink-950/40 lg:flex">
         <div className="px-4 pb-2 pt-5">
-          <h1 className="font-display text-2xl text-white">Creators</h1>
-          <p className="mt-1 text-sm text-slate-500">Discover creators and their models.</p>
+          <Link to={creatorsIndexHref(query)} className="font-display text-2xl text-white">
+            Creators
+          </Link>
+          <p className="mt-1 text-sm text-slate-500">Pack homes with cover mosaics.</p>
         </div>
         <div className="min-h-0 flex-1 overflow-auto px-3 pb-4">
           {listError ? (
@@ -168,9 +219,9 @@ export function CreatorsPage() {
           {listLoading ? <SidebarSkeleton rows={6} /> : null}
           {!listLoading && filtered.length === 0 ? (
             <EmptyState
-              copy={query ? "No creators match that search." : "No creators yet. Scan the library to infer names from folders."}
-              ctaTo="/"
-              ctaLabel="Back to library"
+              copy={emptyCreatorsIndexCopy(query).copy}
+              ctaTo="/creators"
+              ctaLabel="All creators"
             />
           ) : null}
           <div className="space-y-2">
@@ -179,8 +230,8 @@ export function CreatorsPage() {
                 key={creator.id}
                 creator={creator}
                 covers={mosaics[creator.slug] || []}
-                selected={creator.slug === selectedSlug}
-                to={`/creators/${creator.slug}${query ? `?q=${encodeURIComponent(query)}` : ""}`}
+                selected={creator.slug === slug}
+                to={creatorHref(creator.slug, query)}
               />
             ))}
           </div>
@@ -188,26 +239,27 @@ export function CreatorsPage() {
       </aside>
 
       <section className="min-w-0 flex-1 overflow-auto px-6 py-5">
-        {missing ? (
-          <EmptyState copy="This creator is missing or has not been scanned yet." ctaTo="/creators" ctaLabel="All creators" />
-        ) : null}
+        <Link to={creatorsIndexHref(query)} className="mb-4 inline-block text-sm text-slate-400 hover:text-white">
+          All creators
+        </Link>
+        {missing ? <EmptyState copy={missingCopy.copy} ctaTo={missingCopy.ctaTo} ctaLabel={missingCopy.ctaLabel} /> : null}
         {detailError ? (
           <div className="mb-4">
-            <InlineError message={detailError} onRetry={() => selectedSlug && void loadModels(selectedSlug, true)} />
+            <InlineError message={detailError} onRetry={() => slug && void loadModels(slug, true)} />
           </div>
         ) : null}
         {showDetailSkeleton ? (
           <div>
-            <div className="mb-6 h-28 animate-pulse rounded-2xl bg-white/5" />
+            <div className="mb-6 h-20 animate-pulse rounded-2xl bg-white/5" />
             <CardGridSkeleton />
           </div>
         ) : null}
         {active && !missing ? (
           <>
-            <CreatorHeader creator={active} />
+            <CreatorHeader creator={active} covers={mosaics[active.slug] || models.slice(0, 4)} />
             <div className="mt-6">
-              {models.length === 0 && !detailLoading ? (
-                <EmptyState copy="This creator has no models yet." ctaTo="/" ctaLabel="Browse the library" />
+              {models.length === 0 && !detailLoading && emptyModels ? (
+                <EmptyState copy={emptyModels.copy} ctaTo={emptyModels.ctaTo} ctaLabel={emptyModels.ctaLabel} />
               ) : (
                 <div className="card-grid">
                   {models.map((model) => (
@@ -226,9 +278,6 @@ export function CreatorsPage() {
               </p>
             </div>
           </>
-        ) : null}
-        {!selectedSlug && !listLoading && !missing ? (
-          <EmptyState copy="Select a creator to see their models." />
         ) : null}
       </section>
     </div>
