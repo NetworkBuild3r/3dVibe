@@ -33,7 +33,7 @@ Storage is the owner's NFS mount. There is one library pile.
 - Print-from-browser: owner printer registry, **owner-only** enqueue, private print history, path-jailed Sidekiq dispatch, mock adapter (CI) + SDCP-shaped LAN adapter, cancel + retry
 - Personal likes and bookmark folders (organize the shared catalog; they never hide models)
 - Path-jailed model merge/split (move archives/STLs on disk, never load them into RAM)
-- Duplicate review: persisted groups (exact SHA-256, geometry digest, name+size), HITL keep/dismiss/merge. Near-dups are never auto-deleted.
+- Duplicate review: persisted groups (exact SHA-256, geometry digest, name+size), HITL keep/dismiss/merge. Archive-resident hits stay `merge_unsupported` until a human **Extract** (stream one member onto disk). Near-dups are never auto-deleted.
 - Creator-first catalog: scan upserts `Creator` from the first-level folder / pack-style prefixes (`Creator - Title`, known packs). Shared labels only — no private shelves
 - Budgeted covers: scan enqueues `GenerateCoverJob` (pending); the worker generates a libvips thumbnail and writes back `ready`/`failed` + `cover_url`
 
@@ -81,6 +81,7 @@ Background jobs:
 - `ApplyCurationProposalJob` — applies an approved rename/move/merge (tags apply in-request)
 - `DispatchPrintJob` — path-jails a library file and sends it through a printer adapter (mock simulates progress)
 - `ModelComposer` — merge/split first-level folders and selected files inside the path jail
+- `ArchiveMemberExtractor` — HITL stream-one-member copy into a first-level model folder (path jail; never a whole-archive RAM load or NFS delete)
 - `AnalyzeDuplicatesJob` — on-demand (not every NFS poll): size-prefilter, stream SHA-256, upsert `open` groups (loose + archive members on geometry), enqueue geometry fingerprints
 - `ComputeGeometryDigestJob` / `GeometryFingerprint` — path-jailed STL/OBJ/3MF fingerprint (`mesh:v1:<sha256>`). Accepts a loose `Asset` or an `ArchiveMember`. Writes via `GeometryWriteback.apply!`. Huge meshes skip / time out; 3MF streams the `.model` member
 - `ComputeArchiveMemberGeometryDigestJob` — path-jails the parent zip/7z/rar/3mf, streams **one** mesh member, computes the same `mesh:v1:` digest, writes `archive_members.geometry_digest`
@@ -151,7 +152,7 @@ Likes, shelves, merge/split, and duplicates:
 
 1. Heart a card or open **Shelves** to make a personal folder. The model stays in everyone's library.
 2. Owner/contributor: select two cards → **Merge into one model**, then open the result and **Split last merge**.
-3. **Duplicates** — owner/contributor **Analyze**, then review persisted groups (Open / Kept / Dismissed / Merged). Keep (intentional copies, still in the catalog), dismiss (not a delete), or merge through `ModelComposer`. Viewers get a read-only compare. Near-dups (`geometry` / `name_size`) stay HITL; nothing is auto-deleted from NFS.
+3. **Duplicates** — owner/contributor **Analyze**, then review persisted groups (Open / Kept / Dismissed / Merged). Keep (intentional copies, still in the catalog), dismiss (not a delete), or merge through `ModelComposer`. Archive-resident members stay `mergeable=false` until **Extract** (or **Extract & merge**). Viewers get a read-only compare. Near-dups (`geometry` / `name_size`) stay HITL; nothing is auto-deleted from NFS.
 
 ### Invite a friend
 
@@ -433,9 +434,11 @@ In-process: `GeometryWriteback.apply!(asset_id:, geometry_digest:)` or `Geometry
 
 **Archive-member bind.** `ComputeArchiveMemberGeometryDigestJob` path-jails the parent archive, streams one member into a tempfile (the same `ArchiveIndexer#extract_member` path used by previews), hashes with `GeometryMesh`, and `GeometryWriteback.apply!(archive_member_id:, geometry_digest:)`. Never extract the whole archive into RAM or onto disk. NFS stays source of truth; path jail only. Sidecar workers can still `POST /api/v1/geometry/writeback` with `archive_member_id`.
 
-**Frontend bind.** The Duplicates page calls `POST /libraries/:id/duplicates/analyze` (busy + last-run), then `GET /duplicates?library_id=&status=` with Open / Kept / Dismissed / Merged / All. Group `id` is an integer. Prefer `members[]` (`kind: asset | archive_member`). Archive members include `archive_member_id`, parent archive `parent_asset_id` / `parent_filename`, `member_path`, display `archive_path` (`pack.zip → path/foo.stl`), `geometry_digest`, and model card fields. `mergeable` is `false` for `archive_member` and `true` for on-disk assets `ModelComposer` can reparent. `assets[]` remains the loose-file subset (existing cards). Cards show Exact / Geometry / Likely from `confidence`, member count, and 2–4 covers. `/duplicates/:id` is a side-by-side review drawer (cover · title · creator · path · size · content/geometry digest snippets). Owner/contributor Keep / Dismiss / Merge hit `/duplicates/:id/{keep,dismiss,merge}`. If any selected member is archive-resident / `mergeable=false`, merge returns **422** `{ "error": "merge_unsupported" }` — do not offer extract/reparent-out-of-zip. Keep/Dismiss are unchanged. Viewers get a read-only compare.
+**Frontend bind.** The Duplicates page calls `POST /libraries/:id/duplicates/analyze` (busy + last-run), then `GET /duplicates?library_id=&status=` with Open / Kept / Dismissed / Merged / All. Group `id` is an integer. Prefer `members[]` (`kind: asset | archive_member`). Archive members include `archive_member_id`, parent archive `parent_asset_id` / `parent_filename`, `member_path`, display `archive_path` (`pack.zip → path/foo.stl`), `geometry_digest`, and model card fields. `mergeable` is `false` for `archive_member` and `true` for on-disk assets `ModelComposer` can reparent. `assets[]` remains the loose-file subset (existing cards). Cards show Exact / Geometry / Likely from `confidence`, member count, and 2–4 covers. `/duplicates/:id` is a side-by-side review drawer (cover · title · creator · path · size · content/geometry digest snippets). Owner/contributor Keep / Dismiss / Merge hit `/duplicates/:id/{keep,dismiss,merge}`. If any **selected** member is still archive-resident / `mergeable=false`, merge returns **422** `{ "error": "merge_unsupported" }`. After extract, the original zip member stays `mergeable=false`; the **new** on-disk `asset_id`s in the extract response are `mergeable=true` — send those (and other loose `asset_ids` / `source_ids`) to the existing merge endpoint. Do **not** auto-extract on Merge. Keep/Dismiss are unchanged. Viewers get a read-only compare.
 
-NFS remains source of truth. The DB is an index. Merge only moves on-disk files through `ModelComposer`'s path jail. Nothing auto-deletes library files.
+**Design bind (extract then merge).** Archive-resident rows stay an **In archive** pill with Merge disabled. Owner/contributor see **Extract** (copy selected members onto disk) and a confirmed **Extract & merge**. Extract is HITL only — never silent, never a zip rewrite, never an NFS delete. Two-step is the default: Extract → new `asset_id`s + `mergeable: true` → existing Merge. **Extract & merge** is one confirmed compound action (`POST …/extract_and_merge`) that streams members into the target folder, then runs `ModelComposer` for any extra loose files. Do not offer “Extract all” on the model archive panel. Path jail; stream one member; never “download whole zip to merge”.
+
+NFS remains source of truth. The DB is an index. Extract copies one streamed member into a first-level model folder; the source pack stays on disk. Merge only moves on-disk files through `ModelComposer`'s path jail. Nothing auto-deletes library files.
 
 **Cover write-back** (also `CoverWriteback.apply!` in-process):
 
@@ -477,13 +480,17 @@ All endpoints except `POST /api/v1/session`, invite preview/redeem, and `GET /up
 - `POST /api/v1/models/:id/like` · `DELETE /api/v1/models/:id/like`
 - `POST /api/v1/models/merge` `{ library_id, source_ids?|asset_ids?, target_id?|title? }` (owner/contributor)
 - `POST /api/v1/models/:id/split` `{ merge_id? }`
+- `POST /api/v1/archive_members/extract` `{ archive_member_ids, library_id?, target_model_id?|target_id?|title?|folder_name? }` (owner/contributor). Streams **one** member at a time into a first-level model folder (`LibraryPathJail` + `ArchiveMemberStreamer`). Source zip is unchanged. **201** `{ model, assets, extracted: [{ archive_member_id, asset_id, model_id, relative_path, filename, mergeable: true }] }`
+- `POST /api/v1/archive_members/extract_and_merge` same extract body plus optional `source_ids` / `asset_ids`. Extract, then existing `ModelComposer` merge into the same target. **201** adds `merge` when extra on-disk files were reparented.
 - `GET /api/v1/likes`
 - `GET /api/v1/bookmark_folders` · `POST /api/v1/bookmark_folders` `{ name }`
 - `GET /api/v1/bookmark_folders/:id` · `PATCH` · `DELETE`
 - `POST /api/v1/bookmark_folders/:id/bookmarks` `{ model_id }` · `DELETE .../bookmarks/:model_id`
 - `GET /api/v1/duplicates?library_id=&status=` persisted groups + `members[]` (`kind: asset \| archive_member`, `mergeable`) and `assets[]` (loose files + model cards). `status` is `open` \| `kept` \| `dismissed` \| `merged`; omit for all
 - `POST /api/v1/libraries/:id/duplicates/analyze` → `202` + `AnalyzeDuplicatesJob` (owner/contributor)
-- `POST /api/v1/duplicates/:id/keep` · `POST .../dismiss` · `POST .../merge` `{ source_ids?|asset_ids?, target_id?, title?, archive_member_ids? }` (owner/contributor; merge calls `ModelComposer` inside the path jail; **422** `{ "error": "merge_unsupported" }` if any selected member is archive-resident)
+- `POST /api/v1/duplicates/:id/keep` · `POST .../dismiss` · `POST .../merge` `{ source_ids?|asset_ids?, target_id?, title?, archive_member_ids? }` (owner/contributor; merge calls `ModelComposer` inside the path jail; **422** `{ "error": "merge_unsupported" }` if the selection is still archive-resident). After extract, pass the new on-disk `asset_ids` / `source_ids` — a group that still *lists* zip members is allowed when the selection is on-disk only.
+- `POST /api/v1/duplicates/:id/extract` `{ archive_member_ids?, target_model_id?|target_id?|title?|folder_name? }` — defaults to every archive member in the group; default target is the first loose asset's model. Group stays `open`. **201** same extract payload + `group`.
+- `POST /api/v1/duplicates/:id/extract_and_merge` — confirmed compound action: extract, then merge remaining loose `asset_ids` (unless the client sent `asset_ids`) into the target, then mark the group `merged`. Never deletes the source pack.
 - `POST /api/v1/geometry/writeback` `{ asset_id \| archive_member_id, geometry_digest }` (`GeometryWriteback.apply!` in-process; `X-Geometry-Token: $VIBE_GEOMETRY_TOKEN` or a signed-in owner/contributor)
 - `GET /api/v1/models/:id/archive_members?asset_id=&prefix=&q=&view=tree|flat&limit=&offset=` (nested children by default; `q` searches paths; `view=flat` paginates every member)
 - `GET /api/v1/archive_members/:id` (size, path, content type, `streamable`, `accept_ranges`, `content_path`, `preview_path`, stream budgets)

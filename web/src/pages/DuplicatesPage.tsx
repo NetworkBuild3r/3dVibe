@@ -8,6 +8,7 @@ import { ConfidenceBadge, DuplicateReview, DuplicateReviewSkeleton, ResidencePil
 import { EmptyState, InlineError, Pulse } from "../components/UiStates";
 import {
   allMembersMergeable,
+  archiveMemberIds,
   CONFIDENCE_COPY,
   GEOMETRY_ARCHIVE_LEGEND,
   MERGE_UNSUPPORTED_COPY,
@@ -258,6 +259,49 @@ export function DuplicatesPage() {
     }
   }
 
+  async function extractGroup(
+    group: DuplicateGroup,
+    body: { archive_member_ids: number[]; target_id?: number; title?: string }
+  ) {
+    if (!canReview || acting) return;
+    setActing(true);
+    setReviewError(null);
+    try {
+      const payload = await api.extractDuplicate(group.id, {
+        archive_member_ids: body.archive_member_ids.length ? body.archive_member_ids : archiveMemberIds(group),
+        target_id: body.target_id,
+        title: body.title
+      });
+      if (payload.group) setReviewGroup(payload.group);
+      await refresh({ silent: true });
+    } catch (err) {
+      setReviewError(err instanceof Error ? err.message : "Extract failed");
+    } finally {
+      setActing(false);
+    }
+  }
+
+  async function extractAndMergeGroup(
+    group: DuplicateGroup,
+    body: { archive_member_ids: number[]; asset_ids: number[]; target_id?: number; title?: string }
+  ) {
+    if (!canReview || acting) return;
+    setActing(true);
+    setReviewError(null);
+    try {
+      const payload = await api.extractAndMergeDuplicate(group.id, body);
+      if (payload.group) {
+        await afterDecision(payload.group);
+      } else {
+        await refresh({ silent: true });
+      }
+    } catch (err) {
+      setReviewError(err instanceof Error ? err.message : "Extract & merge failed");
+    } finally {
+      setActing(false);
+    }
+  }
+
   const lastRunLabel = useMemo(() => {
     const when = formatWhen(lastRunAt);
     if (analyzing) return when ? `Analyzing… last run ${when}` : "Analyzing…";
@@ -400,6 +444,8 @@ export function DuplicatesPage() {
             onKeep={() => void keepGroup(reviewGroup)}
             onDismiss={() => void dismissGroup(reviewGroup)}
             onMerge={(payload) => void mergeGroup(reviewGroup, payload)}
+            onExtract={(payload) => void extractGroup(reviewGroup, payload)}
+            onExtractAndMerge={(payload) => void extractAndMergeGroup(reviewGroup, payload)}
             onClose={closeReview}
           />
         ) : reviewError ? (

@@ -154,6 +154,37 @@ export type DuplicateReview = {
   created_at: string;
 };
 
+export type ExtractedArchiveAsset = {
+  archive_member_id: number;
+  asset_id: number;
+  model_id: number;
+  relative_path: string;
+  filename: string;
+  mergeable: boolean;
+  archive_path?: string | null;
+};
+
+export type ArchiveExtractPayload = {
+  model: ModelDetail;
+  assets: ExtractedArchiveAsset[];
+  extracted: ExtractedArchiveAsset[];
+  merge?: ModelMerge | null;
+  group?: DuplicateGroup;
+  review?: DuplicateReview;
+};
+
+export type ArchiveExtractRequest = {
+  archive_member_ids?: number[];
+  archive_member_id?: number;
+  library_id?: number;
+  target_model_id?: number;
+  target_id?: number;
+  title?: string;
+  folder_name?: string;
+  source_ids?: number[];
+  asset_ids?: number[];
+};
+
 export type DuplicateGroup = {
   id: number;
   library_id?: number;
@@ -638,6 +669,26 @@ export const api = {
       `/duplicates/${id}/merge`,
       { method: "POST", body: JSON.stringify(payload) }
     ),
+  extractArchiveMembers: (payload: ArchiveExtractRequest) =>
+    request<ArchiveExtractPayload>("/archive_members/extract", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  extractAndMergeArchiveMembers: (payload: ArchiveExtractRequest) =>
+    request<ArchiveExtractPayload>("/archive_members/extract_and_merge", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  extractDuplicate: (id: number, payload: ArchiveExtractRequest = {}) =>
+    request<ArchiveExtractPayload>(`/duplicates/${id}/extract`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  extractAndMergeDuplicate: (id: number, payload: ArchiveExtractRequest = {}) =>
+    request<ArchiveExtractPayload>(`/duplicates/${id}/extract_and_merge`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
   archiveMembers: (
     modelId: string | number,
     options: {

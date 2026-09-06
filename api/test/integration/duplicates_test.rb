@@ -148,6 +148,98 @@ class DuplicatesTest < ActionDispatch::IntegrationTest
     assert_equal DuplicateGroup::MERGED, horn.reload.status
   end
 
+  test "extract copies an archive member onto disk then merge accepts the new asset" do
+    member = seed_packed_member!
+    loose = @library.vibe_models.find_by!(folder_name: "crate").assets.find_by!(filename: "box.stl")
+    GeometryWriteback.apply!(archive_member_id: member.id, geometry_digest: "mesh:v1:extract")
+    GeometryWriteback.apply!(asset_id: loose.id, geometry_digest: "mesh:v1:extract")
+    AnalyzeDuplicatesJob.perform_now(@library.id)
+    group = DuplicateGroup.open.find_by!(reason: DuplicateGroup::REASON_GEOMETRY, digest: "mesh:v1:extract")
+    zip_bytes = File.binread(@root.join("packed/pack.zip"))
+
+    post "/api/v1/duplicates/#{group.id}/extract",
+         params: { archive_member_ids: [member.id], title: "From pack" },
+         headers: auth_header(@contributor),
+         as: :json
+    assert_response :created
+    extracted = response.parsed_body.fetch("extracted")
+    assert_equal 1, extracted.size
+    assert_equal true, extracted.first["mergeable"]
+    assert_equal member.id, extracted.first["archive_member_id"]
+    asset_id = extracted.first["asset_id"]
+    folder = response.parsed_body.dig("model", "folder_name")
+    assert File.file?(@root.join("#{folder}/foo.stl"))
+    refute File.exist?(@root.join("packed/path/foo.stl"))
+    assert_equal zip_bytes, File.binread(@root.join("packed/pack.zip"))
+    assert_equal DuplicateGroup::OPEN, group.reload.status
+
+    get "/api/v1/duplicates", params: { library_id: @library.id, status: "open" }, headers: auth_header(@owner)
+    packed = response.parsed_body.fetch("groups").find { |row| row["id"] == group.id }
+      .fetch("members").find { |row| row["kind"] == "archive_member" }
+    assert_equal false, packed["mergeable"]
+
+    post "/api/v1/duplicates/#{group.id}/merge",
+         params: { asset_ids: [asset_id], target_id: loose.vibe_model_id },
+         headers: auth_header(@contributor),
+         as: :json
+    assert_response :success
+    assert_equal "merged", response.parsed_body.dig("group", "status")
+    assert File.file?(@root.join("crate/#{folder}/foo.stl"))
+  end
+
+  test "extract_and_merge streams the member then merges loose assets" do
+    member = seed_packed_member!
+    loose = @library.vibe_models.find_by!(folder_name: "crate").assets.find_by!(filename: "box.stl")
+    GeometryWriteback.apply!(archive_member_id: member.id, geometry_digest: "mesh:v1:compound")
+    GeometryWriteback.apply!(asset_id: loose.id, geometry_digest: "mesh:v1:compound")
+    AnalyzeDuplicatesJob.perform_now(@library.id)
+    group = DuplicateGroup.open.find_by!(reason: DuplicateGroup::REASON_GEOMETRY, digest: "mesh:v1:compound")
+
+    post "/api/v1/duplicates/#{group.id}/extract_and_merge",
+         params: { archive_member_ids: [member.id], target_id: loose.vibe_model_id, title: "Crate kit" },
+         headers: auth_header(@contributor),
+         as: :json
+    assert_response :created
+    assert_equal true, response.parsed_body.fetch("extracted").first["mergeable"]
+    assert_equal "merged", response.parsed_body.dig("group", "status")
+    assert_equal "merge", response.parsed_body.dig("review", "decision")
+    assert File.file?(@root.join("crate/foo.stl"))
+    assert File.file?(@root.join("crate/box.stl"))
+    refute File.exist?(@root.join("packed/path/foo.stl"))
+    assert File.file?(@root.join("packed/pack.zip"))
+    assert_equal DuplicateGroup::MERGED, group.reload.status
+    assert_equal "Crate kit", @library.vibe_models.find(loose.vibe_model_id).title
+  end
+
+  test "extract rejects a jail-escaping folder and viewers cannot extract" do
+    member = seed_packed_member!
+    loose = @library.vibe_models.find_by!(folder_name: "crate").assets.find_by!(filename: "box.stl")
+    GeometryWriteback.apply!(archive_member_id: member.id, geometry_digest: "mesh:v1:jail")
+    GeometryWriteback.apply!(asset_id: loose.id, geometry_digest: "mesh:v1:jail")
+    AnalyzeDuplicatesJob.perform_now(@library.id)
+    group = DuplicateGroup.open.find_by!(reason: DuplicateGroup::REASON_GEOMETRY, digest: "mesh:v1:jail")
+
+    post "/api/v1/duplicates/#{group.id}/extract",
+         params: { archive_member_ids: [member.id], folder_name: "../etc" },
+         headers: auth_header(@owner),
+         as: :json
+    assert_response :unprocessable_entity
+    refute File.exist?(Pathname.new(@root).join("..", "etc"))
+    assert File.file?(@root.join("packed/pack.zip"))
+
+    post "/api/v1/duplicates/#{group.id}/extract",
+         params: { archive_member_ids: [member.id], title: "Nope" },
+         headers: auth_header(@viewer),
+         as: :json
+    assert_response :forbidden
+    post "/api/v1/duplicates/#{group.id}/extract_and_merge",
+         params: { archive_member_ids: [member.id], target_id: loose.vibe_model_id },
+         headers: auth_header(@viewer),
+         as: :json
+    assert_response :forbidden
+    assert_equal DuplicateGroup::OPEN, group.reload.status
+  end
+
   test "viewers can list groups but cannot analyze or decide" do
     AnalyzeDuplicatesJob.perform_now(@library.id)
     group = DuplicateGroup.open.find_by!(reason: DuplicateGroup::REASON_CONTENT_HASH)

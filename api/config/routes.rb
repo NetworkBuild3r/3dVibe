@@ -36,6 +36,8 @@ Rails.application.routes.draw do
         post :keep, on: :member
         post :dismiss, on: :member
         post :merge, on: :member
+        post :extract, on: :member
+        post :extract_and_merge, on: :member
       end
 
       resources :assets, only: :show do
@@ -45,6 +47,8 @@ Rails.application.routes.draw do
       resources :archive_members, only: :show do
         get :preview, on: :member
         get :content, on: :member
+        post :extract, on: :collection
+        post :extract_and_merge, on: :collection
       end
 
       get :search, to: "search#index"

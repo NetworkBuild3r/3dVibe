@@ -75,7 +75,97 @@ module API
         render json: { error: "preview_unavailable" }, status: :unprocessable_entity
       end
 
+      def extract
+        perform_extract!(merge: false)
+      end
+
+      def extract_and_merge
+        perform_extract!(merge: true)
+      end
+
       private
+
+      def perform_extract!(merge:)
+        ids = selected_archive_member_ids
+        raise ArgumentError, "select archive members to extract" if ids.empty?
+
+        members = ArchiveMember.joins(asset: :vibe_model).where(id: ids).includes(asset: :vibe_model).to_a
+        raise ArgumentError, "archive members not found" if members.size != ids.uniq.size
+
+        library = if params[:library_id].present?
+          accessible_libraries.find(params[:library_id])
+        else
+          members.first.asset.vibe_model.library
+        end
+        return if require_curator!(library)
+
+        unless members.all? { |member| member.asset.vibe_model.library_id == library.id }
+          raise ArgumentError, "archive members must share one library"
+        end
+
+        extractor = ArchiveMemberExtractor.new(library, performed_by: current_user)
+        kwargs = {
+          archive_member_ids: ids,
+          target_id: extract_target_id,
+          title: params[:title],
+          folder_name: params[:folder_name]
+        }
+        result = if merge
+          extractor.extract_and_merge!(
+            **kwargs,
+            source_ids: params[:source_ids] || params[:model_ids],
+            asset_ids: params[:asset_ids]
+          )
+        else
+          extractor.extract!(**kwargs)
+        end
+
+        target = accessible_models.includes(:tags, :uploaded_by, :creator, assets: %i[archive_members uploaded_by])
+                                 .find(result.model.id)
+        render json: {
+          model: detail_payload(target),
+          assets: result.extracted,
+          extracted: result.extracted,
+          merge: result.merge&.as_api
+        }, status: :created
+      end
+
+      def selected_archive_member_ids
+        ids = Array(params[:archive_member_ids])
+        ids << params[:archive_member_id] if params[:archive_member_id].present?
+        ids << params[:id] if params[:id].present? && action_name != "show"
+        ids.map(&:to_i).reject(&:zero?)
+      end
+
+      def extract_target_id
+        params[:target_model_id].presence || params[:target_id].presence
+      end
+
+      def detail_payload(model)
+        card = VibeModel.card_payloads([model], viewer: current_user).first
+        card.merge(
+          folder_mtime: model.folder_mtime,
+          merges: model.model_merges.includes(:performed_by).recent.map(&:as_api),
+          assets: model.assets.order(:relative_path).map do |asset|
+            {
+              id: asset.id,
+              filename: asset.filename,
+              relative_path: asset.relative_path,
+              kind: asset.kind,
+              byte_size: asset.byte_size,
+              content_digest: asset.content_digest,
+              geometry_digest: asset.geometry_digest,
+              archive: asset.archive?,
+              mesh: asset.mesh?,
+              archive_member_count: asset.archive_members.size,
+              archive_truncated: asset.archive_truncated,
+              archive_support: asset.archive_support,
+              mergeable: true,
+              uploaded_by: asset.uploaded_by && { id: asset.uploaded_by.id, display_name: asset.uploaded_by.display_name }
+            }
+          end
+        )
+      end
 
       def find_member
         ArchiveMember.joins(asset: :vibe_model)
