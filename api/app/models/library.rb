@@ -2,6 +2,7 @@ class Library < ApplicationRecord
   has_many :memberships, dependent: :destroy
   has_many :users, through: :memberships
   has_many :vibe_models, dependent: :destroy
+  has_many :creators, -> { distinct }, through: :vibe_models
   has_many :scan_cursors, dependent: :destroy
   has_many :scan_runs, dependent: :destroy
   has_many :invites, dependent: :destroy

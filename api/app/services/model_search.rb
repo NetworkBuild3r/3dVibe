@@ -33,10 +33,10 @@ class ModelSearch
       filter: meili_filter,
       offset: @offset,
       limit: @limit,
-      facets: %w[tags has_preview]
+      facets: %w[tags has_preview creator_slug]
     )
     ids = Array(raw["hits"]).map { |hit| hit["id"].to_i }
-    records = @scope.includes(:tags, :library, :uploaded_by, :assets).where(id: ids).index_by(&:id)
+    records = @scope.includes(:tags, :library, :uploaded_by, :creator, :assets).where(id: ids).index_by(&:id)
     models = ids.filter_map { |id| records[id] }
     total = (raw["estimatedTotalHits"] || raw["totalHits"] || models.size).to_i
     Result.new(
@@ -58,7 +58,7 @@ class ModelSearch
   def postgres_result(engine:, fallback:)
     filtered = apply_postgres_filters(ilike(@scope))
     total = filtered.except(:select, :order, :includes, :preload, :eager_load).reselect("vibe_models.id").distinct.count
-    models = filtered.includes(:tags, :library, :uploaded_by, :assets).recent.offset(@offset).limit(@limit).to_a
+    models = filtered.includes(:tags, :library, :uploaded_by, :creator, :assets).recent.offset(@offset).limit(@limit).to_a
     Result.new(
       models: models,
       engine: engine,
@@ -76,13 +76,15 @@ class ModelSearch
     return scope if @query.blank?
 
     pattern = "%#{ActiveRecord::Base.sanitize_sql_like(@query)}%"
-    scope.left_joins(:tags, :uploaded_by, assets: :archive_members).where(
+    scope.left_joins(:tags, :uploaded_by, :creator, assets: :archive_members).where(
       <<~SQL.squish,
         vibe_models.title ILIKE :q
         OR vibe_models.folder_name ILIKE :q
         OR vibe_models.synopsis ILIKE :q
         OR tags.name ILIKE :q
         OR users.display_name ILIKE :q
+        OR creators.name ILIKE :q
+        OR creators.slug ILIKE :q
         OR assets.filename ILIKE :q
         OR assets.relative_path ILIKE :q
         OR (
@@ -108,6 +110,9 @@ class ModelSearch
 
     scope = scope.where(library_id: @filters[:library_id]) if @filters[:library_id].present?
     scope = scope.where(uploaded_by_id: @filters[:uploaded_by_id]) if @filters[:uploaded_by_id].present?
+    if @filters[:creator_slug].present?
+      scope = scope.joins(:creator).where(creators: { slug: @filters[:creator_slug].to_s.strip.downcase })
+    end
 
     case truthy(@filters[:has_preview])
     when true
@@ -134,6 +139,9 @@ class ModelSearch
     tags.each { |name| clauses << "tags = #{meili_quote(name)}" }
     clauses << "library_id = #{@filters[:library_id].to_i}" if @filters[:library_id].present?
     clauses << "uploaded_by_id = #{@filters[:uploaded_by_id].to_i}" if @filters[:uploaded_by_id].present?
+    if @filters[:creator_slug].present?
+      clauses << "creator_slug = #{meili_quote(@filters[:creator_slug].to_s.strip.downcase)}"
+    end
     case truthy(@filters[:has_preview])
     when true then clauses << "has_preview = true"
     when false then clauses << "has_preview = false"
@@ -155,7 +163,8 @@ class ModelSearch
     hash = (distribution || {}).stringify_keys
     {
       "tags" => (hash["tags"] || {}),
-      "has_preview" => (hash["has_preview"] || {})
+      "has_preview" => (hash["has_preview"] || {}),
+      "creator_slug" => (hash["creator_slug"] || {})
     }
   end
 
@@ -167,9 +176,11 @@ class ModelSearch
                     .count
     preview_count = VibeModel.where(id: ids).where(id: previewable_model_ids).count
     total = VibeModel.where(id: ids).count
+    creator_counts = Creator.joins(:vibe_models).where(vibe_models: { id: ids }).group("creators.slug").count
     {
       "tags" => tag_counts,
-      "has_preview" => { "true" => preview_count, "false" => [total - preview_count, 0].max }
+      "has_preview" => { "true" => preview_count, "false" => [total - preview_count, 0].max },
+      "creator_slug" => creator_counts
     }
   end
 end

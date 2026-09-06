@@ -114,9 +114,11 @@ class LibraryScanner
     end
 
     dir_stat = dir.lstat
-    if cursor.skip_deep_walk?(dir_stat)
-      return :skipped
-    end
+      if cursor.skip_deep_walk?(dir_stat)
+        existing = @library.vibe_models.find_by(folder_name: folder_name)
+        label_creator_and_cover!(existing) if existing
+        return :skipped
+      end
 
     @run.deep_walks += 1
     index_folder(dir, folder_name, cursor, dir_stat)
@@ -133,6 +135,7 @@ class LibraryScanner
     model.title = humanize(folder_name)
     model.synopsis ||= read_synopsis(dir)
     model.uploaded_by ||= @uploaded_by
+    model.creator ||= CreatorHint.upsert!(folder_name)
     model.save!
 
     seen_paths = []
@@ -177,6 +180,7 @@ class LibraryScanner
         byte_size: total
       )
       assign_default_tags(model)
+      label_creator_and_cover!(model)
       SearchIndex.enqueue(model)
       cursor.remember!(mtime: max_mtime, byte_size: total, file_count: file_count, dir_stat: dir_stat)
       return :fresh if changed_count.zero? && start_after.blank?
@@ -185,6 +189,7 @@ class LibraryScanner
     end
 
     model.update!(folder_mtime: Time.at(max_mtime), byte_size: total)
+    label_creator_and_cover!(model)
     cursor.update!(resume_relative_path: last_rel)
     :budgeted
   end
@@ -353,6 +358,14 @@ class LibraryScanner
       return file.read.truncate(2_000) if file.file?
     end
     nil
+  end
+
+  def label_creator_and_cover!(model)
+    return unless model
+
+    creator = CreatorHint.upsert!(model.folder_name)
+    model.update!(creator: creator) if creator && model.creator_id != creator.id
+    CoverEnqueue.call(model)
   end
 
   def assign_default_tags(model)

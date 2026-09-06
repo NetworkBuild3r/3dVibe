@@ -89,6 +89,18 @@ class ModelSearchTest < ActiveSupport::TestCase
     assert_equal @owner.display_name, doc[:uploader]
     assert doc[:has_preview]
     assert_includes doc[:kinds], "stl"
+    assert_equal @horn.creator&.slug, doc[:creator_slug]
+  end
+
+  test "postgres filters by creator_slug and ILIKE-matches creator name" do
+    slug = @horn.creator.slug
+    filtered = ModelSearch.new(library_scope, query: "", filters: { creator_slug: slug }).call
+    assert_includes filtered.models.map(&:id), @horn.id
+    refute_includes filtered.models.map(&:id), @box.id
+    assert filtered.facets["creator_slug"].key?(slug)
+
+    named = ModelSearch.new(library_scope, query: @horn.creator.name).call
+    assert_includes named.models.map(&:id), @horn.id
   end
 
   test "search index enqueue is a no-op without MEILI_URL" do

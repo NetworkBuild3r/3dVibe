@@ -47,7 +47,7 @@ class SearchIndex
 
     @client.ensure_index!
     count = 0
-    scope.includes(:tags, :library, :uploaded_by, assets: :archive_members).find_in_batches(batch_size: 100) do |batch|
+    scope.includes(:tags, :library, :uploaded_by, :creator, assets: :archive_members).find_in_batches(batch_size: 100) do |batch|
       @client.upsert_documents(batch.map { |model| document_for(model) })
       count += batch.size
     end
@@ -77,7 +77,10 @@ class SearchIndex
       updated_at: model.updated_at&.to_i,
       has_preview: model.previewable?,
       library_id: model.library_id,
-      kinds: assets.map(&:kind).uniq
+      kinds: assets.map(&:kind).uniq,
+      creator_slug: model.creator&.slug,
+      creator_name: model.creator&.name,
+      cover_status: model.cover_status
     }
   end
 

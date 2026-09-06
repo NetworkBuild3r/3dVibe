@@ -70,6 +70,22 @@ class ApplicationController < ActionController::API
     render json: { error: "forbidden" }, status: :forbidden
   end
 
+  def cover_authorized?
+    expected = ENV["VIBE_COVER_TOKEN"].to_s
+    return false if expected.blank?
+
+    presented = cover_token.to_s
+    return false if presented.blank?
+
+    ActiveSupport::SecurityUtils.secure_compare(presented, expected)
+  end
+
+  def cover_token
+    header = request.headers["Authorization"].to_s
+    bearer = header.split(" ", 2).last if header.start_with?("Bearer ")
+    request.headers["X-Cover-Token"].presence || bearer
+  end
+
   def curator_authorized?
     expected = ENV["VIBE_CURATOR_TOKEN"].to_s
     return false if expected.blank?

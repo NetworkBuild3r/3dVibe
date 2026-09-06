@@ -10,6 +10,9 @@ Rails.application.routes.draw do
         post :scan, on: :member
       end
 
+      resources :creators, only: %i[index show]
+      post "covers/writeback", to: "covers#writeback"
+
       resources :models, controller: "vibe_models", only: %i[index show] do
         resources :archive_members, only: :index
         post :like, on: :member

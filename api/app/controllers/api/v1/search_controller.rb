@@ -9,7 +9,8 @@ module API
             tags: search_tags,
             library_id: params[:library_id],
             uploaded_by_id: params[:uploaded_by_id],
-            has_preview: params[:has_preview]
+            has_preview: params[:has_preview],
+            creator_slug: params[:creator_slug]
           },
           offset: params.fetch(:offset, 0),
           limit: params.fetch(:limit, 18)
