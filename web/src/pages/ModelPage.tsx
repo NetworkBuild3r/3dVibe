@@ -4,6 +4,8 @@ import { api, type ArchiveMember, type BookmarkFolder, type ModelDetail, type Pr
 import { ArchivePanel } from "../components/ArchivePanel";
 import { ImageViewer } from "../components/ImageViewer";
 import { MeshViewer } from "../components/MeshViewer";
+import { InlineError } from "../components/UiStates";
+import { SaveToShelf } from "../components/SaveToShelf";
 import { useAuth } from "../auth";
 import { formatBytes } from "../format";
 
@@ -30,6 +32,7 @@ export function ModelPage() {
   const [mergeTitle, setMergeTitle] = useState("");
   const [organizeStatus, setOrganizeStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [shelfError, setShelfError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -97,14 +100,24 @@ export function ModelPage() {
 
   async function toggleLike() {
     if (!model) return;
-    const payload = model.liked ? await api.unlikeModel(model.id) : await api.likeModel(model.id);
-    setModel(payload.model);
+    setShelfError(null);
+    try {
+      const payload = model.liked ? await api.unlikeModel(model.id) : await api.likeModel(model.id);
+      setModel(payload.model);
+    } catch (err) {
+      setShelfError(err instanceof Error ? err.message : "Could not update like");
+    }
   }
 
   async function bookmarkTo(folderId: number) {
     if (!model) return;
-    const payload = await api.addBookmark(folderId, model.id);
-    setModel({ ...model, ...payload.model });
+    setShelfError(null);
+    try {
+      const payload = await api.addBookmark(folderId, model.id);
+      setModel({ ...model, ...payload.model });
+    } catch (err) {
+      setShelfError(err instanceof Error ? err.message : "Could not save to shelf");
+    }
   }
 
   async function splitMerge() {
@@ -185,35 +198,18 @@ export function ModelPage() {
           >
             {model.liked ? "Liked" : "Like"} · {model.like_count || 0}
           </button>
-          {folders.length ? (
-            <select
-              className="rounded-lg border border-white/10 bg-ink-950 px-3 py-1.5 text-sm"
-              defaultValue=""
-              onChange={(event) => {
-                const folderId = Number(event.target.value);
-                if (folderId) void bookmarkTo(folderId);
-                event.target.value = "";
-              }}
-            >
-              <option value="">Save to shelf…</option>
-              {folders.map((folder) => (
-                <option key={folder.id} value={folder.id}>
-                  {folder.name}
-                  {model.bookmark_folder_ids?.includes(folder.id) ? " ✓" : ""}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <Link to="/shelves" className="text-sm text-accent-400">
-              Create a shelf
-            </Link>
-          )}
+          <SaveToShelf
+            folders={folders}
+            folderIds={model.bookmark_folder_ids}
+            onSave={(folderId) => void bookmarkTo(folderId)}
+          />
           {activeMerge && user?.can_merge ? (
             <button type="button" className="text-sm text-amber-200" onClick={() => void splitMerge()}>
               Split last merge
             </button>
           ) : null}
         </div>
+        {shelfError ? <div className="mt-2"><InlineError message={shelfError} /></div> : null}
         {organizeStatus ? <p className="mt-2 text-sm text-accent-300">{organizeStatus}</p> : null}
       </div>
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, type PrintJob } from "../api";
+import { InlineError, ListSkeleton } from "../components/UiStates";
 import { useAuth } from "../auth";
 
 const FILTERS = [
@@ -27,14 +28,29 @@ export function PrintsPage() {
   const [jobs, setJobs] = useState<PrintJob[]>([]);
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["id"]>("all");
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  async function refresh() {
-    const payload = await api.printJobs(filter === "all" ? undefined : filter);
-    setJobs(payload.print_jobs);
+  async function refresh(options: { silent?: boolean } = {}) {
+    if (!options.silent) {
+      setError(null);
+      setLoading(true);
+    }
+    try {
+      const payload = await api.printJobs(filter === "all" ? undefined : filter);
+      setJobs(payload.print_jobs);
+      if (!options.silent) setError(null);
+    } catch (err) {
+      if (!options.silent) {
+        setError(err instanceof Error ? err.message : "Failed to load print jobs");
+      }
+    } finally {
+      if (!options.silent) setLoading(false);
+    }
   }
 
   useEffect(() => {
-    refresh().catch((err) => setError(err instanceof Error ? err.message : "Failed to load print jobs"));
+    setJobs([]);
+    void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter]);
 
@@ -43,15 +59,20 @@ export function PrintsPage() {
   useEffect(() => {
     if (!watching) return;
     const timer = window.setInterval(() => {
-      refresh().catch(() => undefined);
+      void refresh({ silent: true });
     }, 800);
     return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watching, filter]);
 
   async function cancel(id: number) {
-    await api.cancelPrint(id);
-    await refresh();
+    setError(null);
+    try {
+      await api.cancelPrint(id);
+      await refresh({ silent: true });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not cancel print");
+    }
   }
 
   return (
@@ -79,50 +100,54 @@ export function PrintsPage() {
         ))}
       </div>
 
-      {error ? <p className="text-sm text-rose-300">{error}</p> : null}
+      {error ? <InlineError message={error} onRetry={() => void refresh()} /> : null}
 
-      <section className="rounded-2xl border border-white/10 bg-ink-900/70 p-5">
-        <ul className="divide-y divide-white/5">
-          {jobs.map((job) => (
-            <li key={job.id} className="py-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <p className="text-slate-100">
-                    {job.model_id ? (
-                      <Link to={`/models/${job.model_id}`} className="hover:text-accent-400">
-                        {job.model_title || `Model ${job.model_id}`}
-                      </Link>
-                    ) : (
-                      "Unknown model"
-                    )}
-                    <span className="ml-2 font-mono text-xs text-slate-500">{job.filename || "file"}</span>
-                  </p>
-                  <p className="mt-1 text-xs text-slate-500">
-                    {job.printer_name || "printer"} · {job.protocol_type || "adapter"}
-                    {job.requested_by ? ` · ${job.requested_by.display_name}` : ""}
-                    {` · ${new Date(job.created_at).toLocaleString()}`}
-                  </p>
-                  {job.note ? <p className="mt-2 text-sm text-slate-400">{job.note}</p> : null}
-                  {job.error_message ? <p className="mt-1 text-sm text-rose-300">{job.error_message}</p> : null}
+      <section className="rounded-2xl border border-white/10 bg-ink-900/70 p-5" aria-busy={loading}>
+        {loading ? (
+          <ListSkeleton />
+        ) : (
+          <ul className="divide-y divide-white/5">
+            {jobs.map((job) => (
+              <li key={job.id} className="py-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-slate-100">
+                      {job.model_id ? (
+                        <Link to={`/models/${job.model_id}`} className="hover:text-accent-400">
+                          {job.model_title || `Model ${job.model_id}`}
+                        </Link>
+                      ) : (
+                        "Unknown model"
+                      )}
+                      <span className="ml-2 font-mono text-xs text-slate-500">{job.filename || "file"}</span>
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {job.printer_name || "printer"} · {job.protocol_type || "adapter"}
+                      {job.requested_by ? ` · ${job.requested_by.display_name}` : ""}
+                      {` · ${new Date(job.created_at).toLocaleString()}`}
+                    </p>
+                    {job.note ? <p className="mt-2 text-sm text-slate-400">{job.note}</p> : null}
+                    {job.error_message ? <p className="mt-1 text-sm text-rose-300">{job.error_message}</p> : null}
+                  </div>
+                  <div className="text-right">
+                    <p className={`text-sm font-medium ${statusClass(job.status)}`}>
+                      {job.status} · {job.progress}%
+                    </p>
+                    {ACTIVE.has(job.status) && user?.id === job.requested_by?.id ? (
+                      <button type="button" className="mt-2 text-xs text-rose-300" onClick={() => void cancel(job.id)}>
+                        Cancel
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
-                <div className="text-right">
-                  <p className={`text-sm font-medium ${statusClass(job.status)}`}>
-                    {job.status} · {job.progress}%
-                  </p>
-                  {ACTIVE.has(job.status) && (user?.can_manage_printers || user?.id === job.requested_by?.id) ? (
-                    <button type="button" className="mt-2 text-xs text-rose-300" onClick={() => void cancel(job.id)}>
-                      Cancel
-                    </button>
-                  ) : null}
+                <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/5">
+                  <div className="h-full rounded-full bg-accent-500" style={{ width: `${job.progress}%` }} />
                 </div>
-              </div>
-              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/5">
-                <div className="h-full rounded-full bg-accent-500" style={{ width: `${job.progress}%` }} />
-              </div>
-            </li>
-          ))}
-          {jobs.length === 0 ? <li className="py-6 text-slate-500">No print jobs in this filter.</li> : null}
-        </ul>
+              </li>
+            ))}
+            {jobs.length === 0 ? <li className="py-6 text-slate-500">No jobs in this filter.</li> : null}
+          </ul>
+        )}
       </section>
     </div>
   );

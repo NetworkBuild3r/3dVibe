@@ -88,4 +88,59 @@ class LikesAndBookmarksTest < ActionDispatch::IntegrationTest
          as: :json
     assert_response :not_found
   end
+
+  test "folder rename and hard delete leave the catalog intact" do
+    post "/api/v1/bookmark_folders",
+         params: { name: "Weekend prints" },
+         headers: auth_header(@friend),
+         as: :json
+    assert_response :created
+    folder_id = response.parsed_body.dig("bookmark_folder", "id")
+
+    post "/api/v1/bookmark_folders/#{folder_id}/bookmarks",
+         params: { model_id: @crate.id },
+         headers: auth_header(@friend),
+         as: :json
+    assert_response :created
+
+    patch "/api/v1/bookmark_folders/#{folder_id}",
+          params: { name: "Saturday shelf" },
+          headers: auth_header(@friend),
+          as: :json
+    assert_response :success
+    assert_equal "Saturday shelf", response.parsed_body.dig("bookmark_folder", "name")
+
+    patch "/api/v1/bookmark_folders/#{folder_id}",
+          params: { name: "   " },
+          headers: auth_header(@friend),
+          as: :json
+    assert_response :unprocessable_entity
+
+    delete "/api/v1/bookmark_folders/#{folder_id}", headers: auth_header(@friend)
+    assert_response :no_content
+
+    get "/api/v1/bookmark_folders", headers: auth_header(@friend)
+    assert_response :success
+    assert_empty response.parsed_body.fetch("bookmark_folders")
+
+    get "/api/v1/models/#{@crate.id}", headers: auth_header(@friend)
+    assert_response :success
+    assert_equal @crate.title, response.parsed_body.dig("model", "title")
+    assert_empty response.parsed_body.dig("model", "bookmark_folder_ids")
+  end
+
+  test "cannot rename or delete another user's folder" do
+    folder = @owner.bookmark_folders.create!(name: "Mine")
+
+    patch "/api/v1/bookmark_folders/#{folder.id}",
+          params: { name: "Stolen" },
+          headers: auth_header(@friend),
+          as: :json
+    assert_response :not_found
+
+    delete "/api/v1/bookmark_folders/#{folder.id}", headers: auth_header(@friend)
+    assert_response :not_found
+    assert BookmarkFolder.exists?(folder.id)
+    assert_equal "Mine", folder.reload.name
+  end
 end
