@@ -340,7 +340,7 @@ The indexer never extracts an archive to disk. HTTP open/preview (`ArchiveMember
 
 | Call | When |
 | --- | --- |
-| `GET /api/v1/models/:id/archive_members?asset_id=&prefix=&q=&view=tree\|flat&limit=&offset=` | Nested children (`prefix`), `q` search, or `view=flat`. `nodes` and `members` are the same page. No `kind=` filter yet (follow-up). |
+| `GET /api/v1/models/:id/archive_members?asset_id=&prefix=&q=&view=tree\|flat&limit=&offset=` | Nested children (`prefix`), `q` search, or `view=flat`. `nodes` and `members` are the same page and include `streamable`, `content_path`, `preview_path`. No `kind=` filter yet (follow-up). |
 | `GET /api/v1/archive_members/:id` | Size, `content_type`, `streamable`, `accept_ranges`, `content_path`, `preview_path`, `stream_max_bytes`, `stream_max_seconds` |
 | `GET /api/v1/archive_members/:id/content` | Mesh / download. Streamed 64 KiB chunks. `?download=1` → `Content-Disposition: attachment`. `Range: bytes=start-end` → **206** + `Content-Range`. Abort the fetch on unmount. |
 | `GET /api/v1/archive_members/:id/preview` | Image thumb (cached under `VIBE_PREVIEW_ROOT`) or inline hot image (preview-byte cap). Mesh → **422** `{ "error": "use_content", "content_path": "…" }` — call `/content` instead |
@@ -349,7 +349,9 @@ The indexer never extracts an archive to disk. HTTP open/preview (`ArchiveMember
 
 **Backend contract gaps (follow-ups, do not block browse):** list/search has offset pagination (`next_offset`) but no `kind=mesh\|image` filter, no cursor token beyond integer offset, and no server-side “hot members only” page. Frontend can filter `mesh` / `image` / `streamable` on the returned page. 7z/rar listing stays best-effort. Mesh raster thumbs stay a stub (`DerivePreviewJob` copies hot images only).
 
-`DerivePreviewJob` copies up to 24 hot image members (shallow / names like preview, thumb, cover, hero) into `VIBE_PREVIEW_ROOT`. Mesh members stay lazy: the tree shows a Load action; Three.js only runs after a click.
+**Design bind (model detail).** Cover / viewer shell on top (cover states; mesh/image lazy-load + `AbortController` cancel-on-navigate / Close). Archive panel: tree/flat toggle + search within pack. Breadcrumb `model → pack.zip → folder`. Files show name · size · kind pill (`mesh` / `image` / `other`). Streamable rows Open / click into the preview pane; non-streamable stay muted with no fake Open. Mono caption `pack.zip → path/foo.stl` (middle-truncate). Loading skeleton, empty folder, rose + Retry on GET only. Mesh: shimmer → progressive `/content`. Image: `/preview`; 422 `use_content` falls back to `content_path` without toast-spam. Abort → calm “Cancelled”. Budget / unsupported → muted “Can't preview this member”. Actions stay like / shelf / print — do not invent Extract all. Gallery cards may show an **In archive** hint only when the card payload includes `in_archive`. Path jail; never “download whole zip to preview”; never market whole-archive RAM.
+
+`DerivePreviewJob` copies up to 24 hot image members (shallow / names like preview, thumb, cover, hero) into `VIBE_PREVIEW_ROOT`. Mesh members stay lazy: the tree shows Open; Three.js only runs after a click.
 
 Search (Meilisearch `archive_paths` and Postgres `ILIKE`) includes file member paths, so `hero` still hits Packed Minis. Directory rows and placeholders are excluded from the search document.
 

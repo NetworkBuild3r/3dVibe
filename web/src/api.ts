@@ -71,6 +71,8 @@ export type ModelCard = {
   cover_status?: CoverStatus;
   cover_url?: string | null;
   cover_placeholder?: boolean;
+  // Optional gallery hint. Only render when Backend sets this — do not invent it.
+  in_archive?: boolean;
 };
 
 export type BookmarkFolder = {
@@ -216,6 +218,8 @@ export type ArchiveMember = {
   listing_source: string | null;
   child_count: number | null;
   has_children: boolean;
+  content_path?: string | null;
+  preview_path?: string | null;
 };
 
 export type ArchiveSummary = {
@@ -508,6 +512,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (current) headers.set("Authorization", `Bearer ${current}`);
 
   const response = await fetch(`${API_BASE}${path}`, { ...init, headers });
+  if (init.signal?.aborted) throw new DOMException("Aborted", "AbortError");
   if (response.status === 204) return undefined as T;
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -567,7 +572,8 @@ export const api = {
     if (options.cover_status) params.set("cover_status", options.cover_status);
     return request<{ models: ModelCard[]; next_cursor: number | null }>(`/models?${params}`);
   },
-  model: (id: string | number) => request<{ model: ModelDetail }>(`/models/${id}`),
+  model: (id: string | number, signal?: AbortSignal) =>
+    request<{ model: ModelDetail }>(`/models/${id}`, { signal }),
   likeModel: (id: number) => request<{ model: ModelDetail; liked: boolean }>(`/models/${id}/like`, { method: "POST" }),
   unlikeModel: (id: number) => request<{ model: ModelDetail; liked: boolean }>(`/models/${id}/like`, { method: "DELETE" }),
   likes: () => request<{ models: ModelCard[] }>("/likes"),
@@ -638,6 +644,7 @@ export const api = {
       view?: "tree" | "flat" | "search";
       limit?: number;
       offset?: number;
+      signal?: AbortSignal;
     } = {}
   ) => {
     const params = new URLSearchParams();
@@ -648,9 +655,12 @@ export const api = {
     if (options.limit != null) params.set("limit", String(options.limit));
     if (options.offset != null) params.set("offset", String(options.offset));
     const suffix = params.toString() ? `?${params}` : "";
-    return request<ArchiveTreeResponse>(`/models/${modelId}/archive_members${suffix}`);
+    return request<ArchiveTreeResponse>(`/models/${modelId}/archive_members${suffix}`, {
+      signal: options.signal
+    });
   },
-  archiveMember: (id: number) => request<{ member: ArchiveMemberDetail }>(`/archive_members/${id}`),
+  archiveMember: (id: number, signal?: AbortSignal) =>
+    request<{ member: ArchiveMemberDetail }>(`/archive_members/${id}`, { signal }),
   search: (options: {
     q?: string;
     tag?: string;
@@ -810,17 +820,122 @@ export const api = {
   archiveMemberPreviewUrl: (id: number) => `${API_BASE}/archive_members/${id}/preview`
 };
 
+export function resolveApiUrl(path: string | null | undefined, fallback: string): string {
+  const value = path?.trim();
+  if (!value) return fallback;
+  if (/^https?:\/\//i.test(value) || value.startsWith("blob:") || value.startsWith("data:")) return value;
+  if (API_BASE.startsWith("http")) {
+    try {
+      return new URL(value, new URL(API_BASE).origin).toString();
+    } catch {
+      return value;
+    }
+  }
+  return value.startsWith("/") ? value : `/${value}`;
+}
+
+export function memberContentUrl(
+  member: Pick<ArchiveMember, "id" | "content_path">,
+  download = false
+): string | null {
+  if (!member.id && !member.content_path) return null;
+  const fallback = member.id ? api.archiveMemberContentUrl(member.id, download) : "";
+  const url = resolveApiUrl(member.content_path, fallback);
+  if (!url) return null;
+  if (download && !/[?&]download=/.test(url)) return url.includes("?") ? `${url}&download=1` : `${url}?download=1`;
+  return url;
+}
+
+export function memberPreviewUrl(member: Pick<ArchiveMember, "id" | "preview_path">): string | null {
+  if (!member.id && !member.preview_path) return null;
+  const fallback = member.id ? api.archiveMemberPreviewUrl(member.id) : "";
+  return resolveApiUrl(member.preview_path, fallback) || null;
+}
+
+function throwFromFailedResponse(response: Response, data: Record<string, unknown>): never {
+  const code = typeof data.error === "string" ? data.error : "";
+  const details = Array.isArray(data.details) ? data.details.filter(Boolean).join(" ") : "";
+  const message =
+    details || (typeof data.message === "string" && data.message) || code || `Request failed (${response.status})`;
+  throw new ApiError(message, response.status, code, data);
+}
+
+async function readErrorPayload(response: Response): Promise<Record<string, unknown>> {
+  const contentType = response.headers.get("Content-Type") || "";
+  if (contentType.includes("json")) {
+    const data = await response.json().catch(() => ({}));
+    return data && typeof data === "object" ? (data as Record<string, unknown>) : {};
+  }
+  await response.arrayBuffer().catch(() => undefined);
+  return {};
+}
+
 export async function fetchAuthedBlob(url: string, init: RequestInit = {}): Promise<Blob> {
   const current = token();
   const headers = new Headers(init.headers);
   if (current && !headers.has("Authorization")) headers.set("Authorization", `Bearer ${current}`);
   const response = await fetch(url, { ...init, headers });
-  if (!response.ok) throw new Error("Could not load file");
+  if (!response.ok) throwFromFailedResponse(response, await readErrorPayload(response));
   return response.blob();
 }
 
+export async function fetchAuthedBytes(
+  url: string,
+  init: RequestInit & { onProgress?: (loaded: number, total: number | null) => void } = {}
+): Promise<ArrayBuffer> {
+  const { onProgress, ...rest } = init;
+  const current = token();
+  const headers = new Headers(rest.headers);
+  if (current && !headers.has("Authorization")) headers.set("Authorization", `Bearer ${current}`);
+  const response = await fetch(url, { ...rest, headers });
+  if (!response.ok) throwFromFailedResponse(response, await readErrorPayload(response));
+
+  const totalHeader = Number(response.headers.get("Content-Length"));
+  const total = Number.isFinite(totalHeader) && totalHeader > 0 ? totalHeader : null;
+  if (!response.body) {
+    const buffer = await response.arrayBuffer();
+    onProgress?.(buffer.byteLength, total ?? buffer.byteLength);
+    return buffer;
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let loaded = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    loaded += value.byteLength;
+    onProgress?.(loaded, total);
+  }
+
+  const out = new Uint8Array(loaded);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  onProgress?.(loaded, total ?? loaded);
+  return out.buffer;
+}
+
+export async function fetchMemberPreview(url: string, init: RequestInit = {}): Promise<Blob> {
+  try {
+    return await fetchAuthedBlob(url, init);
+  } catch (err) {
+    if (err instanceof ApiError && err.code === "use_content") {
+      const contentPath = typeof err.data.content_path === "string" ? err.data.content_path : "";
+      if (contentPath) return fetchAuthedBlob(resolveApiUrl(contentPath, contentPath), init);
+    }
+    throw err;
+  }
+}
+
 export function isAbortError(error: unknown): boolean {
-  return error instanceof DOMException && error.name === "AbortError";
+  return (
+    (error instanceof DOMException && error.name === "AbortError") ||
+    (error instanceof Error && error.name === "AbortError")
+  );
 }
 
 export const CHUNK_SIZE = 1024 * 1024;

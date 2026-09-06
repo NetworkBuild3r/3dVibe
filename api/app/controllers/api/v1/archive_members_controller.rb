@@ -179,7 +179,9 @@ module API
           extension: member.extension,
           listing_source: member.listing_source,
           child_count: member.directory? ? child_count.to_i : nil,
-          has_children: member.directory? && child_count.to_i.positive?
+          has_children: member.directory? && child_count.to_i.positive?,
+          content_path: member.streamable? ? "/api/v1/archive_members/#{member.id}/content" : nil,
+          preview_path: member.id ? "/api/v1/archive_members/#{member.id}/preview" : nil
         }
       end
     end

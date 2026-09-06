@@ -47,6 +47,9 @@ export function ModelCard({
             {creator.name}
           </Link>
         ) : null}
+        {model.in_archive === true ? (
+          <p className="mt-1 text-[11px] uppercase tracking-wide text-slate-500">In archive</p>
+        ) : null}
         {tag ? (
           onTag ? (
             <button
