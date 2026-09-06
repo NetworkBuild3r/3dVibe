@@ -336,6 +336,8 @@ export type Printer = {
   enabled: boolean;
   notes: string | null;
   settings: Record<string, unknown>;
+  last_error?: string | null;
+  disabled_reason?: string | null;
   created_at: string;
   updated_at: string;
 };
