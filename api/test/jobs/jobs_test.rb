@@ -101,6 +101,25 @@ class JobsTest < ActiveJob::TestCase
     assert user.present?
   end
 
+  test "analyze duplicates job persists groups and geometry stub no-ops" do
+    root = Rails.root.join("tmp/dup-job-#{SecureRandom.hex(4)}")
+    FileUtils.mkdir_p(root.join("a"))
+    FileUtils.mkdir_p(root.join("b"))
+    File.write(root.join("a/horn.stl"), "solid horn\nendsolid horn\n")
+    File.write(root.join("b/horn.stl"), "solid horn\nendsolid horn\n")
+    library = Library.create!(name: "Dup jobs", root_path: root.to_s)
+    LibraryScanner.new(library, budget: ScanBudget.unlimited).scan!
+    asset = library.vibe_models.first.assets.find_by!(filename: "horn.stl")
+
+    AnalyzeDuplicatesJob.perform_now(library.id)
+    assert library.duplicate_groups.open.exists?(reason: DuplicateGroup::REASON_CONTENT_HASH)
+
+    assert_nothing_raised { ComputeGeometryDigestJob.perform_now(asset.id) }
+    assert_nil asset.reload.geometry_digest
+  ensure
+    FileUtils.rm_rf(root)
+  end
+
   test "fetch job upserts stub proposals" do
     root = Rails.root.join("tmp/fetch-lib-#{SecureRandom.hex(4)}")
     FileUtils.mkdir_p(root.join("only"))

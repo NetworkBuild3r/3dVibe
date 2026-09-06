@@ -9,10 +9,12 @@ Rails.application.routes.draw do
 
       resources :libraries, only: %i[index show create] do
         post :scan, on: :member
+        post "duplicates/analyze", on: :member, to: "duplicates#analyze"
       end
 
       resources :creators, only: %i[index show]
       post "covers/writeback", to: "covers#writeback"
+      post "geometry/writeback", to: "geometry#writeback"
 
       resources :models, controller: "vibe_models", only: %i[index show] do
         resources :archive_members, only: :index
@@ -26,7 +28,11 @@ Rails.application.routes.draw do
       resources :bookmark_folders, only: %i[index show create update destroy] do
         resources :bookmarks, only: %i[create destroy]
       end
-      resources :duplicates, only: :index
+      resources :duplicates, only: :index do
+        post :keep, on: :member
+        post :dismiss, on: :member
+        post :merge, on: :member
+      end
 
       resources :assets, only: :show do
         get :content, on: :member

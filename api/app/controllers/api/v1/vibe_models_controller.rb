@@ -89,6 +89,7 @@ module API
               kind: asset.kind,
               byte_size: asset.byte_size,
               content_digest: asset.content_digest,
+              geometry_digest: asset.geometry_digest,
               archive: asset.archive?,
               mesh: asset.mesh?,
               archive_member_count: asset.archive_members.size,

@@ -15,8 +15,8 @@ Storage is the owner's NFS mount. There is one library pile.
 | Role | Who | What they can do |
 | --- | --- | --- |
 | `owner` | The library admin | Invite/revoke, upload, trigger/schedule library scans, review/apply curation, manage printers, **send print jobs** |
-| `contributor` | Default for invited friends | Browse/search the whole catalog, upload, like/bookmark, review/apply curation, merge/split models |
-| `viewer` | Optional read-only invite | Browse/search the catalog, like/bookmark, see the curation queue |
+| `contributor` | Default for invited friends | Browse/search the whole catalog, upload, like/bookmark, review/apply curation, merge/split models, analyze/review duplicates |
+| `viewer` | Optional read-only invite | Browse/search the catalog, like/bookmark, see the curation queue, list duplicate groups |
 
 ## What you get
 
@@ -33,7 +33,7 @@ Storage is the owner's NFS mount. There is one library pile.
 - Print-from-browser: owner printer registry, **owner-only** enqueue, private print history, path-jailed Sidekiq dispatch, mock adapter + SDCP interface
 - Personal likes and bookmark folders (organize the shared catalog; they never hide models)
 - Path-jailed model merge/split (move archives/STLs on disk, never load them into RAM)
-- Duplicate review (content hash + filename/size heuristics)
+- Duplicate review: persisted groups (exact SHA-256, geometry digest, name+size), HITL keep/dismiss/merge. Near-dups are never auto-deleted.
 - Creator-first catalog: scan upserts `Creator` from the first-level folder / pack-style prefixes (`Creator - Title`, known packs). Shared labels only — no private shelves
 - Budgeted covers: scan enqueues `GenerateCoverJob` (pending); the worker generates a libvips thumbnail and writes back `ready`/`failed` + `cover_url`
 
@@ -54,7 +54,10 @@ Domain objects (original names):
 | --- | --- |
 | `Library` | Root path on disk (your NFS mount) |
 | `VibeModel` | One folder under that root |
-| `Asset` | An on-disk file, with a content digest when the file is small enough |
+| `Asset` | An on-disk file, with a content digest when the file is small enough and an optional `geometry_digest` from Rendering |
+| `DuplicateGroup` | Persisted cluster (`content_hash` / `geometry` / `name_size`) with HITL status `open` \| `kept` \| `dismissed` \| `merged` |
+| `DuplicateGroupMember` | Asset (and optional model) in a group |
+| `DuplicateReview` | Keep / dismiss / merge decision + payload |
 | `ArchiveMember` | An indexed entry inside a zip/3mf (7z/rar listing is best-effort) |
 | `Tag` / `TagAssignment` | Lightweight joins for search and display |
 | `User` / `Membership` / `Invite` | Owner, contributor, or viewer |
@@ -78,7 +81,10 @@ Background jobs:
 - `ApplyCurationProposalJob` — applies an approved rename/move/merge (tags apply in-request)
 - `DispatchPrintJob` — path-jails a library file and sends it through a printer adapter (mock simulates progress)
 - `ModelComposer` — merge/split first-level folders and selected files inside the path jail
-- `DuplicateFinder` — groups assets by SHA-256 and filename+size (streams hashes; does not slurp archives)
+- `AnalyzeDuplicatesJob` — on-demand (not every NFS poll): size-prefilter, stream SHA-256, upsert `open` groups, enqueue geometry fingerprints
+- `ComputeGeometryDigestJob` — stub hook for Rendering; no-ops when `geometry_digest` is blank (never loads archives)
+- `DuplicateFinder` / `DuplicateAnalyzer` — cluster by content hash, geometry digest, then name+size; persist only; never delete NFS files
+- `GeometryWriteback` — Rendering sets `assets.geometry_digest` (`POST /api/v1/geometry/writeback` or `GeometryWriteback.apply!`)
 - `GenerateCoverJob` — path-jails the locked cover payload, generates a budgeted libvips webp (or fails for mesh-without-preview), writes back via `CoverWriteback.apply!`
 - `CoverEnqueue` / `CoverWriteback` — scan sets `cover_status=pending`; write-back sets `ready`/`failed` + `cover_url`
 
@@ -142,7 +148,7 @@ Likes, shelves, merge/split, and duplicates:
 
 1. Heart a card or open **Shelves** to make a personal folder. The model stays in everyone's library.
 2. Owner/contributor: select two cards → **Merge into one model**, then open the result and **Split last merge**.
-3. **Duplicates** lists exact hashes and same-name/size groups. Select files and merge if you want one folder.
+3. **Duplicates** — owner/contributor `POST .../duplicates/analyze`, then review persisted groups. Keep (intentional copies), dismiss, or merge through `ModelComposer`. Viewers can list only. Near-dups (`geometry` / `name_size`) stay HITL; nothing is auto-deleted from NFS.
 
 ### Invite a friend
 
@@ -267,6 +273,9 @@ Owner API `GET /api/v1/libraries` (and show) includes the latest `scan` object. 
 | `VIBE_SCAN_TRUST_DIR_MTIME` | Skip deep walk when dir identity is fresh (default 1) |
 | `VIBE_SCAN_ALLOW_EMPTY_PRUNE` | Allow wiping the catalog when the mount lists no folders (default 0) |
 | `VIBE_COVER_TOKEN` | Shared token for `POST /api/v1/covers/writeback` (`X-Cover-Token` or Bearer). Signed-in users can also write back |
+| `VIBE_GEOMETRY_TOKEN` | Shared token for `POST /api/v1/geometry/writeback` (`X-Geometry-Token` or Bearer). Owner/contributor can also write back |
+| `VIBE_DUP_MAX_SECONDS` | Wall-clock cap per analyze job (default 60). `0` = unlimited |
+| `VIBE_DUP_MAX_FILES` | Streamed hashes per analyze job (default 2000). `0` = unlimited |
 | `VIBE_COVER_MAX_PX` | Cover generate budget, pixels (default 512). Passed through on the enqueue payload |
 | `VIBE_COVER_MAX_BYTES` | Cover generate budget, bytes (default 250000). Passed through on the enqueue payload |
 
@@ -316,7 +325,40 @@ Model card / index fields:
 | `cover_url` | nullable |
 | `cover_placeholder` | bool (`true` until a real cover is written back) |
 
-**Rendering write-back** (also `CoverWriteback.apply!` in-process):
+### Duplicate groups (HITL)
+
+Analyze is on-demand — it is **not** hooked to every NFS poll. `POST /api/v1/libraries/:id/duplicates/analyze` queues `AnalyzeDuplicatesJob`.
+
+The worker size-prefilters (only files that share a byte size are streamed for SHA-256), path-jails every hash (`LibraryPathJail#resolve_file` + `Digest::SHA256.file`), and never loads archives into RAM. Mesh assets missing `geometry_digest` enqueue `ComputeGeometryDigestJob` (stub until Rendering fills it).
+
+Clustering, highest confidence first:
+
+| reason | confidence | rule |
+| --- | --- | --- |
+| `content_hash` | `exact` | shared `content_digest` (SHA-256) |
+| `geometry` | `geometry` | shared `geometry_digest` (near-dup; HITL only) |
+| `name_size` | `likely` | leftover same filename + size |
+
+**Rematch.** Terminal groups (`kept` / `dismissed` / `merged`) are never rewritten. If they still match a current cluster (same reason+digest or same name+size, and at least two current members overlap), those assets stay reserved and will not open a new group. Only `open` groups are created or have members refreshed. Stale `open` groups that no longer match are destroyed. Re-analyze after a keep/dismiss does not wipe that decision.
+
+**Rendering bind.** Compute a stable mesh fingerprint and write it back, then the curator re-runs analyze:
+
+```
+POST /api/v1/geometry/writeback
+X-Geometry-Token: $VIBE_GEOMETRY_TOKEN
+```
+
+```json
+{ "asset_id": 99, "geometry_digest": "mesh:stable-fingerprint" }
+```
+
+In-process: `GeometryWriteback.apply!(asset_id:, geometry_digest:)` or `asset.update!(geometry_digest:)`. `ComputeGeometryDigestJob` / `GeometryFingerprint.compute` is the hook to replace — today it path-jails the file and returns `nil`.
+
+**Frontend bind.** `GET /duplicates` reads the index only (empty until analyze). Group `id` is an integer. Send `status=open` for the review queue. Keep/dismiss/merge hit the new member routes; `POST /models/merge` still works for ad-hoc merges. Show `status`, `geometry_digest`, and model cards on each group.
+
+NFS remains source of truth. The DB is an index. Merge only moves files through `ModelComposer`'s path jail. Nothing auto-deletes library files.
+
+**Cover write-back** (also `CoverWriteback.apply!` in-process):
 
 ```
 POST /api/v1/covers/writeback
@@ -357,7 +399,10 @@ All endpoints except `POST /api/v1/session`, invite preview/redeem, and `GET /up
 - `GET /api/v1/bookmark_folders` · `POST /api/v1/bookmark_folders` `{ name }`
 - `GET /api/v1/bookmark_folders/:id` · `PATCH` · `DELETE`
 - `POST /api/v1/bookmark_folders/:id/bookmarks` `{ model_id }` · `DELETE .../bookmarks/:model_id`
-- `GET /api/v1/duplicates?library_id=`
+- `GET /api/v1/duplicates?library_id=&status=` persisted groups + members (asset fields + model cards). `status` is `open` \| `kept` \| `dismissed` \| `merged`; omit for all
+- `POST /api/v1/libraries/:id/duplicates/analyze` → `202` + `AnalyzeDuplicatesJob` (owner/contributor)
+- `POST /api/v1/duplicates/:id/keep` · `POST .../dismiss` · `POST .../merge` `{ source_ids?|asset_ids?, target_id?, title? }` (owner/contributor; merge calls `ModelComposer` inside the path jail)
+- `POST /api/v1/geometry/writeback` `{ asset_id, geometry_digest }` (`GeometryWriteback.apply!` in-process; `X-Geometry-Token: $VIBE_GEOMETRY_TOKEN` or a signed-in owner/contributor)
 - `GET /api/v1/models/:id/archive_members?asset_id=&prefix=&q=&view=tree|flat&limit=&offset=` (nested children by default; `q` searches paths; `view=flat` paginates every member)
 - `GET /api/v1/archive_members/:id` (size, path, content type, streamable)
 - `GET /api/v1/archive_members/:id/content` (stream one member; `?download=1` for attachment)

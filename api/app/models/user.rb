@@ -10,6 +10,7 @@ class User < ApplicationRecord
   has_many :bookmark_folders, dependent: :destroy
   has_many :bookmarks, dependent: :destroy
   has_many :model_merges, foreign_key: :performed_by_id, inverse_of: :performed_by, dependent: :nullify
+  has_many :duplicate_reviews, dependent: :destroy
 
   validates :email, presence: true, uniqueness: { case_sensitive: false }
   validates :display_name, presence: true

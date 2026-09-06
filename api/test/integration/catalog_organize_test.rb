@@ -59,12 +59,14 @@ class CatalogOrganizeTest < ActionDispatch::IntegrationTest
   end
 
   test "duplicates API groups exact hashes and name-size copies" do
+    AnalyzeDuplicatesJob.perform_now(@library.id)
     get "/api/v1/duplicates", params: { library_id: @library.id }, headers: auth_header(@owner)
     assert_response :success
     groups = response.parsed_body.fetch("groups")
     horn_group = groups.find { |group| group["filename"] == "horn.stl" }
     assert horn_group
     assert_equal "exact", horn_group["confidence"]
+    assert_equal "open", horn_group["status"]
     model_ids = horn_group.fetch("assets").map { |asset| asset["model_id"] }
     assert_includes model_ids, @horn.id
     assert_includes model_ids, @copy.id
