@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { api, type DuplicateGroup, type DuplicateStatus, type LibraryInfo } from "../api";
+import { api, type DuplicateGroup, type DuplicateStatus, type ExtractedArchiveAsset, type LibraryInfo } from "../api";
 import { useAuth } from "../auth";
 import { CalmChip } from "../components/CalmChip";
 import { CoverMedia } from "../components/CoverMedia";
@@ -8,8 +8,10 @@ import { ConfidenceBadge, DuplicateReview, DuplicateReviewSkeleton, ResidencePil
 import { EmptyState, InlineError, Pulse } from "../components/UiStates";
 import {
   allMembersMergeable,
+  applyExtractedMembers,
   archiveMemberIds,
   CONFIDENCE_COPY,
+  EXTRACTING_COPY,
   GEOMETRY_ARCHIVE_LEGEND,
   MERGE_UNSUPPORTED_COPY,
   formatWhen,
@@ -57,6 +59,8 @@ export function DuplicatesPage() {
   const [reviewLoading, setReviewLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [acting, setActing] = useState(false);
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
+  const [extractedRows, setExtractedRows] = useState<ExtractedArchiveAsset[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [reviewError, setReviewError] = useState<string | null>(null);
   const analyzeTicket = useRef(0);
@@ -123,6 +127,10 @@ export function DuplicatesPage() {
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [libraryId, filter]);
+
+  useEffect(() => {
+    setExtractedRows([]);
+  }, [reviewId]);
 
   useEffect(() => {
     if (libraryId === "" || !reviewOpen || reviewId == null) {
@@ -205,8 +213,14 @@ export function DuplicatesPage() {
     navigate("/duplicates");
   }
 
+  const displayReviewGroup = useMemo(
+    () => (reviewGroup ? applyExtractedMembers(reviewGroup, extractedRows) : null),
+    [reviewGroup, extractedRows]
+  );
+
   async function afterDecision(group: DuplicateGroup) {
     setReviewGroup(group);
+    if (group.status !== "open") setExtractedRows([]);
     await refresh({ silent: true });
     if (filter === "open" && group.status !== "open") {
       navigate("/duplicates");
@@ -216,6 +230,7 @@ export function DuplicatesPage() {
   async function keepGroup(group: DuplicateGroup) {
     if (!canReview || acting) return;
     setActing(true);
+    setBusyLabel(null);
     setReviewError(null);
     try {
       const payload = await api.keepDuplicate(group.id);
@@ -230,6 +245,7 @@ export function DuplicatesPage() {
   async function dismissGroup(group: DuplicateGroup) {
     if (!canReview || acting) return;
     setActing(true);
+    setBusyLabel(null);
     setReviewError(null);
     try {
       const payload = await api.dismissDuplicate(group.id);
@@ -241,13 +257,17 @@ export function DuplicatesPage() {
     }
   }
 
-  async function mergeGroup(group: DuplicateGroup, body: { source_ids: number[]; target_id: number; title?: string }) {
+  async function mergeGroup(
+    group: DuplicateGroup,
+    body: { source_ids: number[]; asset_ids?: number[]; target_id: number; title?: string }
+  ) {
     if (!canReview || acting) return;
     if (!allMembersMergeable(group)) {
       setReviewError(MERGE_UNSUPPORTED_COPY);
       return;
     }
     setActing(true);
+    setBusyLabel("Merging…");
     setReviewError(null);
     try {
       const payload = await api.mergeDuplicate(group.id, body);
@@ -256,6 +276,7 @@ export function DuplicatesPage() {
       setReviewError(isMergeUnsupported(err) ? MERGE_UNSUPPORTED_COPY : err instanceof Error ? err.message : "Merge failed");
     } finally {
       setActing(false);
+      setBusyLabel(null);
     }
   }
 
@@ -265,6 +286,7 @@ export function DuplicatesPage() {
   ) {
     if (!canReview || acting) return;
     setActing(true);
+    setBusyLabel(EXTRACTING_COPY);
     setReviewError(null);
     try {
       const payload = await api.extractDuplicate(group.id, {
@@ -272,12 +294,14 @@ export function DuplicatesPage() {
         target_id: body.target_id,
         title: body.title
       });
+      setExtractedRows(payload.extracted || payload.assets || []);
       if (payload.group) setReviewGroup(payload.group);
       await refresh({ silent: true });
     } catch (err) {
       setReviewError(err instanceof Error ? err.message : "Extract failed");
     } finally {
       setActing(false);
+      setBusyLabel(null);
     }
   }
 
@@ -287,9 +311,15 @@ export function DuplicatesPage() {
   ) {
     if (!canReview || acting) return;
     setActing(true);
+    setBusyLabel(EXTRACTING_COPY);
     setReviewError(null);
     try {
-      const payload = await api.extractAndMergeDuplicate(group.id, body);
+      const payload = await api.extractAndMergeDuplicate(group.id, {
+        archive_member_ids: body.archive_member_ids.length ? body.archive_member_ids : archiveMemberIds(group),
+        asset_ids: body.asset_ids,
+        target_id: body.target_id,
+        title: body.title
+      });
       if (payload.group) {
         await afterDecision(payload.group);
       } else {
@@ -299,6 +329,7 @@ export function DuplicatesPage() {
       setReviewError(err instanceof Error ? err.message : "Extract & merge failed");
     } finally {
       setActing(false);
+      setBusyLabel(null);
     }
   }
 
@@ -435,17 +466,18 @@ export function DuplicatesPage() {
               <DuplicateReviewSkeleton />
             </aside>
           </div>
-        ) : reviewGroup ? (
+        ) : displayReviewGroup ? (
           <DuplicateReview
-            group={reviewGroup}
+            group={displayReviewGroup}
             canReview={canReview}
             busy={acting}
+            busyLabel={busyLabel}
             error={reviewError}
-            onKeep={() => void keepGroup(reviewGroup)}
-            onDismiss={() => void dismissGroup(reviewGroup)}
-            onMerge={(payload) => void mergeGroup(reviewGroup, payload)}
-            onExtract={(payload) => void extractGroup(reviewGroup, payload)}
-            onExtractAndMerge={(payload) => void extractAndMergeGroup(reviewGroup, payload)}
+            onKeep={() => void keepGroup(displayReviewGroup)}
+            onDismiss={() => void dismissGroup(displayReviewGroup)}
+            onMerge={(payload) => void mergeGroup(displayReviewGroup, payload)}
+            onExtract={(payload) => void extractGroup(reviewGroup || displayReviewGroup, payload)}
+            onExtractAndMerge={(payload) => void extractAndMergeGroup(reviewGroup || displayReviewGroup, payload)}
             onClose={closeReview}
           />
         ) : reviewError ? (

@@ -1,12 +1,23 @@
-import { ApiError, type DuplicateAsset, type DuplicateConfidence, type DuplicateGroup, type DuplicateMember, type DuplicateReason, type DuplicateStatus, type ModelCard } from "./api";
+import {
+  ApiError,
+  type DuplicateAsset,
+  type DuplicateConfidence,
+  type DuplicateGroup,
+  type DuplicateMember,
+  type DuplicateReason,
+  type DuplicateStatus,
+  type ExtractedArchiveAsset,
+  type ModelCard
+} from "./api";
 
 export const MERGE_UNSUPPORTED = "merge_unsupported";
 export const MERGE_UNSUPPORTED_COPY =
-  "Merge needs on-disk files. Extract the archive hit first (stream one member onto disk), then merge — or use Extract & merge.";
+  "Merge needs on-disk files. Archive hits stay in the pack until you extract — Keep and Dismiss still work.";
 export const EXTRACT_COPY =
-  "Extract copies the selected zip member into a first-level model folder. The pack stays on disk. Nothing is deleted.";
+  "Extract copies selected zip members into the library folder (path-jailed). The pack stays on disk. Nothing is deleted.";
 export const EXTRACT_AND_MERGE_COPY =
-  "Extract the archive members onto disk, then merge the loose copies into the target. Confirmed HITL only — the source zip is never rewritten or deleted.";
+  "Extracts selected files into the library folder (path-jailed), then merges. NFS files are not silent-deleted.";
+export const EXTRACTING_COPY = "Extracting…";
 export const GEOMETRY_ARCHIVE_LEGEND = "Geometry matches across loose files and meshes inside zip/7z/rar.";
 
 export const STATUS_FILTERS = [
@@ -172,8 +183,109 @@ export function looseAssetIds(group: DuplicateGroup) {
     .filter((id): id is number => Number.isFinite(id));
 }
 
+export function archiveMembersToExtract(group: DuplicateGroup) {
+  return groupMembers(group).filter(isArchiveResident);
+}
+
 export function canExtractArchiveMembers(group: DuplicateGroup) {
   return group.status === "open" && archiveMemberIds(group).length > 0;
+}
+
+export function extractedMemberFromRow(
+  row: ExtractedArchiveAsset,
+  previous?: DuplicateMember,
+  target?: Pick<ModelCard, "id" | "title" | "folder_name" | "cover_status" | "cover_url" | "cover_placeholder"> | null
+): DuplicateMember {
+  return {
+    kind: "asset",
+    mergeable: row.mergeable !== false,
+    id: row.asset_id,
+    asset_id: row.asset_id,
+    archive_member_id: null,
+    filename: row.filename,
+    relative_path: row.relative_path,
+    member_path: null,
+    archive_path: null,
+    parent_asset_id: null,
+    parent_filename: null,
+    byte_size: previous?.byte_size,
+    content_digest: previous?.content_digest,
+    geometry_digest: previous?.geometry_digest,
+    model_id: row.model_id,
+    model_title: target?.title || previous?.model_title || `Model ${row.model_id}`,
+    folder_name: target?.folder_name || previous?.folder_name,
+    cover_status: target?.cover_status ?? previous?.cover_status,
+    cover_url: target?.cover_url ?? previous?.cover_url,
+    cover_placeholder: target?.cover_placeholder ?? previous?.cover_placeholder
+  };
+}
+
+export function applyExtractedMembers(
+  group: DuplicateGroup,
+  extracted: ExtractedArchiveAsset[] = [],
+  target?: Pick<ModelCard, "id" | "title" | "folder_name" | "cover_status" | "cover_url" | "cover_placeholder"> | null
+): DuplicateGroup {
+  if (!extracted.length) return group;
+
+  const byArchiveId = new Map(extracted.map((row) => [row.archive_member_id, row]));
+  const members = groupMembers(group).map((member) => {
+    if (!isArchiveResident(member)) return member;
+    const row = byArchiveId.get(member.archive_member_id ?? member.id);
+    if (!row) return member;
+    return extractedMemberFromRow(row, member, target);
+  });
+  const known = new Set(members.map((member) => member.asset_id ?? member.id));
+  extracted.forEach((row) => {
+    if (known.has(row.asset_id)) return;
+    members.push(extractedMemberFromRow(row, undefined, target));
+    known.add(row.asset_id);
+  });
+
+  const assets = [
+    ...(group.assets || []).filter((asset) => !extracted.some((row) => row.asset_id === asset.id)),
+    ...extracted.map((row) => ({
+      id: row.asset_id,
+      filename: row.filename,
+      relative_path: row.relative_path,
+      kind: "mesh",
+      byte_size: 0,
+      content_digest: null,
+      mergeable: true,
+      model_id: row.model_id,
+      model_title: target?.title || `Model ${row.model_id}`,
+      folder_name: target?.folder_name || ""
+    }))
+  ];
+
+  return { ...group, members, assets };
+}
+
+export function preferredTargetId(group: DuplicateGroup) {
+  const columns = memberColumns(group);
+  const loose = columns.find((column) =>
+    column.members.some((member) => !isArchiveResident(member) && member.mergeable !== false)
+  );
+  return loose?.modelId ?? columns[0]?.modelId;
+}
+
+export function mergePayloadForGroup(
+  group: DuplicateGroup,
+  targetId: number,
+  title?: string
+): { source_ids: number[]; asset_ids: number[]; target_id: number; title?: string } {
+  const columns = memberColumns(group);
+  const sources = columns.filter((column) => column.modelId !== targetId);
+  const assetIds = groupMembers(group)
+    .filter((member) => !isArchiveResident(member) && member.mergeable !== false && member.model_id !== targetId)
+    .map((member) => member.asset_id ?? member.id)
+    .filter((id): id is number => Number.isFinite(id));
+
+  return {
+    source_ids: sources.map((column) => column.modelId),
+    asset_ids: assetIds,
+    target_id: targetId,
+    title
+  };
 }
 
 export function memberKey(member: DuplicateMember) {
