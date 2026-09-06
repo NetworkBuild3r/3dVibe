@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, type BookmarkFolder, type ModelCard } from "../api";
+import { InlineError } from "../components/UiStates";
+import { SaveToShelf } from "../components/SaveToShelf";
 import { useAuth } from "../auth";
 
 const PAGE_SIZE = 18;
@@ -32,6 +34,8 @@ export function GalleryPage() {
   const [status, setStatus] = useState("");
   const [engine, setEngine] = useState("");
   const [facetTags, setFacetTags] = useState<Record<string, number>>({});
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [likeBusyId, setLikeBusyId] = useState<number | null>(null);
   const sentinel = useRef<HTMLDivElement | null>(null);
   const queryRef = useRef("");
   const tagRef = useRef("");
@@ -159,13 +163,27 @@ export function GalleryPage() {
   }
 
   async function toggleLike(model: ModelCard) {
-    const payload = model.liked ? await api.unlikeModel(model.id) : await api.likeModel(model.id);
-    setModels((current) => current.map((item) => (item.id === model.id ? { ...item, ...payload.model } : item)));
+    if (likeBusyId != null) return;
+    setActionError(null);
+    setLikeBusyId(model.id);
+    try {
+      const payload = model.liked ? await api.unlikeModel(model.id) : await api.likeModel(model.id);
+      setModels((current) => current.map((item) => (item.id === model.id ? { ...item, ...payload.model } : item)));
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Could not update like");
+    } finally {
+      setLikeBusyId(null);
+    }
   }
 
   async function bookmark(modelId: number, folderId: number) {
-    const payload = await api.addBookmark(folderId, modelId);
-    setModels((current) => current.map((item) => (item.id === modelId ? { ...item, ...payload.model } : item)));
+    setActionError(null);
+    try {
+      const payload = await api.addBookmark(folderId, modelId);
+      setModels((current) => current.map((item) => (item.id === modelId ? { ...item, ...payload.model } : item)));
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Could not save to shelf");
+    }
   }
 
   async function mergeSelected() {
@@ -228,6 +246,7 @@ export function GalleryPage() {
         ))}
         {activeSearch && engine ? <span className="ml-auto text-xs text-slate-500">{engine}</span> : null}
       </div>
+      {actionError ? <div className="mb-5"><InlineError message={actionError} /></div> : null}
       {user?.can_merge && selected.length >= 2 ? (
         <div className="mb-5 flex flex-wrap items-center gap-3 rounded-2xl border border-accent-500/20 bg-accent-500/5 px-4 py-3">
           <span className="text-sm text-slate-200">{selected.length} selected</span>
@@ -264,7 +283,10 @@ export function GalleryPage() {
               )}
               <button
                 type="button"
-                className={`text-sm ${model.liked ? "text-rose-300" : "text-slate-500"}`}
+                aria-pressed={Boolean(model.liked)}
+                aria-label={model.liked ? "Unlike" : "Like"}
+                disabled={likeBusyId === model.id}
+                className={`text-sm ${model.liked ? "text-rose-300" : "text-slate-500"} disabled:opacity-60`}
                 onClick={() => void toggleLike(model)}
               >
                 {model.liked ? "♥" : "♡"} {model.like_count || 0}
@@ -294,25 +316,13 @@ export function GalleryPage() {
               {model.uploaded_by ? ` · uploaded by ${model.uploaded_by.display_name}` : ""}
               {model.merged ? " · merged" : ""}
             </p>
-            {folders.length ? (
-              <select
-                className="mt-3 w-full rounded-lg border border-white/10 bg-ink-950 px-2 py-1 text-xs"
-                defaultValue=""
-                onChange={(event) => {
-                  const folderId = Number(event.target.value);
-                  if (folderId) void bookmark(model.id, folderId);
-                  event.target.value = "";
-                }}
-              >
-                <option value="">Save to shelf…</option>
-                {folders.map((folder) => (
-                  <option key={folder.id} value={folder.id}>
-                    {folder.name}
-                    {model.bookmark_folder_ids?.includes(folder.id) ? " ✓" : ""}
-                  </option>
-                ))}
-              </select>
-            ) : null}
+            <SaveToShelf
+              folders={folders}
+              folderIds={model.bookmark_folder_ids}
+              onSave={(folderId) => void bookmark(model.id, folderId)}
+              className="mt-3 inline-block text-xs text-accent-400"
+              selectClassName="mt-3 w-full rounded-lg border border-white/10 bg-ink-950 px-2 py-1 text-xs"
+            />
           </div>
         ))}
       </div>

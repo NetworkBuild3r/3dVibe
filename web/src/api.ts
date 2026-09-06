@@ -355,7 +355,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (response.status === 204) return undefined as T;
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(data.error || `Request failed (${response.status})`);
+    const details = Array.isArray(data.details) ? data.details.filter(Boolean).join(" ") : "";
+    throw new Error(details || data.error || `Request failed (${response.status})`);
   }
   return data as T;
 }
@@ -390,6 +391,11 @@ export const api = {
     request<{ bookmark_folder: BookmarkFolder }>("/bookmark_folders", {
       method: "POST",
       body: JSON.stringify({ name })
+    }),
+  updateBookmarkFolder: (id: number, payload: { name?: string; position?: number }) =>
+    request<{ bookmark_folder: BookmarkFolder }>(`/bookmark_folders/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload)
     }),
   deleteBookmarkFolder: (id: number) => request<void>(`/bookmark_folders/${id}`, { method: "DELETE" }),
   addBookmark: (folderId: number, modelId: number) =>
