@@ -38,6 +38,33 @@ class JobsTest < ActiveJob::TestCase
     assert user.present?
   end
 
+  test "dispatch print job completes the mock adapter" do
+    root = Rails.root.join("tmp/print-job-#{SecureRandom.hex(4)}")
+    FileUtils.mkdir_p(root.join("only"))
+    File.write(root.join("only/a.stl"), "solid a\nendsolid a\n")
+    user = create_owner!
+    library = Library.create!(name: "Print jobs", root_path: root.to_s)
+    Membership.create!(user: user, library: library, role: Membership::OWNER)
+    LibraryScanner.new(library).scan!
+    model = library.vibe_models.find_by!(folder_name: "only")
+    asset = model.assets.find_by!(filename: "a.stl")
+    printer = library.printers.create!(name: "Mock", host: "127.0.0.1", protocol_type: Printer::MOCK)
+    job = PrintDispatch.create!(
+      library: library,
+      printer: printer,
+      vibe_model: model,
+      asset: asset,
+      requested_by: user,
+      status: PrintDispatch::QUEUED,
+      filename: asset.filename
+    )
+
+    DispatchPrintJob.perform_now(job.id)
+    assert_equal PrintDispatch::SUCCEEDED, job.reload.status
+  ensure
+    FileUtils.rm_rf(root)
+  end
+
   test "fetch job upserts stub proposals" do
     root = Rails.root.join("tmp/fetch-lib-#{SecureRandom.hex(4)}")
     FileUtils.mkdir_p(root.join("only"))

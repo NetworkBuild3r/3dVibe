@@ -36,6 +36,18 @@ class User < ApplicationRecord
     can_upload_anywhere?
   end
 
+  def can_print?(library)
+    member_of?(library)
+  end
+
+  def can_print_anywhere?
+    memberships.exists?
+  end
+
+  def can_manage_printers?(library)
+    owner_of?(library)
+  end
+
   def owner_anywhere?
     memberships.exists?(role: Membership::OWNER)
   end
@@ -57,6 +69,8 @@ class User < ApplicationRecord
       can_invite: owner_anywhere?,
       can_upload: can_upload_anywhere?,
       can_curate: can_curate_anywhere?,
+      can_print: can_print_anywhere?,
+      can_manage_printers: owner_anywhere?,
       libraries: memberships.includes(:library).map do |membership|
         {
           id: membership.library_id,

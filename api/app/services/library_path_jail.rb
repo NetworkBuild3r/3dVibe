@@ -46,6 +46,23 @@ class LibraryPathJail
     dir
   end
 
+  # Resolve a regular file under the library root. Used by the print bridge so
+  # workers never read a path the browser (or a stale Asset row) pointed outside.
+  def resolve_file(folder_name, relative_path)
+    path = join(folder_name, relative_path)
+    raise ArgumentError, "print file is not in the library" unless File.file?(path.to_s)
+
+    real = path.realpath
+    assert_inside!(real)
+    real
+  end
+
+  def assert_realpath_inside!(candidate)
+    real = Pathname.new(candidate).realpath
+    assert_inside!(real)
+    real
+  end
+
   private
 
   def segments(value)

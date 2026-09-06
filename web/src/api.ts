@@ -14,6 +14,8 @@ export type User = {
   can_invite: boolean;
   can_upload: boolean;
   can_curate: boolean;
+  can_print: boolean;
+  can_manage_printers: boolean;
   libraries: MembershipInfo[];
 };
 
@@ -109,12 +111,39 @@ export type CurationProposal = {
 
 export type PrintJob = {
   id: number;
-  model_id: number;
+  library_id: number | null;
+  printer_id: number | null;
+  printer_name: string | null;
+  protocol_type: string | null;
+  model_id: number | null;
+  model_title: string | null;
   asset_id: number | null;
+  filename: string | null;
   status: string;
+  progress: number;
   printer_hint: string | null;
   note: string | null;
+  error_message: string | null;
+  remote_ref: string | null;
+  requested_by?: Author | null;
+  started_at: string | null;
+  finished_at: string | null;
   created_at: string;
+  updated_at: string;
+};
+
+export type Printer = {
+  id: number;
+  library_id: number;
+  library_name: string;
+  name: string;
+  host: string;
+  protocol_type: string;
+  enabled: boolean;
+  notes: string | null;
+  settings: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
 };
 
 export type Invite = {
@@ -140,6 +169,8 @@ export type LibraryInfo = {
   shared: boolean;
   role: string;
   can_upload: boolean;
+  can_print: boolean;
+  can_manage_printers: boolean;
 };
 
 export type LibraryUpload = {
@@ -217,11 +248,31 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ ids, decision: action })
     }),
-  print: (modelId: number, assetId?: number) =>
+  printers: () => request<{ printers: Printer[] }>("/printers"),
+  createPrinter: (payload: {
+    library_id: number;
+    name: string;
+    host: string;
+    protocol_type: string;
+    enabled?: boolean;
+    notes?: string;
+  }) => request<{ printer: Printer }>("/printers", { method: "POST", body: JSON.stringify(payload) }),
+  updatePrinter: (
+    id: number,
+    payload: Partial<{ name: string; host: string; protocol_type: string; enabled: boolean; notes: string }>
+  ) => request<{ printer: Printer }>(`/printers/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  deletePrinter: (id: number) => request<void>(`/printers/${id}`, { method: "DELETE" }),
+  printJobs: (status?: string) => {
+    const suffix = status ? `?status=${encodeURIComponent(status)}` : "";
+    return request<{ print_jobs: PrintJob[] }>(`/print_jobs${suffix}`);
+  },
+  printJob: (id: number) => request<{ print_job: PrintJob }>(`/print_jobs/${id}`),
+  print: (modelId: number, printerId: number, assetId?: number) =>
     request<{ print_job: PrintJob }>("/print_jobs", {
       method: "POST",
-      body: JSON.stringify({ model_id: modelId, asset_id: assetId, printer_hint: "browser-bridge" })
+      body: JSON.stringify({ model_id: modelId, printer_id: printerId, asset_id: assetId })
     }),
+  cancelPrint: (id: number) => request<{ print_job: PrintJob }>(`/print_jobs/${id}/cancel`, { method: "POST" }),
   invites: () => request<{ invites: Invite[] }>("/invites"),
   createInvite: (payload: { library_id: number; email?: string; role?: string; expires_in_days?: number | "" }) =>
     request<{ invite: Invite }>("/invites", {

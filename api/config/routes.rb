@@ -32,7 +32,10 @@ Rails.application.routes.draw do
         post :bulk, on: :collection
       end
 
-      resources :print_jobs, only: %i[index create]
+      resources :printers, only: %i[index show create update destroy]
+      resources :print_jobs, only: %i[index show create] do
+        post :cancel, on: :member
+      end
       resources :invites, only: %i[index create] do
         post :revoke, on: :member
       end

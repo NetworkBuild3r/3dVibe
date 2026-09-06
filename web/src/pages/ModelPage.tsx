@@ -1,14 +1,23 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, type ArchiveMember, type ModelDetail } from "../api";
+import { api, type ArchiveMember, type ModelDetail, type Printer, type PrintJob } from "../api";
 import { MeshViewer } from "../components/MeshViewer";
+import { useAuth } from "../auth";
+
+const ACTIVE_PRINT = new Set(["queued", "sending", "printing"]);
 
 export function ModelPage() {
   const { id } = useParams();
+  const { user } = useAuth();
   const [model, setModel] = useState<ModelDetail | null>(null);
   const [members, setMembers] = useState<ArchiveMember[] | null>(null);
   const [viewerAssetId, setViewerAssetId] = useState<number | null>(null);
-  const [printNote, setPrintNote] = useState<string | null>(null);
+  const [printers, setPrinters] = useState<Printer[]>([]);
+  const [printerId, setPrinterId] = useState<number | "">("");
+  const [assetId, setAssetId] = useState<number | "">("");
+  const [printJob, setPrintJob] = useState<PrintJob | null>(null);
+  const [printError, setPrintError] = useState<string | null>(null);
+  const [printBusy, setPrintBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -20,6 +29,36 @@ export function ModelPage() {
   }, [id]);
 
   const meshAsset = useMemo(() => model?.assets.find((asset) => asset.mesh && asset.kind === "stl"), [model]);
+  const printableAssets = useMemo(() => model?.assets.filter((asset) => !asset.archive) || [], [model]);
+  const enabledPrinters = useMemo(() => printers.filter((printer) => printer.enabled), [printers]);
+
+  useEffect(() => {
+    api
+      .printers()
+      .then((payload) => {
+        setPrinters(payload.printers);
+        const first = payload.printers.find((printer) => printer.enabled);
+        if (first) setPrinterId(first.id);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    if (!model) return;
+    const preferred = model.assets.find((asset) => asset.mesh) || model.assets.find((asset) => !asset.archive);
+    if (preferred) setAssetId(preferred.id);
+  }, [model]);
+
+  useEffect(() => {
+    if (!printJob || !ACTIVE_PRINT.has(printJob.status)) return;
+    const timer = window.setInterval(() => {
+      api
+        .printJob(printJob.id)
+        .then((payload) => setPrintJob(payload.print_job))
+        .catch(() => undefined);
+    }, 800);
+    return () => window.clearInterval(timer);
+  }, [printJob]);
 
   async function loadArchive() {
     if (!id) return;
@@ -28,9 +67,17 @@ export function ModelPage() {
   }
 
   async function requestPrint() {
-    if (!model) return;
-    const job = await api.print(model.id, meshAsset?.id);
-    setPrintNote(`${job.print_job.status}: ${job.print_job.note}`);
+    if (!model || printerId === "" || assetId === "") return;
+    setPrintBusy(true);
+    setPrintError(null);
+    try {
+      const payload = await api.print(model.id, printerId, assetId);
+      setPrintJob(payload.print_job);
+    } catch (err) {
+      setPrintError(err instanceof Error ? err.message : "Could not queue print");
+    } finally {
+      setPrintBusy(false);
+    }
   }
 
   if (error) return <p className="text-rose-300">{error}</p>;
@@ -83,16 +130,71 @@ export function ModelPage() {
         <div className="rounded-2xl border border-white/10 bg-ink-900/70 p-4">
           <h2 className="font-display text-xl">Print from browser</h2>
           <p className="mt-2 text-sm text-slate-400">
-            The printer bridge is a placeholder. 3dvibe records the intent and does not open an SDCP session yet.
+            The browser talks only to 3dvibe. A worker path-jails the library file and sends it through the printer
+            adapter (mock in CI/dev).
           </p>
-          <button
-            type="button"
-            onClick={() => void requestPrint()}
-            className="mt-4 rounded-lg border border-white/15 px-4 py-2 text-sm hover:border-accent-500/50"
-          >
-            Queue print (stub)
-          </button>
-          {printNote ? <p className="mt-3 text-sm text-amber-200">{printNote}</p> : null}
+          {user?.can_print ? (
+            <>
+              <label className="mt-4 block text-sm text-slate-300">
+                Printer
+                <select
+                  className="mt-1 w-full rounded-lg border border-white/10 bg-ink-950 px-3 py-2"
+                  value={printerId}
+                  onChange={(event) => setPrinterId(Number(event.target.value))}
+                >
+                  {enabledPrinters.length === 0 ? <option value="">No enabled printers</option> : null}
+                  {enabledPrinters.map((printer) => (
+                    <option key={printer.id} value={printer.id}>
+                      {printer.name} ({printer.protocol_type} · {printer.host})
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="mt-3 block text-sm text-slate-300">
+                File
+                <select
+                  className="mt-1 w-full rounded-lg border border-white/10 bg-ink-950 px-3 py-2"
+                  value={assetId}
+                  onChange={(event) => setAssetId(Number(event.target.value))}
+                >
+                  {printableAssets.map((asset) => (
+                    <option key={asset.id} value={asset.id}>
+                      {asset.filename}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  disabled={printBusy || printerId === "" || assetId === ""}
+                  onClick={() => void requestPrint()}
+                  className="rounded-lg bg-accent-500 px-4 py-2 text-sm font-medium text-ink-950 hover:bg-accent-400 disabled:opacity-60"
+                >
+                  {printBusy ? "Queueing…" : "Print"}
+                </button>
+                <Link to="/prints" className="text-sm text-accent-400">
+                  Job queue
+                </Link>
+              </div>
+              {printError ? <p className="mt-3 text-sm text-rose-300">{printError}</p> : null}
+              {printJob ? (
+                <div className="mt-4">
+                  <p className="text-sm text-amber-200">
+                    {printJob.status} · {printJob.progress}%
+                    {printJob.printer_name ? ` · ${printJob.printer_name}` : ""}
+                  </p>
+                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/5">
+                    <div className="h-full rounded-full bg-accent-500" style={{ width: `${printJob.progress}%` }} />
+                  </div>
+                  {printJob.note ? <p className="mt-2 text-xs text-slate-500">{printJob.note}</p> : null}
+                  {printJob.error_message ? <p className="mt-2 text-xs text-rose-300">{printJob.error_message}</p> : null}
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <p className="mt-4 text-sm text-slate-500">Ask an owner or contributor to print from this library.</p>
+          )}
         </div>
       </section>
 

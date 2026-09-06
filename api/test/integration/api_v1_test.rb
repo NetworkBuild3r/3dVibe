@@ -95,14 +95,18 @@ class APIV1Test < ActionDispatch::IntegrationTest
     assert_equal "rejected", other.reload.status
   end
 
-  test "print bridge is a stub" do
-    model = @library.vibe_models.first
+  test "print bridge queues a mock printer job" do
+    model = @library.vibe_models.find_by!(folder_name: "signal-horn")
+    asset = model.assets.find_by!(filename: "horn.stl")
+    printer = @library.printers.create!(name: "CI mock", host: "127.0.0.1", protocol_type: Printer::MOCK)
+
     post "/api/v1/print_jobs",
-         params: { model_id: model.id, printer_hint: "garage-printer" },
+         params: { model_id: model.id, asset_id: asset.id, printer_id: printer.id },
          headers: auth_header(@owner),
          as: :json
     assert_response :accepted
-    assert_equal "unavailable", response.parsed_body.dig("print_job", "status")
+    assert_equal "queued", response.parsed_body.dig("print_job", "status")
+    assert_equal printer.id, response.parsed_body.dig("print_job", "printer_id")
   end
 
   test "friend invite defaults to contributor and can be redeemed" do

@@ -50,10 +50,17 @@ if library.curation_proposals.none?
   end
 end
 
+library.printers.find_or_create_by!(name: "Studio mock") do |printer|
+  printer.host = "127.0.0.1"
+  printer.protocol_type = Printer::MOCK
+  printer.enabled = true
+  printer.notes = "Local stub protocol. Always succeeds in CI/dev. Swap protocol_type to sdcp when a LAN adapter exists."
+end
+
 Invite.find_or_create_by!(library: library, email: "friend@3dvibe.local") do |invite|
   invite.invited_by = owner
   invite.role = Membership::CONTRIBUTOR
   invite.expires_at = 30.days.from_now
 end
 
-puts "Seeded owner #{owner.email} / library #{library.name} (#{library.vibe_models.count} models)"
+puts "Seeded owner #{owner.email} / library #{library.name} (#{library.vibe_models.count} models, #{library.printers.count} printers)"

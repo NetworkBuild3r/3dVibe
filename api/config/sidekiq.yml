@@ -1,6 +1,7 @@
 :concurrency: 5
 :queues:
   - default
+  - print
   - scan
   - previews
   - curation
