@@ -27,7 +27,7 @@ module VibeCurator
       models = Array(data["models"]).map { |model| normalize_model(model, root) }
       models = models_from_root(root) if models.empty?
 
-      {
+      normalized = {
         "library_id" => data["library_id"],
         "library_name" => data["library_name"].to_s,
         "library_root" => root,
@@ -35,6 +35,9 @@ module VibeCurator
         "creators_index" => normalize_creators(data["creators_index"]),
         "models" => models
       }
+      runtime = data["curator_runtime"]
+      normalized["curator_runtime"] = stringify(runtime) if runtime.is_a?(Hash)
+      normalized
     end
 
     def rank_for_inference(models, limit:)

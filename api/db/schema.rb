@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_09_06_180000) do
+ActiveRecord::Schema[8.0].define(version: 2026_09_06_200000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -119,6 +119,17 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_06_180000) do
     t.index ["library_id", "status"], name: "index_curation_proposals_on_library_id_and_status"
     t.index ["library_id"], name: "index_curation_proposals_on_library_id"
     t.index ["reviewed_by_id"], name: "index_curation_proposals_on_reviewed_by_id"
+  end
+
+  create_table "curator_settings", force: :cascade do |t|
+    t.string "provider", default: "stub", null: false
+    t.string "ollama_url"
+    t.string "ollama_model"
+    t.text "xai_api_key"
+    t.integer "singleton_lock", default: 1, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["singleton_lock"], name: "index_curator_settings_on_singleton_lock", unique: true
   end
 
   create_table "duplicate_group_members", force: :cascade do |t|

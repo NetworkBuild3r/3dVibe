@@ -45,6 +45,11 @@ Rails.application.routes.draw do
 
       get :search, to: "search#index"
 
+      resource :curator_settings, only: %i[show update] do
+        put :xai_api_key, action: :update_xai_api_key
+        delete :xai_api_key, action: :destroy_xai_api_key
+      end
+
       resources :curation_proposals, only: %i[index create] do
         post :approve, on: :member
         post :reject, on: :member

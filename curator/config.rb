@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
 # Env-selected curator settings. Rails still chooses the sidecar with
-# VIBE_CURATOR_URL=stub|http://curator:8088; this process only reads
-# VIBE_CURATOR_PROVIDER (and an optional catalog provider_hint).
+# VIBE_CURATOR_URL=stub|http://curator:8088. Provider resolution:
+# catalog curator_runtime (owner UI) → VIBE_CURATOR_PROVIDER → provider_hint → stub.
 module VibeCurator
   KINDS = %w[tag rename move merge organize].freeze
   PROVIDERS = %w[stub ollama xai].freeze
@@ -15,11 +15,43 @@ module VibeCurator
     module_function
 
     def provider_name(catalog = {}, env: ENV)
+      runtime = runtime_from(catalog)
+      runtime_name = normalize_provider(runtime["provider"])
+      return runtime_name if runtime_name
+
       env_name = normalize_provider(env["VIBE_CURATOR_PROVIDER"])
       return env_name if env_name
 
       hint = catalog.is_a?(Hash) ? catalog["provider_hint"] : nil
       normalize_provider(hint) || "stub"
+    end
+
+    # Overlay owner UI runtime onto sidecar ENV. Secrets stay request-scoped.
+    def env_with_runtime(catalog, env)
+      runtime = runtime_from(catalog)
+      return env if runtime.empty?
+
+      merged = env.to_h.transform_keys(&:to_s)
+      if (name = present(runtime["provider"]))
+        merged["VIBE_CURATOR_PROVIDER"] = name
+      end
+      if (url = present(runtime["ollama_url"]))
+        merged["VIBE_OLLAMA_URL"] = url
+      end
+      if (model = present(runtime["ollama_model"]))
+        merged["VIBE_OLLAMA_MODEL"] = model
+      end
+      if (key = present(runtime["xai_api_key"]))
+        merged["XAI_API_KEY"] = key
+      end
+      merged
+    end
+
+    def runtime_from(catalog)
+      return {} unless catalog.is_a?(Hash)
+
+      runtime = catalog["curator_runtime"]
+      runtime.is_a?(Hash) ? runtime.transform_keys(&:to_s) : {}
     end
 
     def batch_size(env: ENV)
