@@ -70,6 +70,7 @@ export type ModelCard = {
   creator?: CreatorRef | null;
   cover_status?: CoverStatus;
   cover_url?: string | null;
+  cover_lqip_url?: string | null;
   cover_placeholder?: boolean;
   // Optional gallery hint. Only render when Backend sets this — do not invent it.
   in_archive?: boolean;
@@ -125,6 +126,7 @@ export type DuplicateMember = {
   folder_name?: string;
   cover_status?: CoverStatus;
   cover_url?: string | null;
+  cover_lqip_url?: string | null;
   cover_placeholder?: boolean;
 };
 
@@ -142,6 +144,7 @@ export type DuplicateAsset = {
   folder_name: string;
   cover_status?: CoverStatus;
   cover_url?: string | null;
+  cover_lqip_url?: string | null;
   cover_placeholder?: boolean;
 };
 

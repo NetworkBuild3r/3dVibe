@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_09_06_210000) do
+ActiveRecord::Schema[8.0].define(version: 2026_09_06_220000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
   enable_extension "pg_trgm"
@@ -64,10 +64,10 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_06_210000) do
     t.bigint "inode"
     t.string "geometry_digest"
     t.index ["content_digest"], name: "index_assets_on_content_digest"
-    t.index ["geometry_digest"], name: "index_assets_on_geometry_digest"
-    t.index ["uploaded_by_id"], name: "index_assets_on_uploaded_by_id"
     t.index ["filename"], name: "index_assets_on_filename_trgm", opclass: :gin_trgm_ops, using: :gin
+    t.index ["geometry_digest"], name: "index_assets_on_geometry_digest"
     t.index ["relative_path"], name: "index_assets_on_relative_path_trgm", opclass: :gin_trgm_ops, using: :gin
+    t.index ["uploaded_by_id"], name: "index_assets_on_uploaded_by_id"
     t.index ["vibe_model_id", "relative_path"], name: "index_assets_on_vibe_model_id_and_relative_path", unique: true
     t.index ["vibe_model_id"], name: "index_assets_on_vibe_model_id"
   end
@@ -393,15 +393,16 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_06_210000) do
     t.boolean "cover_placeholder", default: true, null: false
     t.string "cover_cache_key"
     t.bigint "cover_asset_id"
+    t.string "cover_lqip_url"
     t.index ["cover_cache_key"], name: "index_vibe_models_on_cover_cache_key"
     t.index ["cover_status"], name: "index_vibe_models_on_cover_status"
-    t.index ["folder_name"], name: "index_vibe_models_on_folder_name_trgm", opclass: :gin_trgm_ops, using: :gin
-    t.index ["synopsis"], name: "index_vibe_models_on_synopsis_trgm", opclass: :gin_trgm_ops, using: :gin
-    t.index ["title"], name: "index_vibe_models_on_title_trgm", opclass: :gin_trgm_ops, using: :gin
     t.index ["creator_id"], name: "index_vibe_models_on_creator_id"
+    t.index ["folder_name"], name: "index_vibe_models_on_folder_name_trgm", opclass: :gin_trgm_ops, using: :gin
     t.index ["library_id", "folder_name"], name: "index_vibe_models_on_library_id_and_folder_name", unique: true
     t.index ["library_id", "updated_at", "id"], name: "index_vibe_models_on_library_id_and_updated_at_and_id"
     t.index ["library_id"], name: "index_vibe_models_on_library_id"
+    t.index ["synopsis"], name: "index_vibe_models_on_synopsis_trgm", opclass: :gin_trgm_ops, using: :gin
+    t.index ["title"], name: "index_vibe_models_on_title_trgm", opclass: :gin_trgm_ops, using: :gin
     t.index ["uploaded_by_id"], name: "index_vibe_models_on_uploaded_by_id"
   end
 

@@ -4,10 +4,11 @@ module API
       skip_before_action :authenticate!, only: %i[show writeback]
       before_action :authenticate_writeback!, only: :writeback
 
-      # Generated cover bytes. Filename is "{model_id}.webp" under VIBE_COVER_ROOT.
+      # Generated cover bytes. Filename is "{model_id}.webp" or
+      # "{model_id}.lqip.webp" under VIBE_COVER_ROOT.
       def show
         filename = params[:filename].to_s
-        unless filename.match?(/\A[0-9]+\.webp\z/)
+        unless filename.match?(/\A[0-9]+(?:\.lqip)?\.webp\z/)
           return render json: { error: "not_found" }, status: :not_found
         end
 
@@ -22,7 +23,7 @@ module API
 
       # Internal write-back for the generate worker.
       # POST /api/v1/covers/writeback
-      # { model_id, status: "ready"|"failed", cover_url?, cover_placeholder?, asset_id?, cache_key? }
+      # { model_id, status: "ready"|"failed", cover_url?, cover_lqip_url?, cover_placeholder?, asset_id?, cache_key? }
       def writeback
         model = CoverWriteback.apply!(writeback_params)
         render json: { model: VibeModel.card_payloads([model.reload], viewer: current_user).first }
@@ -31,7 +32,7 @@ module API
       private
 
       def writeback_params
-        params.permit(:model_id, :id, :status, :cover_url, :cover_placeholder, :asset_id, :cache_key)
+        params.permit(:model_id, :id, :status, :cover_url, :cover_lqip_url, :cover_placeholder, :asset_id, :cache_key)
       end
 
       def authenticate_writeback!

@@ -20,7 +20,9 @@ class ScanSettingsTest < ActiveSupport::TestCase
 
     layout = ScanSettings.sidekiq_layout
     assert_equal 5, layout[:default][:concurrency]
-    assert_equal ScanSettings.isolated_queues, layout[:default][:queues]
+    assert_equal ScanSettings.isolated_queues, layout[:default][:queues].map(&:first)
+    assert_equal 2, layout[:default][:queues].assoc("covers").last
+    assert_operator layout[:default][:queues].assoc("default").last, :>, layout[:default][:queues].assoc("covers").last
     assert_equal 1, layout[:scan][:concurrency]
     assert_equal ["scan"], layout[:scan][:queues]
   end

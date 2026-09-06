@@ -116,6 +116,7 @@ class DuplicateGroup < ApplicationRecord
       folder_name: model.folder_name,
       cover_status: model.cover_status,
       cover_url: model.cover_url,
+      cover_lqip_url: model.cover_lqip_url,
       cover_placeholder: model.cover_placeholder
     }
   end
@@ -144,6 +145,7 @@ class DuplicateGroup < ApplicationRecord
       folder_name: model.folder_name,
       cover_status: model.cover_status,
       cover_url: model.cover_url,
+      cover_lqip_url: model.cover_lqip_url,
       cover_placeholder: model.cover_placeholder
     }
   end
@@ -172,6 +174,7 @@ class DuplicateGroup < ApplicationRecord
       folder_name: asset.vibe_model.folder_name,
       cover_status: asset.vibe_model.cover_status,
       cover_url: asset.vibe_model.cover_url,
+      cover_lqip_url: asset.vibe_model.cover_lqip_url,
       cover_placeholder: asset.vibe_model.cover_placeholder
     }
   end

@@ -56,11 +56,18 @@ class GenerateCoverJobTest < ActionDispatch::IntegrationTest
     assert_equal @preview.id, @model.cover_asset_id
 
     dest = @cover_root.join("#{@model.id}.webp")
+    lqip = @cover_root.join("#{@model.id}.lqip.webp")
     assert File.file?(dest), "expected generated cover at #{dest}"
+    assert File.file?(lqip), "expected LQIP thumb at #{lqip}"
+    assert_equal "/covers/#{@model.id}.lqip.webp", @model.cover_lqip_url
     image = Vips::Image.new_from_file(dest.to_s)
     assert image.width <= 512
     assert image.height <= 512
     assert File.size(dest) <= 250_000
+    tiny = Vips::Image.new_from_file(lqip.to_s)
+    assert tiny.width <= 32
+    assert tiny.height <= 32
+    assert File.size(lqip) <= 2_048
   end
 
   test "budget clamp limits pixels and bytes" do
@@ -78,7 +85,7 @@ class GenerateCoverJobTest < ActionDispatch::IntegrationTest
       "jailed_path" => "CreatorPack/model/huge.png",
       "mtime" => 1_710_000_001,
       "content_hash" => "sha256:huge123",
-      "budget" => { "max_px" => 64, "max_bytes" => 8_000 }
+      "budget" => { "max_px" => 64, "max_bytes" => 8_000, "lqip" => { "max_px" => 16, "max_bytes" => 1_200 } }
     )
 
     GenerateCoverJob.perform_now(payload)
@@ -91,6 +98,12 @@ class GenerateCoverJobTest < ActionDispatch::IntegrationTest
     assert image.width <= 64, "width #{image.width} exceeded max_px"
     assert image.height <= 64, "height #{image.height} exceeded max_px"
     assert File.size(dest) <= 8_000, "bytes #{File.size(dest)} exceeded max_bytes"
+    lqip = @cover_root.join("#{@model.id}.lqip.webp")
+    assert File.file?(lqip)
+    tiny = Vips::Image.new_from_file(lqip.to_s)
+    assert tiny.width <= 16
+    assert tiny.height <= 16
+    assert File.size(lqip) <= 1_200
   end
 
   test "jail refusal writes back failed" do
@@ -100,7 +113,9 @@ class GenerateCoverJobTest < ActionDispatch::IntegrationTest
     assert_equal VibeModel::COVER_FAILED, @model.cover_status
     assert_equal true, @model.cover_placeholder
     assert_nil @model.cover_url
+    assert_nil @model.cover_lqip_url
     refute File.file?(@cover_root.join("#{@model.id}.webp"))
+    refute File.file?(@cover_root.join("#{@model.id}.lqip.webp"))
   end
 
   test "mesh without preview writes back failed" do
@@ -111,7 +126,9 @@ class GenerateCoverJobTest < ActionDispatch::IntegrationTest
     assert_equal VibeModel::COVER_FAILED, @model.cover_status
     assert_equal true, @model.cover_placeholder
     assert_nil @model.cover_url
+    assert_nil @model.cover_lqip_url
     refute File.file?(@cover_root.join("#{@model.id}.webp"))
+    refute File.file?(@cover_root.join("#{@model.id}.lqip.webp"))
   end
 
   test "mesh uses a preview sibling under the jail" do
@@ -120,7 +137,9 @@ class GenerateCoverJobTest < ActionDispatch::IntegrationTest
     @model.reload
     assert_equal VibeModel::COVER_READY, @model.cover_status
     assert_equal "/covers/#{@model.id}.webp", @model.cover_url
+    assert_equal "/covers/#{@model.id}.lqip.webp", @model.cover_lqip_url
     assert File.file?(@cover_root.join("#{@model.id}.webp"))
+    assert File.file?(@cover_root.join("#{@model.id}.lqip.webp"))
   end
 
   test "cache key skip does not regenerate a ready cover" do
@@ -143,6 +162,29 @@ class GenerateCoverJobTest < ActionDispatch::IntegrationTest
     assert_response :success
     assert_equal "image/webp", response.media_type
     assert response.body.bytesize.positive?
+
+    get "/covers/#{@model.id}.lqip.webp"
+    assert_response :success
+    assert_equal "image/webp", response.media_type
+    assert response.body.bytesize.positive?
+    assert response.body.bytesize < @cover_root.join("#{@model.id}.webp").size
+  end
+
+  test "lqip budget cannot exceed the cover budget" do
+    GenerateCoverJob.perform_now(
+      image_payload.merge(
+        "budget" => {
+          "max_px" => 48,
+          "max_bytes" => 12_000,
+          "lqip" => { "max_px" => 512, "max_bytes" => 250_000 }
+        }
+      )
+    )
+    @model.reload
+    assert_equal VibeModel::COVER_READY, @model.cover_status
+    tiny = Vips::Image.new_from_file(@cover_root.join("#{@model.id}.lqip.webp").to_s)
+    assert tiny.width <= 48
+    assert tiny.height <= 48
   end
 
   private

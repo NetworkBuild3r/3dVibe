@@ -67,6 +67,7 @@ class CreatorsAndCoversTest < ActionDispatch::IntegrationTest
     assert_equal "Mz4250", card.dig("creator", "name")
     assert_equal VibeModel::COVER_PENDING, card["cover_status"]
     assert_nil card["cover_url"]
+    assert_nil card["cover_lqip_url"]
     assert_equal true, card["cover_placeholder"]
 
     get "/api/v1/models", headers: headers
@@ -75,6 +76,7 @@ class CreatorsAndCoversTest < ActionDispatch::IntegrationTest
     assert listed["creator"].is_a?(Hash)
     assert listed.key?("cover_status")
     assert listed.key?("cover_url")
+    assert listed.key?("cover_lqip_url")
     assert listed.key?("cover_placeholder")
   end
 
@@ -124,6 +126,7 @@ class CreatorsAndCoversTest < ActionDispatch::IntegrationTest
            asset_id: cover.id,
            status: "ready",
            cover_url: "/covers/dragon.webp",
+           cover_lqip_url: "/covers/dragon.lqip.webp",
            cover_placeholder: false,
            cache_key: dragon.cover_cache_key
          },
@@ -133,6 +136,7 @@ class CreatorsAndCoversTest < ActionDispatch::IntegrationTest
     body = response.parsed_body.fetch("model")
     assert_equal VibeModel::COVER_READY, body["cover_status"]
     assert_equal "/covers/dragon.webp", body["cover_url"]
+    assert_equal "/covers/dragon.lqip.webp", body["cover_lqip_url"]
     assert_equal false, body["cover_placeholder"]
     assert_equal VibeModel::COVER_READY, dragon.reload.cover_status
 
@@ -143,6 +147,7 @@ class CreatorsAndCoversTest < ActionDispatch::IntegrationTest
     assert_response :success
     assert_equal VibeModel::COVER_FAILED, dragon.reload.cover_status
     assert_equal true, dragon.cover_placeholder
+    assert_nil dragon.cover_lqip_url
   end
 
   test "cover writeback accepts the shared cover token" do
