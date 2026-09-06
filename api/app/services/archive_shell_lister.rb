@@ -42,7 +42,15 @@ class ArchiveShellLister
     self.class.parse_slt(list_slt).each { |entry| yield entry }
   end
 
-  def extract_member(internal_path, destination, max_bytes:)
+  def extract_member(internal_path, destination, max_bytes:, max_seconds: nil)
+    stream_member(internal_path, max_bytes: max_bytes, max_seconds: max_seconds) do |chunk|
+      destination.write(chunk)
+    end
+  end
+
+  # Yield 64 KiB chunks of one member. Kills `7z e -so` if the caller stops
+  # iterating (HTTP abort / SPA navigate-away) or a budget trips.
+  def stream_member(internal_path, max_bytes:, max_seconds: nil)
     bin = self.class.binary
     raise Error, "7z is not available" unless bin
 
@@ -50,17 +58,21 @@ class ArchiveShellLister
       stdin.close
       copied = 0
       buffer = String.new(capacity: ArchiveIndexer::CHUNK)
-      while (chunk = stdout.read(ArchiveIndexer::CHUNK, buffer))
-        copied += chunk.bytesize
-        if copied > max_bytes
-          stdout.close
-          raise ArgumentError, "Refusing to load oversized member"
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      begin
+        while (chunk = stdout.read(ArchiveIndexer::CHUNK, buffer))
+          copied += chunk.bytesize
+          raise ArgumentError, "Refusing to load oversized member" if copied > max_bytes
+          raise ArgumentError, "Archive member stream timed out" if timed_out?(started, max_seconds)
+
+          yield chunk.dup
         end
-        destination.write(chunk)
+        status = wait.value
+        err = stderr.read
+        raise Error, err.presence || "7z extract failed" unless status.success?
+      ensure
+        finish_process(wait, stdout, stderr)
       end
-      status = wait.value
-      err = stderr.read
-      raise Error, err.presence || "7z extract failed" unless status.success?
     end
   end
 
@@ -98,6 +110,31 @@ class ArchiveShellLister
   end
 
   private
+
+  def timed_out?(started, max_seconds)
+    limit = max_seconds.to_i
+    return false if limit <= 0
+
+    Process.clock_gettime(Process::CLOCK_MONOTONIC) - started > limit
+  end
+
+  def finish_process(wait, stdout, stderr)
+    [stdout, stderr].each do |io|
+      io.close unless io.closed?
+    rescue IOError
+      nil
+    end
+    if wait.alive?
+      begin
+        Process.kill("TERM", wait.pid)
+      rescue Errno::ESRCH, Errno::ECHILD
+        nil
+      end
+    end
+    wait.join(2)
+  rescue StandardError
+    nil
+  end
 
   def list_slt
     bin = self.class.binary

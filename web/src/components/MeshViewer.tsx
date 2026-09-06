@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { fetchAuthedBlob } from "../api";
+import { fetchAuthedBlob, isAbortError } from "../api";
 
 type Props = {
   url: string;
@@ -15,13 +15,14 @@ export function MeshViewer({ url, label }: Props) {
     let disposed = false;
     let renderer: { dispose: () => void; forceContextLoss?: () => void } | null = null;
     let frame = 0;
+    const abort = new AbortController();
 
     async function mount() {
       const [{ WebGLRenderer, Scene, PerspectiveCamera, Color, DirectionalLight, AmbientLight, GridHelper }, { STLLoader }, { OrbitControls }] =
         await Promise.all([import("three"), import("three/examples/jsm/loaders/STLLoader.js"), import("three/examples/jsm/controls/OrbitControls.js")]);
 
       if (!host.current || disposed) return;
-      const blob = await fetchAuthedBlob(url);
+      const blob = await fetchAuthedBlob(url, { signal: abort.signal });
       const buffer = await blob.arrayBuffer();
       const geometry = new STLLoader().parse(buffer);
       geometry.computeVertexNormals();
@@ -59,11 +60,13 @@ export function MeshViewer({ url, label }: Props) {
     }
 
     mount().catch((err) => {
+      if (disposed || isAbortError(err)) return;
       setError(err instanceof Error ? err.message : "Viewer failed");
     });
 
     return () => {
       disposed = true;
+      abort.abort();
       cancelAnimationFrame(frame);
       renderer?.dispose();
     };
