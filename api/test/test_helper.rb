@@ -9,6 +9,7 @@ module ActiveSupport
     setup do
       SearchIndexBuffer.reset!
       MeilisearchClient.reset_health_cache!
+      CoverPacer.reset!
     end
 
     def fixture_library_root
