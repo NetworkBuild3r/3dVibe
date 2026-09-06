@@ -25,7 +25,8 @@ module VibeCurator
       code = response_code(response)
       raw = response_body(response)
       unless code.between?(200, 299)
-        raise Error.new("provider HTTP #{code}: #{raw.to_s[0, 240]}", status: 502, code: "provider_http")
+        snippet = redact(raw.to_s[0, 240])
+        raise Error.new("provider HTTP #{code}: #{snippet}", status: 502, code: "provider_http")
       end
 
       parsed = JSON.parse(raw.to_s.empty? ? "{}" : raw)
@@ -90,6 +91,12 @@ module VibeCurator
       else
         ""
       end
+    end
+
+    def redact(text)
+      return text.to_s if @api_key.empty?
+
+      text.to_s.gsub(@api_key, "[filtered]")
     end
 
     def extract_content(parsed)

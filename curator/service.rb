@@ -36,9 +36,8 @@ module VibeCurator
 
     def proposals(payload:, query: {}, env: ENV, transport: nil)
       catalog = Catalog.normalize(payload, query: query, env: env)
-      env = Config.env_with_runtime(catalog, env)
-      provider_name = Config.provider_name(catalog, env: env)
-      catalog = catalog.except("curator_runtime")
+      provider_name, env = Config.resolve(catalog, env: env)
+      catalog = Config.scrub_catalog(catalog)
       provider = Providers.build(provider_name, env: env, transport: transport)
       raw = provider.propose(catalog)
       items = ProposalBatch.normalize(
@@ -91,7 +90,9 @@ module VibeCurator
         error(404, "not_found")
       end
     rescue Error => e
-      error(e.status, e.code, e.message)
+      scoped = env
+      scoped = Config.env_with_runtime(parse_json(body), env) if path == "/proposals"
+      error(e.status, e.code, Config.redact(e.message, scoped))
     end
 
     def proposals(method, headers, body, query, env, transport)

@@ -1,8 +1,13 @@
 # frozen_string_literal: true
 
-# Env-selected curator settings. Rails still chooses the sidecar with
-# VIBE_CURATOR_URL=stub|http://curator:8088. Provider resolution:
-# catalog curator_runtime (owner UI) → VIBE_CURATOR_PROVIDER → provider_hint → stub.
+# Sidecar settings. Rails still chooses the process with VIBE_CURATOR_URL
+# (stub | http://curator:8088). Adapter resolution is request-scoped:
+#
+#   curator_runtime (Rails #23 POST /proposals) field → process ENV →
+#   catalog provider_hint → stub
+#
+# Incomplete runtime falls back field-by-field. Process ENV is never mutated.
+# Stub never requires a key; secrets are dropped from the request-scoped env.
 module VibeCurator
   KINDS = %w[tag rename move merge organize].freeze
   PROVIDERS = %w[stub ollama xai].freeze
@@ -10,9 +15,20 @@ module VibeCurator
   MAX_BATCH_SIZE = 50
   DEFAULT_CATALOG_LIMIT = 80
   DEFAULT_INFER_TIMEOUT = 60
+  # Shape injected by Rails CuratorRuntime.for_sidecar (PR #23). GET /proposals
+  # must not carry these on the query string.
+  RUNTIME_FIELDS = %w[provider ollama_url ollama_model xai_api_key].freeze
+  SECRET_ENV_KEYS = %w[XAI_API_KEY VIBE_XAI_API_KEY VIBE_OLLAMA_API_KEY].freeze
 
   module Config
     module_function
+
+    def resolve(catalog = {}, env: ENV)
+      scoped = env_with_runtime(catalog, env)
+      name = provider_name(catalog, env: scoped)
+      scoped = strip_secrets(scoped) if name == "stub"
+      [name, scoped]
+    end
 
     def provider_name(catalog = {}, env: ENV)
       runtime = runtime_from(catalog)
@@ -26,12 +42,13 @@ module VibeCurator
       normalize_provider(hint) || "stub"
     end
 
-    # Overlay owner UI runtime onto sidecar ENV. Secrets stay request-scoped.
+    # Overlay owner UI runtime onto a copy of sidecar ENV. Secrets stay
+    # request-scoped. Blank / null runtime fields leave the env value in place.
     def env_with_runtime(catalog, env)
+      merged = stringify_env(env)
       runtime = runtime_from(catalog)
-      return env if runtime.empty?
+      return merged if runtime.empty?
 
-      merged = env.to_h.transform_keys(&:to_s)
       if (name = present(runtime["provider"]))
         merged["VIBE_CURATOR_PROVIDER"] = name
       end
@@ -50,8 +67,27 @@ module VibeCurator
     def runtime_from(catalog)
       return {} unless catalog.is_a?(Hash)
 
-      runtime = catalog["curator_runtime"]
+      runtime = catalog["curator_runtime"] || catalog[:curator_runtime]
       runtime.is_a?(Hash) ? runtime.transform_keys(&:to_s) : {}
+    end
+
+    def scrub_catalog(catalog)
+      return {} unless catalog.is_a?(Hash)
+
+      catalog.transform_keys(&:to_s).except("curator_runtime")
+    end
+
+    def strip_secrets(env)
+      stringify_env(env).except(*SECRET_ENV_KEYS)
+    end
+
+    def redact(text, env)
+      secrets = SECRET_ENV_KEYS.filter_map { |key| present(env[key]) }
+      secrets.reduce(text.to_s) { |acc, secret| acc.gsub(secret, "[filtered]") }
+    end
+
+    def stringify_env(env)
+      env.to_h.transform_keys(&:to_s)
     end
 
     def batch_size(env: ENV)

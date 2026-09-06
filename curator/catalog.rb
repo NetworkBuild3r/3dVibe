@@ -35,6 +35,7 @@ module VibeCurator
         "creators_index" => normalize_creators(data["creators_index"]),
         "models" => models
       }
+      # POST body only. Never copy curator_runtime from the query string.
       runtime = data["curator_runtime"]
       normalized["curator_runtime"] = stringify(runtime) if runtime.is_a?(Hash)
       normalized
