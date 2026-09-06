@@ -19,6 +19,12 @@ export function Layout() {
               <NavLink to="/" className={link} end>
                 Library
               </NavLink>
+              <NavLink to="/shelves" className={link}>
+                Shelves
+              </NavLink>
+              <NavLink to="/duplicates" className={link}>
+                Duplicates
+              </NavLink>
               {user?.can_upload ? (
                 <NavLink to="/upload" className={link}>
                   Upload

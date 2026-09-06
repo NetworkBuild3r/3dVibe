@@ -24,7 +24,7 @@ module API
           estimated_total: result.estimated_total,
           next_offset: result.next_offset,
           facets: result.facets,
-          models: result.models.map(&:as_card)
+          models: VibeModel.card_payloads(result.models, viewer: current_user)
         }
       end
 

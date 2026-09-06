@@ -88,27 +88,76 @@ class PrinterBridgeTest < ActionDispatch::IntegrationTest
     assert_includes owner_names, "Hidden"
   end
 
-  test "owner contributor and viewer can queue a mock print that succeeds" do
-    [@owner, @contributor, @viewer].each do |user|
-      job_id = nil
-      perform_enqueued_jobs only: DispatchPrintJob do
+  test "only the library owner can queue a mock print that succeeds" do
+    job_id = nil
+    perform_enqueued_jobs only: DispatchPrintJob do
+      post "/api/v1/print_jobs",
+           params: { model_id: @model.id, asset_id: @asset.id, printer_id: @printer.id },
+           headers: auth_header(@owner),
+           as: :json
+      assert_response :accepted
+      assert_equal PrintDispatch::QUEUED, response.parsed_body.dig("print_job", "status")
+      job_id = response.parsed_body.dig("print_job", "id")
+    end
+
+    get "/api/v1/print_jobs/#{job_id}", headers: auth_header(@owner)
+    assert_response :success
+    body = response.parsed_body.fetch("print_job")
+    assert_equal PrintDispatch::SUCCEEDED, body["status"]
+    assert_equal 100, body["progress"]
+    assert_equal "horn.stl", body["filename"]
+    assert body["remote_ref"].to_s.start_with?("mock-")
+  end
+
+  test "contributor and viewer cannot enqueue a print job" do
+    [@contributor, @viewer].each do |user|
+      assert_no_enqueued_jobs only: DispatchPrintJob do
         post "/api/v1/print_jobs",
              params: { model_id: @model.id, asset_id: @asset.id, printer_id: @printer.id },
              headers: auth_header(user),
              as: :json
-        assert_response :accepted
-        assert_equal PrintDispatch::QUEUED, response.parsed_body.dig("print_job", "status")
-        job_id = response.parsed_body.dig("print_job", "id")
       end
-
-      get "/api/v1/print_jobs/#{job_id}", headers: auth_header(user)
-      assert_response :success
-      body = response.parsed_body.fetch("print_job")
-      assert_equal PrintDispatch::SUCCEEDED, body["status"]
-      assert_equal 100, body["progress"]
-      assert_equal "horn.stl", body["filename"]
-      assert body["remote_ref"].to_s.start_with?("mock-")
+      assert_response :forbidden
     end
+    assert_equal 0, PrintDispatch.count
+  end
+
+  test "print history is private to the requester" do
+    job = PrintDispatch.create!(
+      library: @library,
+      printer: @printer,
+      vibe_model: @model,
+      asset: @asset,
+      requested_by: @owner,
+      status: PrintDispatch::SUCCEEDED,
+      filename: @asset.filename
+    )
+    other = PrintDispatch.create!(
+      library: @library,
+      printer: @printer,
+      vibe_model: @model,
+      asset: @asset,
+      requested_by: @contributor,
+      status: PrintDispatch::SUCCEEDED,
+      filename: @asset.filename
+    )
+
+    get "/api/v1/print_jobs", headers: auth_header(@owner)
+    assert_response :success
+    ids = response.parsed_body.fetch("print_jobs").map { |row| row["id"] }
+    assert_includes ids, job.id
+    refute_includes ids, other.id
+
+    get "/api/v1/print_jobs/#{other.id}", headers: auth_header(@owner)
+    assert_response :not_found
+
+    get "/api/v1/print_jobs", headers: auth_header(@contributor)
+    assert_response :success
+    contrib_ids = response.parsed_body.fetch("print_jobs").map { |row| row["id"] }
+    assert_equal [other.id], contrib_ids
+
+    post "/api/v1/print_jobs/#{job.id}/cancel", headers: auth_header(@contributor), as: :json
+    assert_response :not_found
   end
 
   test "disabled printer is rejected without talking to an adapter" do
@@ -176,8 +225,14 @@ class PrinterBridgeTest < ActionDispatch::IntegrationTest
 
     get "/api/v1/me", headers: auth_header(@viewer)
     assert_response :success
-    assert response.parsed_body.dig("user", "can_print")
+    refute response.parsed_body.dig("user", "can_print")
+    refute response.parsed_body.dig("user", "can_merge")
     refute response.parsed_body.dig("user", "can_manage_printers")
     refute response.parsed_body.dig("user", "can_upload")
+
+    get "/api/v1/me", headers: auth_header(@contributor)
+    assert_response :success
+    refute response.parsed_body.dig("user", "can_print")
+    assert response.parsed_body.dig("user", "can_merge")
   end
 end

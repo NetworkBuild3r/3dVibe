@@ -11,6 +11,8 @@ import { PrintersPage } from "./pages/PrintersPage";
 import { PrintsPage } from "./pages/PrintsPage";
 import { RedeemPage } from "./pages/RedeemPage";
 import { UploadPage } from "./pages/UploadPage";
+import { BookmarksPage } from "./pages/BookmarksPage";
+import { DuplicatesPage } from "./pages/DuplicatesPage";
 
 function Guard({ children }: { children: React.ReactNode }) {
   const { user, ready } = useAuth();
@@ -47,6 +49,8 @@ export default function App() {
       >
         <Route path="/" element={<GalleryPage />} />
         <Route path="/models/:id" element={<ModelPage />} />
+        <Route path="/shelves" element={<BookmarksPage />} />
+        <Route path="/duplicates" element={<DuplicatesPage />} />
         <Route path="/curation" element={<CurationPage />} />
         <Route path="/prints" element={<PrintsPage />} />
         <Route

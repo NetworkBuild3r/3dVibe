@@ -15,6 +15,7 @@ export type User = {
   can_upload: boolean;
   can_curate: boolean;
   can_print: boolean;
+  can_merge?: boolean;
   can_manage_printers: boolean;
   can_manage_libraries?: boolean;
   libraries: MembershipInfo[];
@@ -38,6 +39,55 @@ export type ModelCard = {
   updated_at: string;
   uploaded_by?: Author | null;
   has_preview?: boolean;
+  liked?: boolean;
+  like_count?: number;
+  bookmark_folder_ids?: number[];
+  merged?: boolean;
+};
+
+export type BookmarkFolder = {
+  id: number;
+  name: string;
+  position: number;
+  bookmark_count: number;
+  models?: ModelCard[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type ModelMerge = {
+  id: number;
+  library_id: number;
+  target_model_id: number;
+  target_title?: string;
+  kind: string;
+  parts: Array<Record<string, unknown>>;
+  result: Record<string, unknown>;
+  split_at: string | null;
+  performed_by?: Author | null;
+  created_at: string;
+};
+
+export type DuplicateAsset = {
+  id: number;
+  filename: string;
+  relative_path: string;
+  kind: string;
+  byte_size: number;
+  content_digest: string | null;
+  model_id: number;
+  model_title: string;
+  folder_name: string;
+};
+
+export type DuplicateGroup = {
+  id: string;
+  reason: string;
+  confidence: string;
+  digest: string | null;
+  filename: string;
+  byte_size: number;
+  assets: DuplicateAsset[];
 };
 
 export type Asset = {
@@ -58,6 +108,7 @@ export type Asset = {
 export type ModelDetail = ModelCard & {
   folder_mtime: string | null;
   assets: Asset[];
+  merges?: ModelMerge[];
 };
 
 export type ArchiveMember = {
@@ -262,6 +313,7 @@ export type LibraryInfo = {
   role: string;
   can_upload: boolean;
   can_print: boolean;
+  can_merge?: boolean;
   can_manage_printers: boolean;
   can_scan?: boolean;
   scan?: ScanStatus;
@@ -329,6 +381,47 @@ export const api = {
     return request<{ models: ModelCard[]; next_cursor: number | null }>(`/models?${params}`);
   },
   model: (id: string | number) => request<{ model: ModelDetail }>(`/models/${id}`),
+  likeModel: (id: number) => request<{ model: ModelDetail; liked: boolean }>(`/models/${id}/like`, { method: "POST" }),
+  unlikeModel: (id: number) => request<{ model: ModelDetail; liked: boolean }>(`/models/${id}/like`, { method: "DELETE" }),
+  likes: () => request<{ models: ModelCard[] }>("/likes"),
+  bookmarkFolders: () => request<{ bookmark_folders: BookmarkFolder[] }>("/bookmark_folders"),
+  bookmarkFolder: (id: number) => request<{ bookmark_folder: BookmarkFolder }>(`/bookmark_folders/${id}`),
+  createBookmarkFolder: (name: string) =>
+    request<{ bookmark_folder: BookmarkFolder }>("/bookmark_folders", {
+      method: "POST",
+      body: JSON.stringify({ name })
+    }),
+  deleteBookmarkFolder: (id: number) => request<void>(`/bookmark_folders/${id}`, { method: "DELETE" }),
+  addBookmark: (folderId: number, modelId: number) =>
+    request<{ bookmark: { id: number; model_id: number; bookmark_folder_id: number }; model: ModelCard }>(
+      `/bookmark_folders/${folderId}/bookmarks`,
+      { method: "POST", body: JSON.stringify({ model_id: modelId }) }
+    ),
+  removeBookmark: (folderId: number, modelId: number) =>
+    request<{ model: ModelCard }>(`/bookmark_folders/${folderId}/bookmarks/${modelId}`, { method: "DELETE" }),
+  mergeModels: (payload: {
+    library_id: number;
+    source_ids?: number[];
+    asset_ids?: number[];
+    target_id?: number;
+    title?: string;
+    folder_name?: string;
+  }) =>
+    request<{ merge: ModelMerge; model: ModelDetail }>("/models/merge", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  splitModel: (id: number, mergeId?: number) =>
+    request<{ merge: ModelMerge; models: ModelCard[] }>(`/models/${id}/split`, {
+      method: "POST",
+      body: JSON.stringify(mergeId ? { merge_id: mergeId } : {})
+    }),
+  duplicates: (libraryId?: number) => {
+    const params = new URLSearchParams();
+    if (libraryId) params.set("library_id", String(libraryId));
+    const suffix = params.toString() ? `?${params}` : "";
+    return request<{ library_id: number; group_count: number; groups: DuplicateGroup[] }>(`/duplicates${suffix}`);
+  },
   archiveMembers: (
     modelId: string | number,
     options: {

@@ -342,7 +342,7 @@ class LibraryScanner
   end
 
   def digest_if_small(path, size)
-    return if size > 8.megabytes
+    return if size > 32.megabytes
 
     Digest::SHA256.file(path).hexdigest
   end

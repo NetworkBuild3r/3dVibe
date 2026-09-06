@@ -6,6 +6,10 @@ class User < ApplicationRecord
   has_many :libraries, through: :memberships
   has_many :invites_sent, class_name: "Invite", foreign_key: :invited_by_id, inverse_of: :invited_by, dependent: :nullify
   has_many :library_uploads, foreign_key: :uploaded_by_id, inverse_of: :uploaded_by, dependent: :destroy
+  has_many :likes, dependent: :destroy
+  has_many :bookmark_folders, dependent: :destroy
+  has_many :bookmarks, dependent: :destroy
+  has_many :model_merges, foreign_key: :performed_by_id, inverse_of: :performed_by, dependent: :nullify
 
   validates :email, presence: true, uniqueness: { case_sensitive: false }
   validates :display_name, presence: true
@@ -37,11 +41,19 @@ class User < ApplicationRecord
   end
 
   def can_print?(library)
-    member_of?(library)
+    owner_of?(library)
   end
 
   def can_print_anywhere?
-    memberships.exists?
+    owner_anywhere?
+  end
+
+  def can_merge?(library)
+    can_curate?(library)
+  end
+
+  def can_merge_anywhere?
+    can_curate_anywhere?
   end
 
   def can_manage_printers?(library)
@@ -70,6 +82,7 @@ class User < ApplicationRecord
       can_upload: can_upload_anywhere?,
       can_curate: can_curate_anywhere?,
       can_print: can_print_anywhere?,
+      can_merge: can_merge_anywhere?,
       can_manage_printers: owner_anywhere?,
       can_manage_libraries: owner_anywhere?,
       libraries: memberships.includes(:library).map do |membership|

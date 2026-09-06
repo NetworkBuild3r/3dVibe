@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, type ArchiveMember, type ModelDetail, type Printer, type PrintJob } from "../api";
+import { api, type ArchiveMember, type BookmarkFolder, type ModelDetail, type Printer, type PrintJob } from "../api";
 import { ArchivePanel } from "../components/ArchivePanel";
 import { ImageViewer } from "../components/ImageViewer";
 import { MeshViewer } from "../components/MeshViewer";
@@ -25,6 +25,10 @@ export function ModelPage() {
   const [printJob, setPrintJob] = useState<PrintJob | null>(null);
   const [printError, setPrintError] = useState<string | null>(null);
   const [printBusy, setPrintBusy] = useState(false);
+  const [folders, setFolders] = useState<BookmarkFolder[]>([]);
+  const [selectedAssets, setSelectedAssets] = useState<number[]>([]);
+  const [mergeTitle, setMergeTitle] = useState("");
+  const [organizeStatus, setOrganizeStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -39,6 +43,13 @@ export function ModelPage() {
   const printableAssets = useMemo(() => model?.assets.filter((asset) => !asset.archive) || [], [model]);
   const enabledPrinters = useMemo(() => printers.filter((printer) => printer.enabled), [printers]);
   const archiveAssets = useMemo(() => model?.assets.filter((asset) => asset.archive) || [], [model]);
+
+  useEffect(() => {
+    api
+      .bookmarkFolders()
+      .then((payload) => setFolders(payload.bookmark_folders))
+      .catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     api
@@ -82,6 +93,53 @@ export function ModelPage() {
     }
   }
 
+  const activeMerge = model?.merges?.find((merge) => !merge.split_at);
+
+  async function toggleLike() {
+    if (!model) return;
+    const payload = model.liked ? await api.unlikeModel(model.id) : await api.likeModel(model.id);
+    setModel(payload.model);
+  }
+
+  async function bookmarkTo(folderId: number) {
+    if (!model) return;
+    const payload = await api.addBookmark(folderId, model.id);
+    setModel({ ...model, ...payload.model });
+  }
+
+  async function splitMerge() {
+    if (!model || !activeMerge) return;
+    setOrganizeStatus("Splitting…");
+    try {
+      await api.splitModel(model.id, activeMerge.id);
+      const payload = await api.model(model.id);
+      setModel(payload.model);
+      setOrganizeStatus("Split complete — source folders are first-level again.");
+    } catch (err) {
+      setOrganizeStatus(err instanceof Error ? err.message : "Split failed");
+    }
+  }
+
+  function toggleAsset(id: number) {
+    setSelectedAssets((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
+  }
+
+  async function mergeAssets() {
+    if (!model || selectedAssets.length < 1) return;
+    setOrganizeStatus("Merging files…");
+    try {
+      const payload = await api.mergeModels({
+        library_id: model.library_id,
+        asset_ids: selectedAssets,
+        title: mergeTitle || `${model.title} selection`
+      });
+      setOrganizeStatus(`Moved into ${payload.model.title}`);
+      setSelectedAssets([]);
+    } catch (err) {
+      setOrganizeStatus(err instanceof Error ? err.message : "Merge failed");
+    }
+  }
+
   function openArchiveMesh(member: ArchiveMember) {
     if (!member.id) return;
     setViewer({ kind: "mesh", url: api.archiveMemberContentUrl(member.id), label: member.name || member.internal_path });
@@ -119,6 +177,44 @@ export function ModelPage() {
             </span>
           ))}
         </div>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            className={`rounded-full px-3 py-1 text-sm ${model.liked ? "bg-rose-500/15 text-rose-300" : "bg-white/5 text-slate-300"}`}
+            onClick={() => void toggleLike()}
+          >
+            {model.liked ? "Liked" : "Like"} · {model.like_count || 0}
+          </button>
+          {folders.length ? (
+            <select
+              className="rounded-lg border border-white/10 bg-ink-950 px-3 py-1.5 text-sm"
+              defaultValue=""
+              onChange={(event) => {
+                const folderId = Number(event.target.value);
+                if (folderId) void bookmarkTo(folderId);
+                event.target.value = "";
+              }}
+            >
+              <option value="">Save to shelf…</option>
+              {folders.map((folder) => (
+                <option key={folder.id} value={folder.id}>
+                  {folder.name}
+                  {model.bookmark_folder_ids?.includes(folder.id) ? " ✓" : ""}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <Link to="/shelves" className="text-sm text-accent-400">
+              Create a shelf
+            </Link>
+          )}
+          {activeMerge && user?.can_merge ? (
+            <button type="button" className="text-sm text-amber-200" onClick={() => void splitMerge()}>
+              Split last merge
+            </button>
+          ) : null}
+        </div>
+        {organizeStatus ? <p className="mt-2 text-sm text-accent-300">{organizeStatus}</p> : null}
       </div>
 
       <section className="grid gap-6 lg:grid-cols-2">
@@ -213,23 +309,51 @@ export function ModelPage() {
               ) : null}
             </>
           ) : (
-            <p className="mt-4 text-sm text-slate-500">Ask an owner or contributor to print from this library.</p>
+            <p className="mt-4 text-sm text-slate-500">
+              Only the library owner can send a job to a printer. Contributors and viewers can still share into this
+              catalog.
+            </p>
           )}
         </div>
       </section>
 
       <section className="rounded-2xl border border-white/10 bg-ink-900/70 p-4">
-        <h2 className="font-display text-xl">Files</h2>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="font-display text-xl">Files</h2>
+          {user?.can_merge && selectedAssets.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                value={mergeTitle}
+                onChange={(event) => setMergeTitle(event.target.value)}
+                placeholder="New model title"
+                className="rounded-lg border border-white/10 bg-ink-950 px-3 py-1.5 text-sm"
+              />
+              <button type="button" className="text-sm text-accent-300" onClick={() => void mergeAssets()}>
+                Merge selected into one model
+              </button>
+            </div>
+          ) : null}
+        </div>
         <ul className="mt-3 divide-y divide-white/5">
           {model.assets.map((asset) => (
             <li key={asset.id} className="flex items-center justify-between gap-3 py-2 text-sm">
-              <div>
+              <div className="flex items-start gap-2">
+                {user?.can_merge ? (
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={selectedAssets.includes(asset.id)}
+                    onChange={() => toggleAsset(asset.id)}
+                  />
+                ) : null}
+                <div>
                 <p className="text-slate-100">{asset.filename}</p>
                 <p className="text-xs text-slate-500">
                   {asset.kind} · {formatBytes(asset.byte_size)}
                   {asset.archive ? ` · ${asset.archive_member_count} members` : ""}
                   {asset.archive_truncated ? " · index truncated" : ""}
                 </p>
+                </div>
               </div>
               {asset.mesh && asset.kind === "stl" ? (
                 <button
