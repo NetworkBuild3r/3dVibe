@@ -1,6 +1,6 @@
-# Fingerprint hook for Rendering. Stub: path-jails the mesh and no-ops when
-# geometry_digest is still blank. Rendering should compute a stable mesh
-# digest and write it via GeometryWriteback.apply! or POST /geometry/writeback.
+# Path-jailed mesh fingerprint. Writes assets.geometry_digest via
+# GeometryWriteback.apply! so DuplicateAnalyzer can cluster geometry groups.
+# Skips / times out huge meshes without slurping archives.
 class ComputeGeometryDigestJob < ApplicationJob
   queue_as :duplicates
 
@@ -15,7 +15,7 @@ class ComputeGeometryDigestJob < ApplicationJob
     if digest.present?
       GeometryWriteback.apply!(asset_id: asset.id, geometry_digest: digest)
     else
-      Rails.logger.info("[ComputeGeometryDigestJob] skip asset=#{asset.id} (digest blank; Rendering hook is a stub)")
+      Rails.logger.info("[ComputeGeometryDigestJob] skip asset=#{asset.id} (digest blank)")
     end
   end
 end

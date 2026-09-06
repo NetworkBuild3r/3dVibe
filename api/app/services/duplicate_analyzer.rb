@@ -15,6 +15,7 @@ class DuplicateAnalyzer
   end
 
   def call
+    fingerprint_pending_meshes!
     finder = DuplicateFinder.new(@library, budget: @budget)
     persist!(finder.clusters)
     enqueue_geometry_jobs(finder.mesh_missing_geometry)
@@ -91,6 +92,27 @@ class DuplicateAnalyzer
       member.vibe_model_id = asset.vibe_model_id
       member.save!
     end
+  end
+
+  def fingerprint_pending_meshes!
+    started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    processed = 0
+    pending_meshes.find_each do |asset|
+      break if GeometrySettings.max_assets.positive? && processed >= GeometrySettings.max_assets
+      break if GeometrySettings.max_seconds.positive? &&
+        (Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) >= GeometrySettings.max_seconds
+
+      digest = GeometryFingerprint.compute(asset)
+      GeometryWriteback.apply!(asset_id: asset.id, geometry_digest: digest) if digest.present?
+      processed += 1
+    end
+  end
+
+  def pending_meshes
+    Asset.joins(:vibe_model)
+         .where(vibe_models: { library_id: @library.id }, kind: GeometryFingerprint::KINDS)
+         .where(geometry_digest: [nil, ""])
+         .order(:id)
   end
 
   def enqueue_geometry_jobs(assets)

@@ -1,6 +1,6 @@
 # On-demand duplicate clustering. Not run on every NFS poll.
-# Streams SHA-256 for size-prefiltered candidates, upserts open groups,
-# and enqueues ComputeGeometryDigestJob for mesh assets missing a digest.
+# Fingerprints pending stl/obj/3mf meshes, streams SHA-256 for size-prefiltered
+# candidates, upserts open groups, and enqueues leftover geometry jobs.
 class AnalyzeDuplicatesJob < ApplicationJob
   queue_as :duplicates
 

@@ -86,7 +86,10 @@ class DuplicateGroup < ApplicationRecord
       geometry_digest: asset.geometry_digest,
       model_id: asset.vibe_model_id,
       model_title: asset.vibe_model.title,
-      folder_name: asset.vibe_model.folder_name
+      folder_name: asset.vibe_model.folder_name,
+      cover_status: asset.vibe_model.cover_status,
+      cover_url: asset.vibe_model.cover_url,
+      cover_placeholder: asset.vibe_model.cover_placeholder
     }
   end
 end
