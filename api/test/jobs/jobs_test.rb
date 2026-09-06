@@ -47,6 +47,7 @@ class JobsTest < ActiveJob::TestCase
       ApplyCurationProposalJob.perform_now(pending.id)
       ApplyCurationProposalJob.perform_now(approved.id)
     end
+    assert_equal VibeModel::COVER_FAILED, model.reload.cover_status
     refute pending.reload.applied?
     assert approved.reload.applied?
     assert_includes model.tags.reload.map(&:name), "job"

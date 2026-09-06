@@ -35,7 +35,7 @@ Storage is the owner's NFS mount. There is one library pile.
 - Path-jailed model merge/split (move archives/STLs on disk, never load them into RAM)
 - Duplicate review (content hash + filename/size heuristics)
 - Creator-first catalog: scan upserts `Creator` from the first-level folder / pack-style prefixes (`Creator - Title`, known packs). Shared labels only — no private shelves
-- Budgeted covers: scan enqueues `GenerateCoverJob` (pending); Rendering generates and writes back `ready`/`failed` + `cover_url`
+- Budgeted covers: scan enqueues `GenerateCoverJob` (pending); the worker generates a libvips thumbnail and writes back `ready`/`failed` + `cover_url`
 
 ## Architecture
 
@@ -79,7 +79,7 @@ Background jobs:
 - `DispatchPrintJob` — path-jails a library file and sends it through a printer adapter (mock simulates progress)
 - `ModelComposer` — merge/split first-level folders and selected files inside the path jail
 - `DuplicateFinder` — groups assets by SHA-256 and filename+size (streams hashes; does not slurp archives)
-- `GenerateCoverJob` — enqueue-only stub. Payload is the locked cover contract; Rendering owns generate and calls the write-back hook
+- `GenerateCoverJob` — path-jails the locked cover payload, generates a budgeted libvips webp (or fails for mesh-without-preview), writes back via `CoverWriteback.apply!`
 - `CoverEnqueue` / `CoverWriteback` — scan sets `cover_status=pending`; write-back sets `ready`/`failed` + `cover_url`
 
 The curation sidecar is `CurationSidecar`. In development/test a blank or `stub` URL generates deterministic fixture proposals. A compose profile runs the same contract as HTTP.
@@ -222,6 +222,7 @@ Environment variables (see `.env.example`):
 | `VIBE_ARCHIVE_PREVIEW_BYTES` | Cap for derived/inline image previews (default 4 MiB) |
 | `VIBE_ARCHIVE_LIST_TIMEOUT` | Timeout for `7z l` (default 15s) |
 | `VIBE_PREVIEW_ROOT` | Directory for derived archive thumbs (default `api/tmp/previews`) |
+| `VIBE_COVER_ROOT` | Directory for generated cover webps (default `api/tmp/covers`). Served at `GET /covers/:id.webp` |
 | `VIBE_7Z_BIN` | Optional absolute path to `7z` / `7za` |
 | `VIBE_SCAN_*` | Incremental NFS scan budgets, cron, and deep-walk interval (see below) |
 
@@ -288,7 +289,7 @@ Search (Meilisearch `archive_paths` and Postgres `ILIKE`) includes file member p
 
 **Creators** are shared labels, not shelves. Scan upserts a `Creator` from the first-level folder name, or from a pack-style prefix (`Creator - Title`, known packs such as Mz4250 / Printable Scenery). `vibe_models.creator_id` is nullable. The heuristic never creates bookmark folders, per-user piles, or federation.
 
-**Covers.** Backend owns enqueue + index fields. Rendering owns generate.
+**Covers.** Scan owns enqueue + index fields. `GenerateCoverJob` generates and writes back.
 
 On scan, when a cover-candidate asset appears (image named cover/preview/thumb/hero, else any image, else a loose mesh) or the model is missing a cover, `CoverEnqueue` sets `cover_status=pending` and enqueues `GenerateCoverJob` with this payload (Sidekiq job args — one JSON object):
 
@@ -333,7 +334,9 @@ X-Cover-Token: $VIBE_COVER_TOKEN
 }
 ```
 
-`status` must be `ready` or `failed`. `cover_url` is required when `ready`. Signed-in users can call the same endpoint (useful in tests). `GenerateCoverJob` is a stub that only logs — replace/implement generate on the Rendering worker, then call write-back.
+`status` must be `ready` or `failed`. `cover_url` is required when `ready`. Signed-in users can call the same endpoint (useful in tests). `GenerateCoverJob` resolves `jailed_path` with `LibraryPathJail#resolve_jailed`, thumbnails with libvips (`ruby-vips`) within `budget.max_px` / `budget.max_bytes`, and calls `CoverWriteback.apply!`. Cache key is `asset_id + mtime + content_hash`; a model already `ready` for that key is skipped. Mesh/STL/3MF sources use a named preview sibling (`cover`/`preview`/`thumb`/`hero`) under the jail when one exists — there is no 3D renderer in this worker, so a mesh without a preview writes back `failed` (silent status).
+
+Generated files live in `VIBE_COVER_ROOT` (default `api/tmp/covers`) and are served at `GET /covers/:id.webp`. API/worker images need `libvips` (compose Dockerfile installs `libvips42`).
 
 ## API (JSON)
 
@@ -361,7 +364,8 @@ All endpoints except `POST /api/v1/session`, invite preview/redeem, and `GET /up
 - `GET /api/v1/assets/:id/content` (lazy mesh / file stream)
 - `GET /api/v1/archive_members/:id/preview` (derived thumb or inline image; mesh returns `use_content`)
 - `GET /api/v1/search?q=&tag=&tags[]=&has_preview=&library_id=&uploaded_by_id=&creator_slug=&offset=&limit=` (Meilisearch when configured; Postgres `ILIKE` fallback; facet/filter `creator_slug`)
-- `POST /api/v1/covers/writeback` `{ model_id, status: "ready"|"failed", cover_url?, cover_placeholder?, asset_id?, cache_key? }` (Rendering worker; `X-Cover-Token: $VIBE_COVER_TOKEN` or Bearer user)
+- `GET /covers/:id.webp` generated cover bytes (libvips webp under `VIBE_COVER_ROOT`)
+- `POST /api/v1/covers/writeback` `{ model_id, status: "ready"|"failed", cover_url?, cover_placeholder?, asset_id?, cache_key? }` (`GenerateCoverJob` uses `CoverWriteback.apply!` in-process; `X-Cover-Token: $VIBE_COVER_TOKEN` or Bearer user)
 - `GET /api/v1/curation_proposals?status=`
 - `POST /api/v1/curation_proposals` `{ library_id, curation_proposal: { kind, summary, payload, sidecar_ref? } }`
 - `POST /api/v1/curation_proposals/fetch` `{ library_id }` (owner/contributor; polls sidecar)
