@@ -14,7 +14,7 @@ Storage is the owner's NFS mount. There is one library pile.
 
 | Role | Who | What they can do |
 | --- | --- | --- |
-| `owner` | The library admin | Invite/revoke, upload, trigger a full scan, review/apply curation, manage printers |
+| `owner` | The library admin | Invite/revoke, upload, trigger/schedule library scans, review/apply curation, manage printers |
 | `contributor` | Default for invited friends | Browse/search the whole catalog, upload, review/apply curation, and queue prints |
 | `viewer` | Optional read-only invite | Browse/search the catalog, see the curation queue, and request a print |
 
@@ -24,7 +24,7 @@ Storage is the owner's NFS mount. There is one library pile.
 - React + Vite + TypeScript gallery with infinite scroll and a dark Tailwind UI
 - Owner invite links (optional email, role, expiry) plus a redeem/signup page
 - Chunked, resumable uploads (1 MB patches, TUS-style offset) path-jailed to the library root
-- Incremental folder scanning with mtime/size/path-prefix cursors; uploads enqueue a targeted rescan
+- Production NFS library scanning: scheduled + on-demand incremental sync, mtime/size/inode cursors, per-job budgets with resume, batched prune, owner-visible scan status
 - Deep archive visibility: nested zip/3mf tree, single-member streaming, image thumbs, lazy mesh members
 - Token auth
 - HITL AI curation: sidecar contract, stub curator, ingest, review queue, path-jailed apply
@@ -55,13 +55,15 @@ Domain objects (original names):
 | `User` / `Membership` / `Invite` | Owner, contributor, or viewer |
 | `LibraryUpload` | Resumable upload session that lands inside the library jail |
 | `CurationProposal` | Sidecar suggestion: pending / approved / rejected |
-| `ScanCursor` | Incremental index fingerprint per folder prefix |
+| `ScanCursor` | Incremental NFS fingerprint per folder prefix (mtime, size, inode, nlink, deep-scan time) |
+| `ScanRun` | One walk/prune attempt: status, file/folder counts, errors, resume cursor |
 | `Printer` | Owner-managed registry entry (name, host/IP, protocol, enabled) |
 | `PrintDispatch` | Print job: queued → sending → printing → succeeded/failed/cancelled |
 
 Background jobs:
 
-- `IncrementalScanJob` — walks a library (or one folder prefix after an upload) and updates stale folders
+- `IncrementalScanJob` — incremental NFS walk (or one folder prefix after an upload/curation apply); honors `VIBE_SCAN_*` budgets and re-enqueues when budgeted
+- `ScheduledScanJob` — sidekiq-cron entry that queues a scan for every library (default every 6 hours)
 - `IndexVibeModelJob` / `RemoveVibeModelIndexJob` / `ReindexSearchJob` — keep Meilisearch in sync after scan, upload, destroy, and curation apply
 - `DerivePreviewJob` — copies hot image members out of an archive into a preview cache (mesh rasterization is still a stub)
 - `FetchCurationProposalsJob` — polls the curator sidecar (or in-process stub) and upserts pending `CurationProposal` rows
@@ -98,7 +100,8 @@ On first boot the API runs `db:prepare`. Seed the owner and scan the sample libr
 ```bash
 docker compose exec api bin/rails db:seed
 # or rescan / rebuild the search index later
-docker compose exec api bin/rails vibe:scan
+docker compose exec api bin/rails vibe:scan            # incremental; honors VIBE_SCAN_* budgets
+docker compose exec api bin/rails vibe:enqueue_scan    # async IncrementalScanJob
 docker compose exec api bin/rails vibe:reindex
 ```
 
@@ -202,8 +205,48 @@ Environment variables (see `.env.example`):
 | `VIBE_ARCHIVE_LIST_TIMEOUT` | Timeout for `7z l` (default 15s) |
 | `VIBE_PREVIEW_ROOT` | Directory for derived archive thumbs (default `api/tmp/previews`) |
 | `VIBE_7Z_BIN` | Optional absolute path to `7z` / `7za` |
+| `VIBE_SCAN_*` | Incremental NFS scan budgets, cron, and deep-walk interval (see below) |
 
 Each first-level directory under the library root becomes a `VibeModel`. Hidden first-level folders (including `.vibe-incoming` used during uploads) are ignored. Files beneath a model folder become `Asset` rows.
+
+### Incremental NFS scanning
+
+3dvibe **polls** the mount. inotify (or similar) is not used — it is unreliable over NFS and is not required.
+
+`ScheduledScanJob` (sidekiq-cron, `VIBE_SCAN_CRON`, default every 6 hours) and the owner **Scan now** button / `POST /api/v1/libraries/:id/scan` / `bin/rails vibe:scan` all run the same `LibraryScanner` path. Uploads and curation apply still enqueue a **path-prefix** targeted scan and do not prune sibling folders.
+
+**Change detection (cheap, then deep)**
+
+1. List first-level folder names (`Dir.each_child`) — no full-tree walk.
+2. `lstat` each model folder. If directory **mtime + inode + nlink** match the `ScanCursor` and a deep walk ran inside `VIBE_SCAN_DEEP_INTERVAL`, the folder is skipped (no file walk).
+3. Otherwise walk regular files once (sorted relative paths, no symlink follow). A file is reindexed when **size, mtime, or inode** differs. The cursor then stores the content fingerprint (max file mtime, total bytes, file count) plus the directory identity.
+
+**NFS limitations** (these are why the deep interval exists):
+
+| Quirk | What 3dvibe does |
+| --- | --- |
+| Attribute cache (`acregmin` / `acdirmin`) can hide a just-written mtime/size | Next poll after the cache expires, or a targeted scan after upload |
+| Some NAS boxes do **not** bump the parent directory mtime on in-place overwrite | Mandatory deep walk every `VIBE_SCAN_DEEP_INTERVAL` (default 6h). Set `VIBE_SCAN_TRUST_DIR_MTIME=0` to deep-walk every cycle |
+| 1-second mtime resolution; same-second same-size replace | Combined with size + inode. A same-second rewrite that keeps inode and size can still be missed until the next deep walk |
+| Inode reuse after delete+create | Identity is inode + mtime + nlink together, not inode alone |
+| `ESTALE` / dropped export | Per-folder errors are counted; a root that lists **zero** model folders will **not** prune the catalog unless `VIBE_SCAN_ALLOW_EMPTY_PRUNE=1` |
+| Clock skew between NAS and app host | Comparisons use integer-second mtimes stored from `lstat` on the app/worker |
+
+**Budgets and resume.** `VIBE_SCAN_MAX_SECONDS` / `VIBE_SCAN_MAX_FILES` / `VIBE_SCAN_MAX_FOLDERS` stop a job before it OOMs or pins a worker. Progress is stored on `ScanRun.resume_after` (folder) and `ScanCursor.resume_relative_path` (file). A budgeted full scan re-enqueues `IncrementalScanJob`. Prune of disappeared paths runs only after a complete walk, in `VIBE_SCAN_PRUNE_BATCH` batches, then `ReindexSearchJob` refreshes Meilisearch. Destroying a `VibeModel` also removes its Meili document.
+
+Owner API `GET /api/v1/libraries` (and show) includes the latest `scan` object. The **Libraries** page shows last started/finished, files seen, errors, cursors, and a Scan now button.
+
+| Variable | Role |
+| --- | --- |
+| `VIBE_SCAN_SCHEDULE` | Load sidekiq-cron job (default on). `0` disables |
+| `VIBE_SCAN_CRON` | Cron expression (default `0 */6 * * *`) |
+| `VIBE_SCAN_MAX_SECONDS` | Wall-clock cap per job (default 120). `0` = unlimited |
+| `VIBE_SCAN_MAX_FILES` | Files indexed per job (default 5000). `0` = unlimited |
+| `VIBE_SCAN_MAX_FOLDERS` | Folders deep-walked/indexed per job (default 200). `0` = unlimited |
+| `VIBE_SCAN_PRUNE_BATCH` | Max disappeared models/cursors removed per job (default 50) |
+| `VIBE_SCAN_DEEP_INTERVAL` | Seconds between deep walks of an unchanged folder identity (default 21600) |
+| `VIBE_SCAN_TRUST_DIR_MTIME` | Skip deep walk when dir identity is fresh (default 1) |
+| `VIBE_SCAN_ALLOW_EMPTY_PRUNE` | Allow wiping the catalog when the mount lists no folders (default 0) |
 
 ### Archive visibility
 
@@ -226,7 +269,8 @@ All endpoints except `POST /api/v1/session`, invite preview/redeem, and `GET /up
 
 - `POST /api/v1/session` `{ email, password }`
 - `GET /api/v1/me`
-- `GET /api/v1/libraries` · `POST /api/v1/libraries/:id/scan`
+- `GET /api/v1/libraries` · `GET /api/v1/libraries/:id` (owner payload includes `scan`, `scan_settings`, `cursors`)
+- `POST /api/v1/libraries/:id/scan` `{ path_prefix? }` owner-only; `202` + latest scan status
 - `GET /api/v1/models?cursor=&limit=` (cursor pagination; no owner ACL filter)
 - `GET /api/v1/models/:id`
 - `GET /api/v1/models/:id/archive_members?asset_id=&prefix=&q=&view=tree|flat&limit=&offset=` (nested children by default; `q` searches paths; `view=flat` paginates every member)

@@ -1,11 +1,15 @@
 namespace :vibe do
-  desc "Incrementally scan a library (id= or all)"
+  desc "Incrementally scan a library (id= or all). Honors VIBE_SCAN_* budgets; re-run to resume."
   task scan: :environment do
     scope = ENV["LIBRARY_ID"].present? ? Library.where(id: ENV["LIBRARY_ID"]) : Library.all
     scope.find_each do |library|
       puts "Scanning #{library.name} at #{library.root_path}"
-      LibraryScanner.new(library).scan!
-      puts "  -> #{library.vibe_models.count} models"
+      run = LibraryScanner.new(library, trigger: ScanRun::TRIGGER_RAKE).scan!(path_prefix: ENV["PATH_PREFIX"])
+      puts "  -> #{library.vibe_models.count} models  status=#{run.status} " \
+           "files=#{run.files_seen} indexed=#{run.folders_indexed} skipped=#{run.folders_skipped} " \
+           "pruned=#{run.pruned_count} errors=#{run.error_count}"
+      puts "  -> budgeted at #{run.resume_after.inspect}; re-run vibe:scan to continue" if run.budgeted?
+      puts "  -> #{run.last_error}" if run.last_error.present?
     end
     if MeilisearchClient.configured?
       result = SearchIndex.new.reindex_all!(
@@ -15,9 +19,10 @@ namespace :vibe do
     end
   end
 
-  desc "Queue IncrementalScanJob for every library"
+  desc "Queue IncrementalScanJob for every library (or LIBRARY_ID=)"
   task enqueue_scan: :environment do
-    Library.find_each { |library| IncrementalScanJob.perform_later(library.id) }
+    scope = ENV["LIBRARY_ID"].present? ? Library.where(id: ENV["LIBRARY_ID"]) : Library.all
+    scope.find_each { |library| IncrementalScanJob.perform_later(library.id, nil, nil, ScanRun::TRIGGER_RAKE) }
     puts "Queued scan jobs"
   end
 

@@ -4,6 +4,7 @@ import { Layout } from "./components/Layout";
 import { CurationPage } from "./pages/CurationPage";
 import { GalleryPage } from "./pages/GalleryPage";
 import { InvitesPage } from "./pages/InvitesPage";
+import { LibrariesPage } from "./pages/LibrariesPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ModelPage } from "./pages/ModelPage";
 import { PrintersPage } from "./pages/PrintersPage";
@@ -53,6 +54,14 @@ export default function App() {
           element={
             <OwnerGuard>
               <PrintersPage />
+            </OwnerGuard>
+          }
+        />
+        <Route
+          path="/libraries"
+          element={
+            <OwnerGuard>
+              <LibrariesPage />
             </OwnerGuard>
           }
         />
