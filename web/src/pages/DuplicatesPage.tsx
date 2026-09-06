@@ -354,7 +354,7 @@ export function DuplicatesPage() {
                     </div>
                     <div className="mt-3 flex gap-2">
                       {thumbs.map((model, index) => (
-                        <div key={model?.id ?? `placeholder-${index}`} className="h-16 w-16 overflow-hidden rounded-lg bg-ink-950">
+                        <div key={`${group.id}-thumb-${index}`} className="h-16 w-16 overflow-hidden rounded-lg bg-ink-950">
                           {model ? <CoverMedia model={model} /> : <div className="cover-checker h-full w-full" />}
                         </div>
                       ))}
