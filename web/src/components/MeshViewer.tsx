@@ -74,9 +74,9 @@ export function MeshViewer({
       setStatus(viewerStageCopy("decoding"));
 
       const [three, { OrbitControls }] = await threePromise;
-      if (!host.current || disposed) return;
+      if (disposed) return;
 
-      handle = createScene(host.current, {
+      const libs = {
         WebGLRenderer: three.WebGLRenderer,
         Scene: three.Scene,
         PerspectiveCamera: three.PerspectiveCamera,
@@ -91,13 +91,7 @@ export function MeshViewer({
         BufferAttribute: three.BufferAttribute,
         Mesh: three.Mesh,
         MeshStandardMaterial: three.MeshStandardMaterial
-      });
-
-      const tick = () => {
-        handle?.render();
-        frame = requestAnimationFrame(tick);
       };
-      tick();
 
       let seen = 0;
       await decodeMeshOffthread(buffer, {
@@ -105,9 +99,17 @@ export function MeshViewer({
         maxVerts,
         signal: abort.signal,
         onMesh: (mesh) => {
-          if (disposed) return;
+          if (disposed || !host.current) return;
+          if (!handle) {
+            handle = createScene(host.current, libs);
+            const tick = () => {
+              handle?.render();
+              frame = requestAnimationFrame(tick);
+            };
+            tick();
+          }
           seen += 1;
-          handle?.addMesh(mesh);
+          handle.addMesh(mesh);
           setStage("displaying");
           setStatus(viewerStageCopy("displaying"));
         }
