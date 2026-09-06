@@ -83,8 +83,39 @@ class JobsTest < ActiveJob::TestCase
 
   test "scheduled scan job enqueues an incremental scan per library" do
     library = Library.create!(name: "Sched", root_path: "/tmp/unused-scan")
-    assert_enqueued_with(job: IncrementalScanJob, args: [library.id, nil, nil, ScanRun::TRIGGER_SCHEDULED]) do
+    assert_enqueued_with(job: IncrementalScanJob, args: [library.id, nil, nil, ScanRun::TRIGGER_SCHEDULED], queue: "scan") do
       ScheduledScanJob.perform_now
+    end
+  end
+
+  test "scan jobs enqueue on the isolated scan queue" do
+    library = Library.create!(name: "Queued", root_path: "/tmp/unused-scan-q")
+    assert_enqueued_with(job: IncrementalScanJob, queue: ScanSettings.queue) do
+      IncrementalScanJob.perform_later(library.id)
+    end
+    assert_enqueued_with(job: ScheduledScanJob, queue: ScanSettings.queue) do
+      ScheduledScanJob.perform_later
+    end
+    assert_enqueued_with(job: DispatchPrintJob, queue: "print") do
+      DispatchPrintJob.perform_later(1)
+    end
+  end
+
+  test "VIBE_SCAN_QUEUE retargets IncrementalScanJob without touching print" do
+    previous = ENV["VIBE_SCAN_QUEUE"]
+    ENV["VIBE_SCAN_QUEUE"] = "nfs-walk"
+    library = Library.create!(name: "Retarget", root_path: "/tmp/unused-scan-r")
+    assert_enqueued_with(job: IncrementalScanJob, queue: "nfs-walk") do
+      IncrementalScanJob.perform_later(library.id)
+    end
+    assert_enqueued_with(job: DispatchPrintJob, queue: "print") do
+      DispatchPrintJob.perform_later(1)
+    end
+  ensure
+    if previous.nil?
+      ENV.delete("VIBE_SCAN_QUEUE")
+    else
+      ENV["VIBE_SCAN_QUEUE"] = previous
     end
   end
 

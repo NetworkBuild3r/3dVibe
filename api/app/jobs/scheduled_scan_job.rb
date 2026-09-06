@@ -1,5 +1,5 @@
 class ScheduledScanJob < ApplicationJob
-  queue_as :scan
+  queue_as { ScanSettings.queue }
 
   def perform
     return unless ScanSettings.schedule_enabled?

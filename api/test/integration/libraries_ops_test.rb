@@ -52,6 +52,8 @@ class LibrariesOpsTest < ActionDispatch::IntegrationTest
     assert_equal "Studio", ops["library_name"]
     assert_equal "completed", ops.dig("scan", "status")
     assert ops.dig("scan", "budgets", "max_folders").present?
+    refute ops["scan"].key?("queue")
+    assert_equal %w[max_files max_folders max_seconds], ops.dig("scan", "budgets").keys.sort
     assert_equal "stub", ops.dig("curator", "last_provider")
     assert ops.dig("curator").key?("last_polled_at")
     assert_nil ops.dig("curator", "last_error")

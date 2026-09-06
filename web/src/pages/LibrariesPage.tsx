@@ -203,6 +203,9 @@ export function LibrariesPage() {
               Schedule {settings.schedule ? settings.cron : "off"} · {settings.max_seconds}s / {settings.max_files}{" "}
               files / {settings.max_folders} folders per job · prune {settings.prune_batch} · deep every{" "}
               {Math.round(settings.deep_interval / 3600)}h
+              {settings.queue
+                ? ` · queue ${settings.queue} ×${settings.concurrency ?? 1} / ${settings.worker_concurrency ?? 5} workers`
+                : ""}
             </p>
           ) : null}
 

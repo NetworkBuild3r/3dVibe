@@ -150,6 +150,7 @@ class LibraryScannerNfsTest < ActiveJob::TestCase
       IncrementalScanJob.perform_now(@library.id)
       assert @library.scan_runs.where(status: ScanRun::BUDGETED).exists?
       assert_enqueued_jobs 1, only: IncrementalScanJob
+      assert_enqueued_with(job: IncrementalScanJob, queue: ScanSettings.queue)
     end
   end
 
@@ -176,7 +177,8 @@ class LibraryScannerNfsTest < ActiveJob::TestCase
     %w[
       VIBE_SCAN_MAX_SECONDS VIBE_SCAN_MAX_FILES VIBE_SCAN_MAX_FOLDERS
       VIBE_SCAN_PRUNE_BATCH VIBE_SCAN_DEEP_INTERVAL VIBE_SCAN_TRUST_DIR_MTIME
-      VIBE_SCAN_ALLOW_EMPTY_PRUNE
+      VIBE_SCAN_ALLOW_EMPTY_PRUNE VIBE_SCAN_QUEUE VIBE_SCAN_CONCURRENCY
+      VIBE_SIDEKIQ_CONCURRENCY
     ].each { |key| ENV.delete(key) }
   end
 end

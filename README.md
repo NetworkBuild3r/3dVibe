@@ -73,8 +73,8 @@ Domain objects (original names):
 
 Background jobs:
 
-- `IncrementalScanJob` — incremental NFS walk (or one folder prefix after an upload/curation apply); honors `VIBE_SCAN_*` budgets and re-enqueues when budgeted
-- `ScheduledScanJob` — sidekiq-cron entry that queues a scan for every library (default every 6 hours)
+- `IncrementalScanJob` — incremental NFS walk (or one folder prefix after an upload/curation apply); honors `VIBE_SCAN_*` budgets, runs on the isolated `VIBE_SCAN_QUEUE` capsule, and re-enqueues when budgeted
+- `ScheduledScanJob` — sidekiq-cron entry that queues a scan for every library (default every 6 hours); same isolated scan queue
 - `BulkIndexVibeModelsJob` / `IndexVibeModelJob` / `RemoveVibeModelIndexJob` / `ReindexSearchJob` — keep Meilisearch in sync after scan upserts, upload, destroy, curation apply, cover write-back, and creator assign. `SearchIndex.enqueue` debounces unique `model_id`s (default 2s) and flushes a bulk upsert so a cover/scan burst cannot enqueue one `IndexVibeModelJob` per card
 - `DerivePreviewJob` — copies hot image members out of an archive into a preview cache (mesh rasterization is still a stub)
 - `FetchCurationProposalsJob` — polls the curator sidecar (or in-process stub), upserts pending `CurationProposal` rows by stable `sidecar_ref`, and writes per-library `last_polled_at` / `last_provider` / `last_error`
@@ -283,7 +283,7 @@ Environment variables (see `.env.example`):
 | `VIBE_PREVIEW_ROOT` | Directory for derived archive thumbs (default `api/tmp/previews`) |
 | `VIBE_COVER_ROOT` | Directory for generated cover webps (default `api/tmp/covers`). Served at `GET /covers/:id.webp` |
 | `VIBE_7Z_BIN` | Optional absolute path to `7z` / `7za` |
-| `VIBE_SCAN_*` | Incremental NFS scan budgets, cron, and deep-walk interval (see below) |
+| `VIBE_SCAN_*` | Incremental NFS scan budgets, cron, deep-walk interval, and isolated Sidekiq queue/concurrency (see below) |
 
 Each first-level directory under the library root becomes a `VibeModel`. Hidden first-level folders (including `.vibe-incoming` used during uploads) are ignored. Files beneath a model folder become `Asset` rows.
 
@@ -310,7 +310,9 @@ Each first-level directory under the library root becomes a `VibeModel`. Hidden 
 | `ESTALE` / dropped export | Per-folder errors are counted; a root that lists **zero** model folders will **not** prune the catalog unless `VIBE_SCAN_ALLOW_EMPTY_PRUNE=1` |
 | Clock skew between NAS and app host | Comparisons use integer-second mtimes stored from `lstat` on the app/worker |
 
-**Budgets and resume.** `VIBE_SCAN_MAX_SECONDS` / `VIBE_SCAN_MAX_FILES` / `VIBE_SCAN_MAX_FOLDERS` stop a job before it OOMs or pins a worker. Progress is stored on `ScanRun.resume_after` (folder) and `ScanCursor.resume_relative_path` (file). A budgeted full scan re-enqueues `IncrementalScanJob`. Prune of disappeared paths runs only after a complete walk, in `VIBE_SCAN_PRUNE_BATCH` batches, then `ReindexSearchJob` refreshes Meilisearch. Destroying a `VibeModel` also removes its Meili document.
+**Budgets and resume.** `VIBE_SCAN_MAX_SECONDS` / `VIBE_SCAN_MAX_FILES` / `VIBE_SCAN_MAX_FOLDERS` stop a job before it OOMs or pins a worker. Progress is stored on `ScanRun.resume_after` (folder) and `ScanCursor.resume_relative_path` (file). A budgeted full scan re-enqueues `IncrementalScanJob` on the same isolated scan queue. Prune of disappeared paths runs only after a complete walk, in `VIBE_SCAN_PRUNE_BATCH` batches, then `ReindexSearchJob` refreshes Meilisearch. Destroying a `VibeModel` also removes its Meili document.
+
+**Queue isolation.** The Sidekiq worker keeps print / search / covers / curation / default on the main capsule (`VIBE_SIDEKIQ_CONCURRENCY`, default 5). `IncrementalScanJob` and `ScheduledScanJob` run on `VIBE_SCAN_QUEUE` (default `scan`) in a separate capsule with `VIBE_SCAN_CONCURRENCY` (default 1). Overnight deep walks and budgeted resume slices therefore cannot occupy every thread. Owner library detail `scan_settings` includes `queue`, `concurrency`, and `worker_concurrency`. `/ops` and `/scan` progress payloads are unchanged.
 
 `GET /api/v1/libraries` (and show) includes the latest `scan` object for anyone who can see the library (owner, contributor, viewer). Dedicated `GET /api/v1/libraries/:id/scan` returns current + last `ScanRun` plus a resume-cursor summary. The **Libraries** page shows last started/finished, files seen, errors, cursors, and a Scan now button (POST remains owner-only).
 
@@ -327,6 +329,9 @@ Owner/contributor **ops chips** use `GET /api/v1/libraries/:id/ops` or `GET /api
 | `VIBE_SCAN_DEEP_INTERVAL` | Seconds between deep walks of an unchanged folder identity (default 21600) |
 | `VIBE_SCAN_TRUST_DIR_MTIME` | Skip deep walk when dir identity is fresh (default 1) |
 | `VIBE_SCAN_ALLOW_EMPTY_PRUNE` | Allow wiping the catalog when the mount lists no folders (default 0) |
+| `VIBE_SCAN_QUEUE` | Sidekiq queue for IncrementalScanJob / ScheduledScanJob (default `scan`). Cannot be a critical queue name (`default`, `print`, `search`, …) |
+| `VIBE_SCAN_CONCURRENCY` | Scan-capsule threads (default 1, clamp 1–32). Keep this low so NFS walks do not starve API jobs |
+| `VIBE_SIDEKIQ_CONCURRENCY` | Main-capsule threads for print/search/covers/curation/default (default 5, clamp 1–32) |
 | `VIBE_COVER_TOKEN` | Shared token for `POST /api/v1/covers/writeback` (`X-Cover-Token` or Bearer). Signed-in users can also write back |
 | `VIBE_GEOMETRY_TOKEN` | Shared token for `POST /api/v1/geometry/writeback` (`X-Geometry-Token` or Bearer). Owner/contributor can also write back |
 | `VIBE_GEO_MAX_BYTES` | Skip a mesh larger than this many bytes (default 64 MiB). `0` = unlimited |
