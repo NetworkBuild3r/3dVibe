@@ -4,7 +4,8 @@
 #   GET  /health
 #   POST /proposals   catalog snapshot in, proposal batch out
 #   GET  /proposals   fallback listing of LIBRARY_ROOT
-# Providers: stub (CI default), ollama, xai — VIBE_CURATOR_PROVIDER.
+# Providers: stub (CI default), ollama, xai.
+# POST /proposals prefers request-scoped curator_runtime over process ENV.
 require "json"
 require "webrick"
 require_relative "service"

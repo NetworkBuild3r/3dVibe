@@ -108,6 +108,38 @@ class HTTPContractTest < Minitest::Test
     assert_equal "xai_not_configured", result[:body]["error"]
   end
 
+  def test_post_runtime_sets_provider_header
+    result = VibeCurator::HTTP.handle(
+      method: "POST",
+      path: "/proposals",
+      headers: { "Authorization" => "Bearer secret" },
+      body: JSON.generate(sample_catalog.merge(
+        "curator_runtime" => { "provider" => "stub", "xai_api_key" => "should-not-echo" }
+      )),
+      env: env_hash("VIBE_CURATOR_PROVIDER" => "ollama")
+    )
+    assert_equal 200, result[:status]
+    assert_equal "stub", result[:headers]["X-Curator-Provider"]
+    assert_equal "stub", result[:body]["provider"]
+    refute_includes JSON.generate(result[:body]), "should-not-echo"
+  end
+
+  def test_get_proposals_ignores_runtime_on_query_string
+    result = VibeCurator::HTTP.handle(
+      method: "GET",
+      path: "/proposals",
+      headers: { "X-Curator-Token" => "secret" },
+      query: {
+        "curator_runtime" => JSON.generate("provider" => "xai", "xai_api_key" => "query-secret"),
+        "xai_api_key" => "query-secret"
+      },
+      env: env_hash("VIBE_CURATOR_PROVIDER" => "")
+    )
+    assert_equal 200, result[:status]
+    assert_equal "stub", result[:body]["provider"]
+    refute_includes JSON.generate(result[:body]), "query-secret"
+  end
+
   def test_method_not_allowed
     result = VibeCurator::HTTP.handle(
       method: "DELETE",

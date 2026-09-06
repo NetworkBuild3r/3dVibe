@@ -611,6 +611,27 @@ Exposed as `curation: { last_polled_at, last_provider, last_error }` on:
 
 `curator/` implements `GET /health` and `POST|GET /proposals` against the catalog above.
 
+**Request-scoped `curator_runtime` (Rails PR #23).** Rails `CurationSidecar#catalog` injects `CuratorRuntime.for_sidecar` on `POST /proposals` only. The sidecar prefers that hash for the poll and does **not** require a rebuild/redeploy to switch providers. Process ENV is the fallback and is never mutated.
+
+Shape expected from #23 (field by field; blank/null leaves the env value):
+
+```json
+{
+  "provider": "stub|ollama|xai",
+  "ollama_url": "http://host.docker.internal:11434",
+  "ollama_model": "llama3.1",
+  "xai_api_key": "<decrypted; omitted when effective provider is stub>"
+}
+```
+
+Sidecar resolution:
+
+1. `curator_runtime.provider` / `ollama_url` / `ollama_model` / `xai_api_key` when present
+2. Else sidecar ENV (`VIBE_CURATOR_PROVIDER`, `VIBE_OLLAMA_URL`, `VIBE_OLLAMA_MODEL`, `XAI_API_KEY` / `VIBE_XAI_API_KEY`)
+3. Else catalog `provider_hint`, then `stub`
+
+Stub remains the CI default. If runtime says `stub` (or is absent and env/hint resolve to stub), an included `xai_api_key` is ignored — no 503, and the key is stripped from the request-scoped env. `GET /proposals` never reads `curator_runtime` from the query string. The decrypted key is never sent to the LLM prompt, never written into proposal JSON, and is redacted from provider error text.
+
 | Provider | When | Notes |
 | --- | --- | --- |
 | `stub` | `curator_runtime.provider`, else `VIBE_CURATOR_PROVIDER=stub` (default), or `VIBE_CURATOR_URL=stub` on Rails | Deterministic fixture proposals. CI-safe. No secrets on the wire. |
