@@ -44,6 +44,18 @@ jobs:
       - run: bin/rails db:prepare
       - run: bin/rails test
 
+  curator:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: curator
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+      - run: ruby test/run.rb
+
   web:
     runs-on: ubuntu-latest
     defaults:
