@@ -467,6 +467,9 @@ export type ScanSettings = {
   allow_empty_prune: boolean;
   schedule: boolean;
   cron: string;
+  queue?: string;
+  concurrency?: number;
+  worker_concurrency?: number;
 };
 
 export type ScanCursorInfo = {

@@ -7,7 +7,14 @@ class ScanSettings
   DEFAULT_MAX_FOLDERS = 200
   DEFAULT_PRUNE_BATCH = 50
   DEFAULT_DEEP_INTERVAL = 6.hours.to_i
+  DEFAULT_QUEUE = "scan".freeze
+  DEFAULT_CONCURRENCY = 1
+  DEFAULT_WORKER_CONCURRENCY = 5
+  MAX_CONCURRENCY = 32
   STALE_RUN_AFTER = 15.minutes
+  # Queues that serve API-critical work. IncrementalScanJob must not share
+  # this pool or an overnight deep walk can occupy every Sidekiq thread.
+  CRITICAL_QUEUES = %w[default print search previews covers curation duplicates].freeze
 
   class << self
     def max_seconds
@@ -46,6 +53,36 @@ class ScanSettings
       ENV["VIBE_SCAN_CRON"].presence || DEFAULT_CRON
     end
 
+    # Isolated Sidekiq queue for IncrementalScanJob / ScheduledScanJob.
+    # Reserved critical names fall back to "scan" so NFS work cannot land
+    # on print/search/covers and starve API-triggered jobs.
+    def queue
+      raw = ENV["VIBE_SCAN_QUEUE"].to_s.strip.downcase
+      sanitized = raw.gsub(/[^a-z0-9_-]/, "")
+      return DEFAULT_QUEUE if sanitized.empty? || CRITICAL_QUEUES.include?(sanitized)
+
+      sanitized
+    end
+
+    def concurrency
+      clamp_concurrency(int("VIBE_SCAN_CONCURRENCY", DEFAULT_CONCURRENCY), default: DEFAULT_CONCURRENCY)
+    end
+
+    def worker_concurrency
+      clamp_concurrency(int("VIBE_SIDEKIQ_CONCURRENCY", DEFAULT_WORKER_CONCURRENCY), default: DEFAULT_WORKER_CONCURRENCY)
+    end
+
+    def isolated_queues
+      CRITICAL_QUEUES - [queue]
+    end
+
+    def sidekiq_layout
+      {
+        default: { concurrency: worker_concurrency, queues: isolated_queues },
+        scan: { concurrency: concurrency, queues: [queue] }
+      }
+    end
+
     def as_api
       {
         max_seconds: max_seconds,
@@ -56,7 +93,10 @@ class ScanSettings
         trust_dir_mtime: trust_dir_mtime?,
         allow_empty_prune: allow_empty_prune?,
         schedule: schedule_enabled?,
-        cron: cron
+        cron: cron,
+        queue: queue,
+        concurrency: concurrency,
+        worker_concurrency: worker_concurrency
       }
     end
 
@@ -82,6 +122,12 @@ class ScanSettings
       return default if value.nil? || value.to_s.strip.empty?
 
       ActiveModel::Type::Boolean.new.cast(value)
+    end
+
+    def clamp_concurrency(value, default:)
+      n = value.to_i
+      n = default if n < 1
+      [n, MAX_CONCURRENCY].min
     end
   end
 end

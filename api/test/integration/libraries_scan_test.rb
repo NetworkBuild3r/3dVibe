@@ -37,6 +37,9 @@ class LibrariesScanTest < ActionDispatch::IntegrationTest
     assert_equal "done", body.dig("scan", "phase")
     assert body["scan"].key?("resume")
     assert body["scan_settings"]["max_files"].present?
+    assert_equal "scan", body["scan_settings"]["queue"]
+    assert_equal 1, body["scan_settings"]["concurrency"]
+    assert_equal 5, body["scan_settings"]["worker_concurrency"]
     assert body["cursors"].any? { |cursor| cursor["path_prefix"] == "horn" }
   end
 
@@ -45,7 +48,7 @@ class LibrariesScanTest < ActionDispatch::IntegrationTest
     assert_response :accepted
     assert response.parsed_body["queued"]
     assert_equal ScanRun::QUEUED, response.parsed_body.dig("library", "scan", "status")
-    assert_enqueued_with(job: IncrementalScanJob, args: [@library.id, nil, @owner.id, ScanRun::TRIGGER_API])
+    assert_enqueued_with(job: IncrementalScanJob, args: [@library.id, nil, @owner.id, ScanRun::TRIGGER_API], queue: "scan")
   end
 
   test "GET scan exposes current and last runs with resume summary" do

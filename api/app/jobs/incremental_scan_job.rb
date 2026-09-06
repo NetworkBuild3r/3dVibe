@@ -1,5 +1,5 @@
 class IncrementalScanJob < ApplicationJob
-  queue_as :scan
+  queue_as { ScanSettings.queue }
 
   def perform(library_id, path_prefix = nil, uploaded_by_id = nil, trigger = nil)
     library = Library.find(library_id)
