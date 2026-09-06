@@ -18,6 +18,10 @@ class ArchiveIndexer
     ArchiveMember.preview_bytes
   end
 
+  def self.stream_seconds
+    Integer(ENV.fetch("VIBE_ARCHIVE_STREAM_SECONDS", "30"))
+  end
+
   def initialize(asset)
     @asset = asset
   end
@@ -40,23 +44,12 @@ class ArchiveIndexer
     tmp
   end
 
-  # Stream one member into a Tempfile. Pass archive_path when the caller
-  # already path-jailed the parent zip/7z/rar (ComputeArchiveMemberGeometryDigestJob).
+  # Stream one member into a Tempfile (fingerprint / derived preview).
+  # HTTP open/preview uses ArchiveMemberStreamer#each — no whole-member buffer.
+  # Pass archive_path when the caller already path-jailed the parent archive.
   def extract_member(internal_path, max_bytes: self.class.stream_bytes, archive_path: nil)
-    path = archive_path.present? ? archive_path.to_s : @asset.absolute_path
-    raise ArgumentError, "archive missing on disk" unless File.file?(path)
-
-    safe = ArchiveMember.normalize_path(internal_path)
-    raise ArgumentError, "Cannot stream a directory" if safe.end_with?("/")
-
-    case @asset.kind
-    when "zip", "3mf"
-      extract_zip_member(path, safe, max_bytes)
-    when "7z", "rar"
-      extract_shell_member(path, safe, max_bytes)
-    else
-      raise ArgumentError, "Only zip-family archives can stream a member"
-    end
+    ArchiveMemberStreamer.new(@asset, internal_path, archive_path: archive_path)
+                         .extract_tempfile(max_bytes: max_bytes)
   end
 
   private
@@ -184,58 +177,6 @@ class ArchiveIndexer
     ArchiveMember.normalize_path(name, directory: directory)
   rescue ArgumentError
     nil
-  end
-
-  def extract_zip_member(path, internal_path, max_bytes)
-    Zip::File.open(path) do |zip|
-      entry = find_zip_entry(zip, internal_path)
-      raise ActiveRecord::RecordNotFound, "Missing archive member" unless entry
-      raise ArgumentError, "Cannot stream a directory" if entry.directory?
-      raise ArgumentError, "Refusing to load oversized member" if entry.size && entry.size > max_bytes
-
-      copy_stream(entry.get_input_stream, max_bytes, File.extname(internal_path))
-    end
-  end
-
-  def extract_shell_member(path, internal_path, max_bytes)
-    raise ArgumentError, "7z/rar streaming needs the 7z CLI" unless ArchiveShellLister.available?
-
-    tmp = Tempfile.new(["archive-member", File.extname(internal_path)])
-    tmp.binmode
-    ArchiveShellLister.new(path).extract_member(internal_path, tmp, max_bytes: max_bytes)
-    tmp.flush
-    tmp.rewind
-    tmp
-  rescue StandardError
-    tmp&.close!
-    raise
-  end
-
-  def copy_stream(io, max_bytes, extension)
-    tmp = Tempfile.new(["archive-member", extension])
-    tmp.binmode
-    copied = 0
-    buffer = String.new(capacity: CHUNK)
-    while (chunk = io.read(CHUNK, buffer))
-      copied += chunk.bytesize
-      if copied > max_bytes
-        tmp.close!
-        raise ArgumentError, "Refusing to load oversized member"
-      end
-      tmp.write(chunk)
-    end
-    tmp.flush
-    tmp.rewind
-    tmp
-  rescue StandardError
-    tmp&.close! if tmp && !tmp.closed?
-    raise
-  end
-
-  def find_zip_entry(zip, internal_path)
-    zip.find_entry(internal_path) ||
-      zip.find_entry(internal_path.delete_suffix("/")) ||
-      zip.find_entry(internal_path.tr("/", "\\"))
   end
 
   def safe_time(value)

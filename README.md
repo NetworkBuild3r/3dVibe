@@ -264,6 +264,7 @@ Environment variables (see `.env.example`):
 | `VIBE_ARCHIVE_MEMBER_LIMIT` | Max file members indexed per archive (default 10_000). Parents are still synthesized. Excess sets `archive_truncated` |
 | `VIBE_ARCHIVE_STREAM_BYTES` | Cap for a single member stream (default 32 MiB). The whole zip is never loaded into RAM |
 | `VIBE_ARCHIVE_PREVIEW_BYTES` | Cap for derived/inline image previews (default 4 MiB) |
+| `VIBE_ARCHIVE_STREAM_SECONDS` | Wall-clock cap for one member stream (default 30). `0` = unlimited. Client abort also stops the read |
 | `VIBE_ARCHIVE_LIST_TIMEOUT` | Timeout for `7z l` (default 15s) |
 | `VIBE_PREVIEW_ROOT` | Directory for derived archive thumbs (default `api/tmp/previews`) |
 | `VIBE_COVER_ROOT` | Directory for generated cover webps (default `api/tmp/covers`). Served at `GET /covers/:id.webp` |
@@ -330,10 +331,23 @@ Owner/contributor **ops chips** use `GET /api/v1/libraries/:id/ops` or `GET /api
 
 | Format | Listing | Single-member stream | Notes |
 | --- | --- | --- | --- |
-| zip / 3mf | **Full** — central directory only | **Full** — 64 KiB copy into a tempfile, then `send_file` | Default path. Parent folders are synthesized when the zip omits directory entries. |
-| 7z / rar | **Best-effort** — `7z l -slt` when `7z` is on PATH | **Best-effort** — `7z e -so` of one path | Compose images install `p7zip-full`. Without the CLI, one `(listing pending)` placeholder is stored and the UI says so. |
+| zip / 3mf | **Full** — central directory only | **Full** — 64 KiB chunks from the zip entry (`Accept-Ranges: bytes`) | Default path. Parent folders are synthesized when the zip omits directory entries. |
+| 7z / rar | **Best-effort** — `7z l -slt` when `7z` is on PATH | **Best-effort** — `7z e -so` of one path; process is killed on abort | Compose/CI images install `p7zip-full`. `VIBE_7Z_BIN` overrides the binary. Without the CLI, one `(listing pending)` placeholder is stored and the UI says so. |
 
-The indexer never extracts an archive to disk. A huge listing stops at `VIBE_ARCHIVE_MEMBER_LIMIT` and sets `assets.archive_truncated`. A single member larger than `VIBE_ARCHIVE_STREAM_BYTES` is refused.
+The indexer never extracts an archive to disk. HTTP open/preview (`ArchiveMemberStreamer`) path-jails the parent file (`LibraryPathJail#resolve_file`) and streams **one** member. A huge listing stops at `VIBE_ARCHIVE_MEMBER_LIMIT` and sets `assets.archive_truncated`. A single member larger than `VIBE_ARCHIVE_STREAM_BYTES` or slower than `VIBE_ARCHIVE_STREAM_SECONDS` is refused. Client disconnect (SPA navigate-away / `AbortController`) stops the read and does not leave a whole-member tempfile or an NFS extract.
+
+**Frontend bind (Rendering / lazy viewer).** Prefer these existing endpoints — do not invent a parallel preview API.
+
+| Call | When |
+| --- | --- |
+| `GET /api/v1/models/:id/archive_members?asset_id=&prefix=&q=&view=tree\|flat&limit=&offset=` | Nested children (`prefix`), `q` search, or `view=flat`. `nodes` and `members` are the same page. No `kind=` filter yet (follow-up). |
+| `GET /api/v1/archive_members/:id` | Size, `content_type`, `streamable`, `accept_ranges`, `content_path`, `preview_path`, `stream_max_bytes`, `stream_max_seconds` |
+| `GET /api/v1/archive_members/:id/content` | Mesh / download. Streamed 64 KiB chunks. `?download=1` → `Content-Disposition: attachment`. `Range: bytes=start-end` → **206** + `Content-Range`. Abort the fetch on unmount. |
+| `GET /api/v1/archive_members/:id/preview` | Image thumb (cached under `VIBE_PREVIEW_ROOT`) or inline hot image (preview-byte cap). Mesh → **422** `{ "error": "use_content", "content_path": "…" }` — call `/content` instead |
+
+`Authorization: Bearer`. `Cache-Control: private, no-store` and `X-Accel-Buffering: no` so proxies do not buffer the member. 422 `invalid` when the member is a directory, placeholder, oversized, timed out, or 7z is missing. 416 when `Range` is unsatisfiable.
+
+**Backend contract gaps (follow-ups, do not block browse):** list/search has offset pagination (`next_offset`) but no `kind=mesh\|image` filter, no cursor token beyond integer offset, and no server-side “hot members only” page. Frontend can filter `mesh` / `image` / `streamable` on the returned page. 7z/rar listing stays best-effort. Mesh raster thumbs stay a stub (`DerivePreviewJob` copies hot images only).
 
 `DerivePreviewJob` copies up to 24 hot image members (shallow / names like preview, thumb, cover, hero) into `VIBE_PREVIEW_ROOT`. Mesh members stay lazy: the tree shows a Load action; Three.js only runs after a click.
 
@@ -462,10 +476,10 @@ All endpoints except `POST /api/v1/session`, invite preview/redeem, and `GET /up
 - `POST /api/v1/duplicates/:id/keep` · `POST .../dismiss` · `POST .../merge` `{ source_ids?|asset_ids?, target_id?, title?, archive_member_ids? }` (owner/contributor; merge calls `ModelComposer` inside the path jail; **422** `{ "error": "merge_unsupported" }` if any selected member is archive-resident)
 - `POST /api/v1/geometry/writeback` `{ asset_id \| archive_member_id, geometry_digest }` (`GeometryWriteback.apply!` in-process; `X-Geometry-Token: $VIBE_GEOMETRY_TOKEN` or a signed-in owner/contributor)
 - `GET /api/v1/models/:id/archive_members?asset_id=&prefix=&q=&view=tree|flat&limit=&offset=` (nested children by default; `q` searches paths; `view=flat` paginates every member)
-- `GET /api/v1/archive_members/:id` (size, path, content type, streamable)
-- `GET /api/v1/archive_members/:id/content` (stream one member; `?download=1` for attachment)
+- `GET /api/v1/archive_members/:id` (size, path, content type, `streamable`, `accept_ranges`, `content_path`, `preview_path`, stream budgets)
+- `GET /api/v1/archive_members/:id/content` (stream-one member, 64 KiB chunks, `Accept-Ranges: bytes`; `Range` → 206; `?download=1` for attachment; abortable)
 - `GET /api/v1/assets/:id/content` (lazy mesh / file stream)
-- `GET /api/v1/archive_members/:id/preview` (derived thumb or inline image; mesh returns `use_content`)
+- `GET /api/v1/archive_members/:id/preview` (derived thumb or inline image stream; mesh returns `use_content`)
 - `GET /api/v1/search?q=&creator_slug=&creator=&tag=&tags[]=&cover_status=&has_cover=&has_preview=&library_id=&uploaded_by_id=&offset=&limit=` (Meilisearch when configured; Postgres `ILIKE` fallback). Facets: `tags`, `creator_slug`, `cover_status`, `has_cover`, `has_preview`. `has_cover=true` matches the gallery "Has cover" chip (`cover_status=ready`). `creator` is an alias for `creator_slug`. Offset pagination (`offset` / `limit`, max 60) — not the gallery model-id `cursor`. Response adds `capped` when the fallback hit `VIBE_SEARCH_FALLBACK_CAP`.
 - `GET /covers/:id.webp` generated cover bytes (libvips webp under `VIBE_COVER_ROOT`)
 - `POST /api/v1/covers/writeback` `{ model_id, status: "ready"|"failed", cover_url?, cover_placeholder?, asset_id?, cache_key? }` (`GenerateCoverJob` uses `CoverWriteback.apply!` in-process; `X-Cover-Token: $VIBE_COVER_TOKEN` or Bearer user)

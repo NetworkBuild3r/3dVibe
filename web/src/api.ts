@@ -211,6 +211,7 @@ export type ArchiveMember = {
   mesh: boolean;
   image: boolean;
   streamable: boolean;
+  accept_ranges?: boolean;
   extension: string;
   listing_source: string | null;
   child_count: number | null;
@@ -245,6 +246,10 @@ export type ArchiveMemberDetail = ArchiveMember & {
   asset_kind: string;
   archive_support: string | null;
   mtime: string | null;
+  stream_max_bytes?: number;
+  stream_max_seconds?: number;
+  content_path?: string | null;
+  preview_path?: string | null;
 };
 
 export type CurationTarget = {
@@ -775,18 +780,25 @@ export const api = {
     return data as { upload: LibraryUpload };
   },
   assetContentUrl: (assetId: number) => `${API_BASE}/assets/${assetId}/content`,
+  // Stream-one member bytes. Abort the fetch on navigate-away.
+  // Supports Range: bytes=start-end (206). Mesh preview is this URL, not /preview.
   archiveMemberContentUrl: (id: number, download = false) =>
     `${API_BASE}/archive_members/${id}/content${download ? "?download=1" : ""}`,
+  // Derived thumb or inline image. Mesh members return 422 { error: "use_content", content_path }.
   archiveMemberPreviewUrl: (id: number) => `${API_BASE}/archive_members/${id}/preview`
 };
 
-export async function fetchAuthedBlob(url: string): Promise<Blob> {
+export async function fetchAuthedBlob(url: string, init: RequestInit = {}): Promise<Blob> {
   const current = token();
-  const response = await fetch(url, {
-    headers: current ? { Authorization: `Bearer ${current}` } : undefined
-  });
+  const headers = new Headers(init.headers);
+  if (current && !headers.has("Authorization")) headers.set("Authorization", `Bearer ${current}`);
+  const response = await fetch(url, { ...init, headers });
   if (!response.ok) throw new Error("Could not load file");
   return response.blob();
+}
+
+export function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
 }
 
 export const CHUNK_SIZE = 1024 * 1024;

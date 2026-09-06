@@ -23,6 +23,7 @@ class ArchiveVisibilityTest < ActionDispatch::IntegrationTest
     FileUtils.rm_rf(@root)
     FileUtils.rm_rf(ArchiveMember.preview_root)
     ENV.delete("VIBE_ARCHIVE_STREAM_BYTES")
+    ENV.delete("VIBE_ARCHIVE_STREAM_SECONDS")
   end
 
   test "archive tree is nested with lazy children and search" do
@@ -63,12 +64,46 @@ class ArchiveVisibilityTest < ActionDispatch::IntegrationTest
     assert_equal "model/stl", detail["content_type"]
     assert detail["mesh"]
     assert detail["streamable"]
+    assert detail["accept_ranges"]
     assert_equal "minis.zip", detail["asset_filename"]
+    assert_equal "/api/v1/archive_members/#{member.id}/content", detail["content_path"]
+    assert_equal ArchiveIndexer.stream_bytes, detail["stream_max_bytes"]
+    assert_equal ArchiveIndexer.stream_seconds, detail["stream_max_seconds"]
 
     get "/api/v1/archive_members/#{member.id}/content", headers: @headers
     assert_response :success
     assert_includes response.body, "solid hero"
     assert_match(%r{model/stl}, response.media_type)
+    assert_equal "bytes", response.headers["Accept-Ranges"]
+    assert_match(/no-store/, response.headers["Cache-Control"].to_s)
+    assert_equal member.uncompressed_size.to_s, response.headers["Content-Length"]
+    refute File.exist?(File.join(@root, "packed-minis/hero.stl"))
+  end
+
+  test "content honors a byte Range without buffering the whole member" do
+    member = ArchiveMember.joins(:asset).find_by!(internal_path: "hero.stl", assets: { vibe_model_id: @model.id })
+    get "/api/v1/archive_members/#{member.id}/content",
+        headers: @headers.merge("Range" => "bytes=0-4")
+    assert_response 206
+    assert_equal "solid", response.body
+    assert_equal "bytes 0-4/#{member.uncompressed_size}", response.headers["Content-Range"]
+    assert_equal "5", response.headers["Content-Length"]
+    assert_equal "bytes", response.headers["Accept-Ranges"]
+  end
+
+  test "unsatisfiable Range is 416" do
+    member = ArchiveMember.joins(:asset).find_by!(internal_path: "hero.stl", assets: { vibe_model_id: @model.id })
+    get "/api/v1/archive_members/#{member.id}/content",
+        headers: @headers.merge("Range" => "bytes=9999-10000")
+    assert_response 416
+    assert_equal "bytes */#{member.uncompressed_size}", response.headers["Content-Range"]
+  end
+
+  test "directory members are not streamable" do
+    folder = ArchiveMember.joins(:asset).find_by!(internal_path: "extras/", assets: { vibe_model_id: @model.id })
+    get "/api/v1/archive_members/#{folder.id}/content", headers: @headers
+    assert_response :unprocessable_entity
+    assert_match(/not streamable|directory/i, response.parsed_body["details"].join)
   end
 
   test "streams an image preview and refuses a mesh preview" do

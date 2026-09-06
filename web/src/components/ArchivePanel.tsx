@@ -427,7 +427,8 @@ function ArchiveThumb({ url }: { url: string }) {
   useEffect(() => {
     let objectUrl: string | null = null;
     let cancelled = false;
-    fetchAuthedBlob(url)
+    const abort = new AbortController();
+    fetchAuthedBlob(url, { signal: abort.signal })
       .then((blob) => {
         if (cancelled) return;
         objectUrl = URL.createObjectURL(blob);
@@ -436,6 +437,7 @@ function ArchiveThumb({ url }: { url: string }) {
       .catch(() => undefined);
     return () => {
       cancelled = true;
+      abort.abort();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [url]);

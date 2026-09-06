@@ -36,18 +36,18 @@ module API
             asset_filename: member.asset.filename,
             asset_kind: member.asset.kind,
             archive_support: member.asset.archive_support,
-            mtime: member.mtime
+            mtime: member.mtime,
+            accept_ranges: member.streamable?,
+            stream_max_bytes: ArchiveIndexer.stream_bytes,
+            stream_max_seconds: ArchiveIndexer.stream_seconds,
+            content_path: member.streamable? ? "/api/v1/archive_members/#{member.id}/content" : nil,
+            preview_path: "/api/v1/archive_members/#{member.id}/preview"
           )
         }
       end
 
       def content
-        member = find_member
-        tmp = ArchiveIndexer.new(member.asset).extract_member(member.internal_path)
-        send_file tmp.path,
-                  filename: member.basename.presence || File.basename(member.internal_path),
-                  type: member.content_type.presence || "application/octet-stream",
-                  disposition: params[:download].present? ? "attachment" : "inline"
+        stream_member!(find_member, max_bytes: ArchiveIndexer.stream_bytes, download: params[:download].present?)
       end
 
       def preview
@@ -62,14 +62,7 @@ module API
         end
 
         if member.image? && member.streamable?
-          tmp = ArchiveIndexer.new(member.asset).extract_member(
-            member.internal_path,
-            max_bytes: ArchiveIndexer.preview_bytes
-          )
-          send_file tmp.path,
-                    filename: member.basename,
-                    type: member.content_type.presence || "application/octet-stream",
-                    disposition: "inline"
+          stream_member!(member, max_bytes: ArchiveIndexer.preview_bytes)
           return
         end
 
@@ -88,6 +81,54 @@ module API
         ArchiveMember.joins(asset: :vibe_model)
                      .where(vibe_models: { library_id: accessible_libraries.select(:id) })
                      .find(params[:id])
+      end
+
+      def stream_member!(member, max_bytes:, download: false)
+        raise ArgumentError, "Member is not streamable" unless member.streamable?
+
+        streamer = ArchiveMemberStreamer.for_member(member)
+        total = streamer.known_size
+        raise ArgumentError, "Refusing to load oversized member" if total && total > max_bytes
+
+        range = ArchiveMemberStreamer.parse_range(request.get_header("HTTP_RANGE"), total: total)
+        if range == :unsatisfiable
+          response.set_header("Content-Range", "bytes */#{total}")
+          head :range_not_satisfiable
+          return
+        end
+
+        filename = member.basename.presence || File.basename(member.internal_path)
+        response.set_header("Accept-Ranges", "bytes")
+        response.set_header("Cache-Control", "private, no-store")
+        response.set_header("X-Accel-Buffering", "no")
+        response.set_header("Content-Type", member.content_type.presence || "application/octet-stream")
+        response.set_header(
+          "Content-Disposition",
+          ActionDispatch::Http::ContentDisposition.format(
+            disposition: download ? "attachment" : "inline",
+            filename: filename
+          )
+        )
+
+        offset = 0
+        length = nil
+        if range
+          response.status = 206
+          response.set_header("Content-Range", "bytes #{range.first}-#{range.last}/#{range.total}")
+          response.set_header("Content-Length", range.length.to_s)
+          offset = range.first
+          length = range.length
+        elsif total
+          response.set_header("Content-Length", total.to_s)
+        end
+
+        self.response_body = Enumerator.new do |yielder|
+          streamer.each(max_bytes: max_bytes, offset: offset, length: length) do |chunk|
+            yielder << chunk
+          end
+        end
+      rescue ArchiveShellLister::Error => e
+        raise ArgumentError, e.message
       end
 
       def list_payload(model, nodes, total, limit, offset, view:, extra: {}, counts: {})
@@ -134,6 +175,7 @@ module API
           mesh: member.mesh?,
           image: member.image?,
           streamable: member.streamable?,
+          accept_ranges: member.streamable?,
           extension: member.extension,
           listing_source: member.listing_source,
           child_count: member.directory? ? child_count.to_i : nil,

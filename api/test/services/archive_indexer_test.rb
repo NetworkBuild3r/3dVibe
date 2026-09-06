@@ -27,6 +27,7 @@ class ArchiveIndexerTest < ActiveSupport::TestCase
     FileUtils.rm_rf(@root)
     ENV.delete("VIBE_ARCHIVE_MEMBER_LIMIT")
     ENV.delete("VIBE_ARCHIVE_STREAM_BYTES")
+    ENV.delete("VIBE_ARCHIVE_STREAM_SECONDS")
   end
 
   test "indexes zip members and synthesizes parent folders" do
