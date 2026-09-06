@@ -75,7 +75,7 @@ Background jobs:
 
 - `IncrementalScanJob` — incremental NFS walk (or one folder prefix after an upload/curation apply); honors `VIBE_SCAN_*` budgets and re-enqueues when budgeted
 - `ScheduledScanJob` — sidekiq-cron entry that queues a scan for every library (default every 6 hours)
-- `IndexVibeModelJob` / `RemoveVibeModelIndexJob` / `ReindexSearchJob` — keep Meilisearch in sync after scan, upload, destroy, and curation apply
+- `IndexVibeModelJob` / `RemoveVibeModelIndexJob` / `ReindexSearchJob` — keep Meilisearch in sync after scan upserts, upload, destroy, curation apply, cover write-back, and creator assign
 - `DerivePreviewJob` — copies hot image members out of an archive into a preview cache (mesh rasterization is still a stub)
 - `FetchCurationProposalsJob` — polls the curator sidecar (or in-process stub), upserts pending `CurationProposal` rows by stable `sidecar_ref`, and writes per-library `last_polled_at` / `last_provider` / `last_error`
 - `ApplyCurationProposalJob` — applies an approved rename/move/merge (tags apply in-request)
@@ -131,7 +131,9 @@ Default owner (override with `VIBE_OWNER_EMAIL` / `VIBE_OWNER_PASSWORD`):
 
 Open the web app, sign in, scroll the gallery, type `hero` (Packed Minis via the member path), open **Packed Minis**, expand `minis.zip`, search within the archive, and load `hero.stl` or `preview/hero.png`. Meshes never auto-load.
 
-Search indexes title, folder path, tags, asset filenames/paths, archive-member paths, uploader, creator name/slug, `updated_at`, and `has_preview` (mesh or previewable archive member). Meilisearch facets/filters `creator_slug` (and still `tags` / `has_preview`). If Meilisearch is unreachable, `GET /api/v1/search` answers from Postgres `ILIKE` (including creator name/slug) and sets `fallback: true`.
+Search indexes title, folder path, tags, asset filenames/paths, archive-member paths, uploader, creator name/slug, `updated_at`, `has_preview` (mesh or previewable archive member), `cover_status`, and `has_cover` (`cover_status=ready`). Meilisearch facets/filters `creator_slug` (alias `creator`), `tags`, `cover_status`, and `has_cover` — the same chips the gallery uses (creator / tag / cover). `VibeModel` `after_commit` plus explicit scan/curation hooks reindex after scan upserts, curation apply, cover write-back, and creator assign.
+
+If Meilisearch is unreachable or `MEILI_URL` is unset, `GET /api/v1/search` answers from Postgres and sets `fallback: true` (or `engine: "postgres"` / `fallback: false` when Meili was never configured). The fallback applies the same chip filters on indexed columns (`creator_id`, `cover_status`, tags). Text `q` uses staged `ILIKE` (title / folder / synopsis, then creator, uploader, tags, then a **capped** asset and archive-member scan) so a NAS-scale `archive_members` join cannot melt the catalog. When `pg_trgm` is present (enabled by migration, GIN `gin_trgm_ops` on those text columns), `ILIKE '%q%'` can use the indexes; when it is not, the same queries still run but stay LIMIT-capped. `estimated_total` for a text fallback is the capped candidate set (default `VIBE_SEARCH_FALLBACK_CAP=250`); `capped: true` means treat that total as a floor, not a full count. Filter-only requests (`q` blank) are not capped and paginate in SQL.
 
 ### Print from browser (mock printer)
 
@@ -257,6 +259,8 @@ Environment variables (see `.env.example`):
 | `MEILI_MASTER_KEY` | Admin key used to create the index and write documents |
 | `MEILI_SEARCH_KEY` | Optional search-only key. When blank, search uses the master key |
 | `MEILI_TIMEOUT` | HTTP timeout in seconds for Meili calls (default 2). Failures fall back to Postgres |
+| `VIBE_SEARCH_FALLBACK_CAP` | Max model ids the Postgres `ILIKE` fallback will collect for a text `q` (default 250, clamp 1–1000). Chip-only filters are not capped |
+| `VIBE_SEARCH_FALLBACK_JOIN_SCAN` | Max asset / archive-member rows scanned per source during fallback text search (default 500, clamp 50–2000) |
 | `VIBE_ARCHIVE_MEMBER_LIMIT` | Max file members indexed per archive (default 10_000). Parents are still synthesized. Excess sets `archive_truncated` |
 | `VIBE_ARCHIVE_STREAM_BYTES` | Cap for a single member stream (default 32 MiB). The whole zip is never loaded into RAM |
 | `VIBE_ARCHIVE_PREVIEW_BYTES` | Cap for derived/inline image previews (default 4 MiB) |
@@ -444,7 +448,7 @@ All endpoints except `POST /api/v1/session`, invite preview/redeem, and `GET /up
 - `GET /api/v1/ops` · `GET /api/v1/ops?library_id=` same snapshot for every library the caller can curate (or one library)
 - `GET /api/v1/creators` (`id`, `slug`, `name`, `source`, `model_count`)
 - `GET /api/v1/creators/:id` or `GET /api/v1/creators/:slug` (paginated models; `cursor` / `limit` like the catalog)
-- `GET /api/v1/models?cursor=&limit=` (cursor pagination; no owner ACL filter; includes `liked`, `like_count`, `bookmark_folder_ids`, nullable `creator: { id, slug, name }`, `cover_status`, `cover_url`, `cover_placeholder`)
+- `GET /api/v1/models?cursor=&limit=&creator_slug=&creator=&tag=&tags[]=&cover_status=&has_cover=` (cursor pagination on `updated_at,id`; no owner ACL filter; includes `liked`, `like_count`, `bookmark_folder_ids`, nullable `creator: { id, slug, name }`, `cover_status`, `cover_url`, `cover_placeholder`). Chip filters are optional and keep the unfiltered gallery when omitted. `has_cover=true` is `cover_status=ready`. `limit` max 60. Text `q` is **not** a catalog param — use `GET /search`.
 - `GET /api/v1/models/:id`
 - `POST /api/v1/models/:id/like` · `DELETE /api/v1/models/:id/like`
 - `POST /api/v1/models/merge` `{ library_id, source_ids?|asset_ids?, target_id?|title? }` (owner/contributor)
@@ -462,7 +466,7 @@ All endpoints except `POST /api/v1/session`, invite preview/redeem, and `GET /up
 - `GET /api/v1/archive_members/:id/content` (stream one member; `?download=1` for attachment)
 - `GET /api/v1/assets/:id/content` (lazy mesh / file stream)
 - `GET /api/v1/archive_members/:id/preview` (derived thumb or inline image; mesh returns `use_content`)
-- `GET /api/v1/search?q=&tag=&tags[]=&has_preview=&library_id=&uploaded_by_id=&creator_slug=&offset=&limit=` (Meilisearch when configured; Postgres `ILIKE` fallback; facet/filter `creator_slug`)
+- `GET /api/v1/search?q=&creator_slug=&creator=&tag=&tags[]=&cover_status=&has_cover=&has_preview=&library_id=&uploaded_by_id=&offset=&limit=` (Meilisearch when configured; Postgres `ILIKE` fallback). Facets: `tags`, `creator_slug`, `cover_status`, `has_cover`, `has_preview`. `has_cover=true` matches the gallery "Has cover" chip (`cover_status=ready`). `creator` is an alias for `creator_slug`. Offset pagination (`offset` / `limit`, max 60) — not the gallery model-id `cursor`. Response adds `capped` when the fallback hit `VIBE_SEARCH_FALLBACK_CAP`.
 - `GET /covers/:id.webp` generated cover bytes (libvips webp under `VIBE_COVER_ROOT`)
 - `POST /api/v1/covers/writeback` `{ model_id, status: "ready"|"failed", cover_url?, cover_placeholder?, asset_id?, cache_key? }` (`GenerateCoverJob` uses `CoverWriteback.apply!` in-process; `X-Cover-Token: $VIBE_COVER_TOKEN` or Bearer user)
 - `GET /api/v1/curator_settings` owner-only — `{ curator_setting: { provider, ollama_url, ollama_model, xai_api_key_status: "set"|"missing" } }`. **Never** returns the raw xAI key. 403 for everyone else.
@@ -488,6 +492,21 @@ All endpoints except `POST /api/v1/session`, invite preview/redeem, and `GET /up
 - `PATCH /api/v1/uploads/:id` (raw chunk, `Upload-Offset` header, or JSON `chunk_b64`)
 - `POST /api/v1/uploads/:id/complete`
 - `POST /api/v1/uploads/direct` (multipart convenience for small files / tests)
+
+### Gallery / search query contract
+
+| Param | `GET /models` (gallery) | `GET /search` |
+| --- | --- | --- |
+| `q` | ignored | text query (Meili or capped Postgres `ILIKE`) |
+| `creator_slug` / `creator` | filter by creator slug | same + facet `creator_slug` |
+| `tag` / `tags[]` | AND tag names | same + facet `tags` |
+| `cover_status` | `missing` \| `pending` \| `ready` \| `failed` | same + facet `cover_status` |
+| `has_cover` | `true` = ready cover (gallery "Has cover" chip) | same + facet `has_cover` |
+| `cursor` | model id cursor (`updated_at,id`) | not used (do not send a gallery cursor here) |
+| `offset` | not used | Meili / fallback page offset |
+| `limit` | page size, max 60 | page size, max 60 |
+
+`has_cover=true` ≡ `cover_status=ready`. Unfiltered `GET /models?cursor=&limit=` is unchanged. Search response includes `engine`, `fallback`, `capped`, `estimated_total`, `next_offset`, and `facets`.
 
 ## Tests
 
