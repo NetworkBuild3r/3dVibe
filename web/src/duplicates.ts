@@ -2,7 +2,11 @@ import { ApiError, type DuplicateAsset, type DuplicateConfidence, type Duplicate
 
 export const MERGE_UNSUPPORTED = "merge_unsupported";
 export const MERGE_UNSUPPORTED_COPY =
-  "Merge needs on-disk models. Archive hits can be Kept or Dismissed — we don't extract packs this slice.";
+  "Merge needs on-disk files. Extract the archive hit first (stream one member onto disk), then merge — or use Extract & merge.";
+export const EXTRACT_COPY =
+  "Extract copies the selected zip member into a first-level model folder. The pack stays on disk. Nothing is deleted.";
+export const EXTRACT_AND_MERGE_COPY =
+  "Extract the archive members onto disk, then merge the loose copies into the target. Confirmed HITL only — the source zip is never rewritten or deleted.";
 export const GEOMETRY_ARCHIVE_LEGEND = "Geometry matches across loose files and meshes inside zip/7z/rar.";
 
 export const STATUS_FILTERS = [
@@ -151,6 +155,24 @@ export function groupHasArchive(group: DuplicateGroup) {
 export function allMembersMergeable(group: DuplicateGroup) {
   const members = groupMembers(group);
   return members.length > 0 && members.every((member) => member.mergeable !== false);
+}
+
+export function archiveMemberIds(group: DuplicateGroup) {
+  return groupMembers(group)
+    .filter(isArchiveResident)
+    .map((member) => member.archive_member_id ?? member.id)
+    .filter((id): id is number => Number.isFinite(id));
+}
+
+export function looseAssetIds(group: DuplicateGroup) {
+  return groupMembers(group)
+    .filter((member) => !isArchiveResident(member))
+    .map((member) => member.asset_id ?? member.id)
+    .filter((id): id is number => Number.isFinite(id));
+}
+
+export function canExtractArchiveMembers(group: DuplicateGroup) {
+  return group.status === "open" && archiveMemberIds(group).length > 0;
 }
 
 export function memberKey(member: DuplicateMember) {

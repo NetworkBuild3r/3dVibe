@@ -2,13 +2,18 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import type { DuplicateGroup, DuplicateMember } from "../api";
 import {
+  EXTRACT_AND_MERGE_COPY,
+  EXTRACT_COPY,
   MERGE_UNSUPPORTED_COPY,
   allMembersMergeable,
+  archiveMemberIds,
+  canExtractArchiveMembers,
   confidenceMeta,
   coverFromMembers,
   digestSnippet,
   groupMembers,
   isArchiveResident,
+  looseAssetIds,
   memberColumns,
   memberDisplayPath,
   memberKey,
@@ -104,6 +109,8 @@ export function DuplicateReview({
   onKeep,
   onDismiss,
   onMerge,
+  onExtract,
+  onExtractAndMerge,
   onClose
 }: {
   group: DuplicateGroup;
@@ -113,6 +120,13 @@ export function DuplicateReview({
   onKeep: () => void;
   onDismiss: () => void;
   onMerge: (payload: { source_ids: number[]; target_id: number; title?: string }) => void;
+  onExtract?: (payload: { archive_member_ids: number[]; target_id?: number; title?: string }) => void;
+  onExtractAndMerge?: (payload: {
+    archive_member_ids: number[];
+    asset_ids: number[];
+    target_id?: number;
+    title?: string;
+  }) => void;
   onClose: () => void;
 }) {
   const columns = useMemo(() => memberColumns(group), [group]);
@@ -120,12 +134,13 @@ export function DuplicateReview({
   const open = group.status === "open";
   const showActions = canReview && open;
   const mergeableSelection = allMembersMergeable(group);
+  const extractable = canExtractArchiveMembers(group);
   const [targetId, setTargetId] = useState(columns[0]?.modelId);
-  const [confirming, setConfirming] = useState(false);
+  const [confirming, setConfirming] = useState<"merge" | "extract-merge" | null>(null);
 
   useEffect(() => {
     setTargetId(columns[0]?.modelId);
-    setConfirming(false);
+    setConfirming(null);
   }, [group.id, columns]);
 
   const target = columns.find((column) => column.modelId === targetId) || columns[0];
@@ -139,7 +154,29 @@ export function DuplicateReview({
       target_id: target.modelId,
       title: target.title
     });
-    setConfirming(false);
+    setConfirming(null);
+  }
+
+  function extractPayload() {
+    return {
+      archive_member_ids: archiveMemberIds(group),
+      target_id: target?.modelId,
+      title: target?.title
+    };
+  }
+
+  function submitExtract() {
+    if (!extractable || !onExtract) return;
+    onExtract(extractPayload());
+  }
+
+  function submitExtractAndMerge() {
+    if (!extractable || !onExtractAndMerge) return;
+    onExtractAndMerge({
+      ...extractPayload(),
+      asset_ids: looseAssetIds(group)
+    });
+    setConfirming(null);
   }
 
   return (
@@ -261,14 +298,35 @@ export function DuplicateReview({
                 disabled={busy || !canMerge}
                 onClick={() => {
                   if (!canMerge) return;
-                  setConfirming(true);
+                  setConfirming("merge");
                 }}
                 className="rounded-lg border border-white/15 px-3 py-1.5 text-sm text-slate-200 disabled:opacity-60"
               >
                 Merge
               </button>
+              {extractable && onExtract ? (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={submitExtract}
+                  className="rounded-lg border border-white/15 px-3 py-1.5 text-sm text-slate-200 disabled:opacity-60"
+                >
+                  Extract
+                </button>
+              ) : null}
+              {extractable && onExtractAndMerge ? (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setConfirming("extract-merge")}
+                  className="rounded-lg border border-accent-500/40 px-3 py-1.5 text-sm text-accent-200 disabled:opacity-60"
+                >
+                  Extract & merge
+                </button>
+              ) : null}
             </div>
             {!mergeableSelection ? <p className="mt-2 text-xs text-slate-500">{MERGE_UNSUPPORTED_COPY}</p> : null}
+            {extractable ? <p className="mt-1 text-xs text-slate-500">{EXTRACT_COPY}</p> : null}
             <p className={`text-xs text-slate-500 ${mergeableSelection ? "mt-2" : "mt-1"}`}>
               Keep both in the library. Dismiss means it is not a duplicate — reversible from the Dismissed filter, not a
               delete. Merge reparents into the target model; files stay on NFS under the path jail and are never
@@ -282,7 +340,7 @@ export function DuplicateReview({
         )}
       </aside>
 
-      {confirming && canMerge && target ? (
+      {confirming === "merge" && canMerge && target ? (
         <div className="absolute inset-0 z-50 grid place-items-center bg-ink-950/70 px-4">
           <div className="w-full max-w-md rounded-2xl border border-white/10 bg-ink-900 p-5 shadow-2xl">
             <h3 className="font-display text-xl text-white">Merge into {target.title}?</h3>
@@ -307,7 +365,38 @@ export function DuplicateReview({
               <button
                 type="button"
                 disabled={busy}
-                onClick={() => setConfirming(false)}
+                onClick={() => setConfirming(null)}
+                className="rounded-lg border border-white/15 px-3 py-1.5 text-sm"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {confirming === "extract-merge" && extractable && target ? (
+        <div className="absolute inset-0 z-50 grid place-items-center bg-ink-950/70 px-4">
+          <div className="w-full max-w-md rounded-2xl border border-white/10 bg-ink-900 p-5 shadow-2xl">
+            <h3 className="font-display text-xl text-white">Extract & merge into {target.title}?</h3>
+            <p className="mt-2 text-sm text-slate-400">{EXTRACT_AND_MERGE_COPY}</p>
+            <p className="mt-2 text-xs text-slate-500">
+              Selected zip members stream into <span className="text-slate-300">{target.title}</span>. The pack stays
+              where it is.
+            </p>
+            <div className="mt-5 flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={submitExtractAndMerge}
+                className="rounded-lg bg-accent-500 px-3 py-1.5 text-sm text-ink-950 disabled:opacity-60"
+              >
+                Extract & merge
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => setConfirming(null)}
                 className="rounded-lg border border-white/15 px-3 py-1.5 text-sm"
               >
                 Cancel

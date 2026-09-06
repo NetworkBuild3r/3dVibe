@@ -36,7 +36,7 @@ module API
       end
 
       MERGE_UNSUPPORTED = "merge_unsupported"
-      MERGE_UNSUPPORTED_MESSAGE = "Archive-resident members cannot be merged out of a zip. Keep or dismiss the group instead."
+      MERGE_UNSUPPORTED_MESSAGE = "Archive-resident members cannot be merged out of a zip. Extract them to disk first, then merge, or call extract_and_merge."
 
       def merge
         group = find_group
@@ -47,7 +47,7 @@ module API
         record = ModelComposer.new(group.library, performed_by: current_user).merge!(
           source_ids: params[:source_ids] || params[:model_ids],
           asset_ids: params[:asset_ids],
-          target_id: params[:target_id],
+          target_id: params[:target_id] || params[:target_model_id],
           title: params[:title],
           folder_name: params[:folder_name]
         )
@@ -61,6 +61,38 @@ module API
           merge: record.as_api,
           model: detail_payload(target)
         }
+      end
+
+      def extract
+        group = find_group
+        return if require_curator!(group.library)
+        return unless open!(group)
+
+        result = ArchiveMemberExtractor.new(group.library, performed_by: current_user).extract!(
+          archive_member_ids: extract_member_ids(group),
+          target_id: extract_destination_id(group),
+          title: params[:title],
+          folder_name: params[:folder_name]
+        )
+        render json: extract_payload(result, group: group), status: :created
+      end
+
+      def extract_and_merge
+        group = find_group
+        return if require_curator!(group.library)
+        return unless open!(group)
+
+        result = ArchiveMemberExtractor.new(group.library, performed_by: current_user).extract_and_merge!(
+          archive_member_ids: extract_member_ids(group),
+          source_ids: params[:source_ids] || params[:model_ids],
+          asset_ids: params.key?(:asset_ids) ? params[:asset_ids] : default_loose_asset_ids(group),
+          target_id: extract_destination_id(group),
+          title: params[:title],
+          folder_name: params[:folder_name]
+        )
+        review = record_review!(group, DuplicateReview::MERGE, extract_merge_payload(result))
+        group.update!(status: DuplicateGroup::MERGED)
+        render json: extract_payload(result, group: group.reload, review: review), status: :created
       end
 
       private
@@ -99,9 +131,67 @@ module API
       def archive_merge_blocked?(group)
         return true if selected_archive_member_ids.any?
         return true if selected_member_payloads_include_archive?
+        return false if explicit_on_disk_selection?
         return true if group.duplicate_group_members.where.not(archive_member_id: nil).exists?
 
         false
+      end
+
+      def explicit_on_disk_selection?
+        Array(params[:source_ids] || params[:model_ids]).any? || Array(params[:asset_ids]).any?
+      end
+
+      def extract_target_id
+        params[:target_model_id].presence || params[:target_id].presence
+      end
+
+      def extract_destination_id(group)
+        return extract_target_id if extract_target_id
+        return if params[:folder_name].present? || params[:title].present?
+
+        default_extract_target_id(group)
+      end
+
+      def extract_member_ids(group)
+        ids = selected_archive_member_ids
+        return ids if ids.any?
+
+        group.duplicate_group_members.where.not(archive_member_id: nil).pluck(:archive_member_id)
+      end
+
+      def default_extract_target_id(group)
+        group.duplicate_group_members.filter_map(&:asset).first&.vibe_model_id
+      end
+
+      def default_loose_asset_ids(group)
+        group.duplicate_group_members.filter_map(&:asset_id)
+      end
+
+      def extract_payload(result, group: nil, review: nil)
+        target = accessible_models.includes(:tags, :uploaded_by, :creator, assets: %i[archive_members uploaded_by])
+                                 .find(result.model.id)
+        payload = {
+          model: detail_payload(target),
+          assets: result.extracted,
+          extracted: result.extracted,
+          merge: result.merge&.as_api
+        }
+        payload[:group] = group.as_api(viewer: current_user) if group
+        payload[:review] = review.as_api if review
+        payload
+      end
+
+      def extract_merge_payload(result)
+        {
+          "archive_member_ids" => Array(params[:archive_member_ids]),
+          "source_ids" => Array(params[:source_ids] || params[:model_ids]),
+          "asset_ids" => Array(params[:asset_ids]),
+          "target_id" => extract_target_id,
+          "title" => params[:title],
+          "folder_name" => params[:folder_name],
+          "extracted" => result.extracted,
+          "merge_id" => result.merge&.id
+        }.compact
       end
 
       def selected_archive_member_ids
