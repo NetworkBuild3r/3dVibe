@@ -1,30 +1,61 @@
 # frozen_string_literal: true
 
+require_relative "catalog"
+require_relative "config"
+
 module VibeCurator
   module Prompt
     module_function
 
-    def system_prompt(budget:)
+    def system_prompt(budget:, max_per_kind: Config::DEFAULT_MAX_PER_KIND, kind_priority: Config::DEFAULT_KIND_PRIORITY, min_confidence: 0.0)
+      priority = Array(kind_priority).join(", ")
+      confidence_line =
+        if min_confidence.to_f.positive?
+          "- If you return confidence, use 0.0–1.0. The sidecar drops scores below #{min_confidence}."
+        else
+          "- If you return confidence, use 0.0–1.0. Omit it when you do not have one."
+        end
+
       <<~TEXT
         You are the 3dvibe live curator sidecar. Rails already owns HITL review
         and path-jailed apply. You only suggest. Never approve, never delete,
-        never invent NFS paths.
+        never invent NFS paths, files, folders, or creators.
 
         Return JSON only:
         {"proposals":[{ "kind":"tag|rename|move|merge|organize", "summary":"...", "payload":{...}, "sidecar_ref":"optional", "rationale":"optional", "confidence":optionalNumber }]}
 
-        Rules:
-        - kinds only: tag, rename, move, merge, organize
-        - At most #{budget} proposals. Prefer high-value catalog fixes.
+        Catalog fields you MUST use (already on each model / library):
+        creators_index, folder_name, title, tags, creator, cover_status,
+        mesh_count, archive_count, has_archives, sample_paths.
+        sample_paths are jail-relative hints only — never invent new files.
+
+        Kind heuristics (prefer high-signal, skip spam):
+        - tag: only when tags[] is empty or missing a specific subject token.
+          Prefer tokens from folder_name, title, creator.slug/name, creators_index,
+          and sample_paths. Never propose format-only tags (stl, obj, 3mf, zip,
+          7z, rar, mesh, archive, file, model). Do not repeat tags the model has.
+        - rename: only when folder_name is noisy or pack-styled ("Creator - Title")
+          and a cleaner first-level name is obvious from title/creator.
+          Destination is one first-level segment. Reject ../, .hidden, kits/nested.
+        - move: file-level only when a sample_path belongs under another existing
+          first-level folder. relative_path must be a catalog sample_path (or a
+          jail-relative path under that folder). Never invent paths.
+        - merge: exactly two existing catalog folders. Prefer shared creator,
+          pack+loose split, or near-identical titles. Never merge unrelated creators.
+        - organize: group by a known creators_index slug/name or a shared archive
+          pack. shelf must be a real creator/pack token. model_ids from the catalog.
+
+        Budget:
+        - At most #{budget} proposals, at most #{max_per_kind} per kind.
+        - Prefer kinds in this order: #{priority}.
+        - Skip low-value spam (generic tags, rename-to-*-curated, move-to-*-shelf)
+          unless catalog fields justify it.
         - sidecar_ref should be stable for the same suggestion. If omitted, the sidecar will mint one.
         - Never propose deletes, unlinks, purges, or emptying the library.
-        - Rename/move destinations must be a single first-level folder name. Reject ../, hidden (.foo), and nested kits/nested.
-        - Merge only between two existing first-level folders from the catalog.
-        - Tag/organize using existing model ids / folder_name values from the catalog.
-        - sample_paths are jail-relative hints only — do not invent new files.
-        - Use creator, creators_index, tags, cover_status, mesh_count, archive_count, has_archives, and sample_paths to rank suggestions.
-        - Omit rationale/reason/explanation/confidence unless you actually have them. Never invent a confidence score.
-        - payload shapes:
+        #{confidence_line}
+        - Omit rationale/reason/explanation unless you actually have them. Never invent a confidence score.
+
+        payload shapes:
           tag: model_id or folder_name + tag or tags[]
           rename: model_id or folder_name + to + optional title
           move: model_id or from + to, or relative_path + destination_folder
@@ -34,13 +65,15 @@ module VibeCurator
     end
 
     def user_prompt(catalog)
-      models = Array(catalog["models"])
+      data = catalog.is_a?(Hash) ? catalog.transform_keys(&:to_s) : {}
+      models = Array(data["models"])
       {
-        "library_id" => catalog["library_id"],
-        "library_name" => catalog["library_name"],
-        "library_root" => catalog["library_root"],
-        "creators_index" => catalog["creators_index"],
+        "library_id" => data["library_id"],
+        "library_name" => data["library_name"],
+        "library_root" => data["library_root"],
+        "creators_index" => data["creators_index"],
         "model_count" => models.size,
+        "signals" => Catalog.signals(data),
         "models" => models
       }.to_json
     end

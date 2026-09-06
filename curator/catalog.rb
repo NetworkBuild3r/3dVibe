@@ -46,6 +46,19 @@ module VibeCurator
         .first(limit)
     end
 
+    # Compact briefing for the live prompt. Caps keep the user message small.
+    def signals(catalog, cap: 12)
+      models = Array(catalog.is_a?(Hash) ? catalog["models"] : nil)
+      creators = Array(catalog.is_a?(Hash) ? catalog["creators_index"] : nil)
+      {
+        "untagged" => take_briefs(models.select { |model| Array(model["tags"]).empty? }, cap),
+        "missing_creator" => take_briefs(models.select { |model| model["creator"].nil? }, cap),
+        "archive_packs" => take_briefs(models.select { |model| model["has_archives"] }, cap),
+        "pack_style_folders" => take_briefs(models.select { |model| pack_style_folder?(model["folder_name"]) }, cap),
+        "known_creators" => creators.filter_map { |row| row["slug"].to_s.strip.empty? ? row["name"].to_s : row["slug"].to_s }.first(50)
+      }
+    end
+
     def models_from_root(root)
       CuratorStub.models_from_library_root(root).map { |model| enrich_from_disk(model, root) }
     end
@@ -135,11 +148,53 @@ module VibeCurator
 
     def rank_score(model)
       score = 0
-      score -= 3 if Array(model["tags"]).empty?
-      score -= 2 if model["cover_status"].to_s.empty? || model["cover_status"] == "missing"
-      score -= 1 if model["creator"].nil?
-      score -= 1 if model["has_archives"]
+      tags = Array(model["tags"])
+      folder = model["folder_name"].to_s
+      score -= 4 if tags.empty?
+      score -= 2 if model["cover_status"].to_s.empty? || %w[missing failed].include?(model["cover_status"].to_s)
+      if model["creator"].nil?
+        score -= pack_style_folder?(folder) ? 3 : 1
+      end
+      score -= 2 if model["has_archives"]
+      score -= 1 if model["mesh_count"].to_i >= 3
+      score -= 1 if noisy_folder?(folder)
       score
+    end
+
+    def pack_style_folder?(name)
+      value = name.to_s
+      return true if value.match?(/\s+-\s+/)
+      return true if value.match?(/\A[A-Za-z0-9]+(?:_[A-Za-z0-9]+){2,}\z/) && value.include?("_")
+
+      false
+    end
+
+    def noisy_folder?(name)
+      value = name.to_s.downcase
+      return true if value.match?(/\A(untitled|download|new folder|copy|dump)([-_ ]|$)/)
+      return true if value.match?(/\(\d+\)\z/)
+
+      false
+    end
+
+    def take_briefs(models, cap)
+      Array(models).first(cap).map { |model| model_brief(model) }
+    end
+
+    def model_brief(model)
+      creator = model["creator"]
+      {
+        "id" => model["id"],
+        "folder_name" => model["folder_name"],
+        "title" => model["title"],
+        "creator" => creator.is_a?(Hash) ? (creator["slug"].to_s.empty? ? creator["name"] : creator["slug"]) : nil,
+        "tags" => Array(model["tags"]),
+        "cover_status" => model["cover_status"],
+        "has_archives" => model["has_archives"],
+        "mesh_count" => model["mesh_count"],
+        "archive_count" => model["archive_count"],
+        "sample_paths" => Array(model["sample_paths"])
+      }
     end
 
     def stringify(value)

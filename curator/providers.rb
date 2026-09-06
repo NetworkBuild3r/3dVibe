@@ -35,7 +35,15 @@ module VibeCurator
         content = client.complete(
           model: model,
           messages: [
-            { "role" => "system", "content" => Prompt.system_prompt(budget: Config.batch_size(env: @env)) },
+            {
+              "role" => "system",
+              "content" => Prompt.system_prompt(
+                budget: Config.batch_size(env: @env),
+                max_per_kind: Config.max_per_kind(env: @env),
+                kind_priority: Config.kind_priority(env: @env),
+                min_confidence: Config.min_confidence(env: @env)
+              )
+            },
             { "role" => "user", "content" => Prompt.user_prompt(prompt_catalog) }
           ],
           extra: extra_body

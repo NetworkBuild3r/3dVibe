@@ -245,8 +245,11 @@ Environment variables (see `.env.example`):
 | `VIBE_CURATOR_TOKEN` | Shared bearer token for poll + webhook ingest |
 | `VIBE_CURATOR_TIMEOUT` | Rails HTTP poll timeout in seconds (default 8). Raise this for live inference. |
 | `VIBE_CURATOR_BATCH_SIZE` | Sidecar proposal budget (default 8, max 50) |
-| `VIBE_CURATOR_CATALOG_LIMIT` | Max models sent to a live LLM (default 80; ranked by missing tags/cover) |
+| `VIBE_CURATOR_CATALOG_LIMIT` | Max models sent to a live LLM (default 80; ranked by missing tags/creator/archives) |
 | `VIBE_CURATOR_INFER_TIMEOUT` | Sidecar LLM HTTP timeout in seconds (default 60) |
+| `VIBE_CURATOR_MAX_PER_KIND` | Live batch cap per kind (default 3). Stub ignores this. |
+| `VIBE_CURATOR_KIND_PRIORITY` | Live kind order (default `merge,organize,tag,rename,move`). Stub ignores this. |
+| `VIBE_CURATOR_MIN_CONFIDENCE` | Drop live proposals below this **only when** the provider returned `confidence` (default `0` = off). Never invents a score. |
 | `VIBE_OLLAMA_URL` | Ollama base (`http://host.docker.internal:11434` or `…/v1` for OpenAI-compat) |
 | `VIBE_OLLAMA_MODEL` | Ollama model (default `llama3.1`) |
 | `VIBE_OLLAMA_API` | `openai` or `native` (blank = native unless URL ends in `/v1`) |
@@ -777,7 +780,7 @@ Stub remains the CI default. If runtime says `stub` (or is absent and env/hint r
 | `ollama` | `curator_runtime` / UI / `VIBE_CURATOR_PROVIDER=ollama` | Native `POST {VIBE_OLLAMA_URL}/api/chat` or OpenAI `…/v1/chat/completions`. Runtime `ollama_url` / `ollama_model` override env. |
 | `xai` | `curator_runtime` / UI / `VIBE_CURATOR_PROVIDER=xai` | `POST {XAI_BASE_URL}/chat/completions` with `curator_runtime.xai_api_key` or `XAI_API_KEY` |
 
-The sidecar ranks models using `creator`, `cover_status`, mesh/archive counts, `sample_paths`, and `creators_index`. Live `sidecar_ref` values are minted from kind + payload so upsert stays stable even if the model rotates ids. Optional `rationale` / `reason` / `explanation` / `confidence` are passed through when the provider returns them and omitted otherwise.
+The sidecar ranks models using `creator`, `cover_status`, mesh/archive counts, `sample_paths`, `folder_name` (pack-style / noisy), and `creators_index`, then sends a compact `signals` briefing (untagged, missing creator, archive packs, pack-style folders, known creators) with the live prompt. Live batches are catalog-grounded and kind-budgeted (`VIBE_CURATOR_MAX_PER_KIND`, `VIBE_CURATOR_KIND_PRIORITY`) so a poll does not spam generic format tags or rename-to-`*-curated` / move-to-`*-shelf`. Stub fixtures ignore those knobs. Live `sidecar_ref` values are minted from kind + payload so upsert stays stable even if the model rotates ids. Optional `rationale` / `reason` / `explanation` / `confidence` (0.0–1.0) are passed through when the provider returns them and omitted otherwise — never invented. `VIBE_CURATOR_MIN_CONFIDENCE` drops a scored live proposal only when that field is present.
 
 Responses include `provider` and `X-Curator-Provider`. Path-jail drops `../`, hidden segments, nested rename/move destinations, and any delete intent.
 
