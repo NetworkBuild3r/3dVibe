@@ -23,4 +23,20 @@ class Library < ApplicationRecord
   def latest_scan_run
     scan_runs.recent.first
   end
+
+  def record_curation_poll!(provider:, error: nil)
+    update!(
+      last_polled_at: Time.current,
+      last_provider: provider.to_s.presence,
+      last_error: error.present? ? error.to_s.truncate(2_000) : nil
+    )
+  end
+
+  def curation_as_api
+    {
+      last_polled_at: last_polled_at,
+      last_provider: last_provider,
+      last_error: last_error
+    }
+  end
 end

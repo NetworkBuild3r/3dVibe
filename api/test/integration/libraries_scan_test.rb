@@ -24,6 +24,10 @@ class LibrariesScanTest < ActionDispatch::IntegrationTest
     assert_equal "completed", row.dig("scan", "status")
     assert row.dig("scan", "files_seen").to_i >= 1
     assert row["can_scan"]
+    assert row.key?("curation")
+    assert row["curation"].key?("last_polled_at")
+    assert row["curation"].key?("last_provider")
+    assert row["curation"].key?("last_error")
 
     get "/api/v1/libraries/#{@library.id}", headers: auth_header(@owner)
     assert_response :success

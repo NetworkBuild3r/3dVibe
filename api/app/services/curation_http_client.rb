@@ -3,6 +3,7 @@ require "net/http"
 require "uri"
 
 # HTTP client for an external curation sidecar (Spark later, stub now).
+# Rails polls + upserts; inference stays in Rendering adapters.
 class CurationHttpClient
   class Error < StandardError; end
 
@@ -24,7 +25,11 @@ class CurationHttpClient
       raise Error, "curator HTTP #{response.code}: #{response.body.to_s.truncate(240)}"
     end
 
-    parse_body(response.body)
+    parsed = parse_json(response.body)
+    CurationSidecar::FetchResult.new(
+      drafts: drafts_from(parsed),
+      provider: extract_provider(response, parsed)
+    )
   rescue Timeout::Error, Errno::ECONNREFUSED, Errno::EHOSTUNREACH, SocketError => e
     raise Error, "curator unreachable: #{e.message}"
   end
@@ -44,6 +49,7 @@ class CurationHttpClient
     query = URI.decode_www_form(uri.query || "")
     query << ["library_id", catalog[:library_id].to_s] if catalog[:library_id]
     query << ["library_root", catalog[:library_root].to_s] if catalog[:library_root]
+    query << ["provider_hint", catalog[:provider_hint].to_s] if catalog[:provider_hint]
     uri.query = URI.encode_www_form(query)
     request = Net::HTTP::Get.new(uri.request_uri)
     apply_headers(request)
@@ -69,12 +75,21 @@ class CurationHttpClient
     URI.parse("#{@endpoint}/proposals")
   end
 
-  def parse_body(body)
-    parsed = JSON.parse(body.presence || "{}")
-    items = parsed["proposals"] || parsed["drafts"] || []
-    Array(items).map { |item| draft_from(item) }
+  def parse_json(body)
+    JSON.parse(body.presence || "{}")
   rescue JSON::ParserError => e
     raise Error, "curator returned invalid JSON: #{e.message}"
+  end
+
+  def drafts_from(parsed)
+    items = parsed.is_a?(Hash) ? (parsed["proposals"] || parsed["drafts"] || []) : []
+    Array(items).map { |item| draft_from(item) }
+  end
+
+  def extract_provider(response, parsed)
+    header = response["X-Curator-Provider"].presence || response["X-Provider"].presence
+    body = parsed.is_a?(Hash) ? (parsed["provider"].presence || parsed["provider_hint"].presence) : nil
+    header || body
   end
 
   def draft_from(item)

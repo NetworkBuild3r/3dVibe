@@ -28,6 +28,7 @@ class CurationProposalsTest < ActionDispatch::IntegrationTest
   end
 
   test "owner fetch from stub curator upserts pending proposals" do
+    @library.update!(last_error: "stale", last_polled_at: 1.day.ago)
     post "/api/v1/curation_proposals/fetch",
          params: { library_id: @library.id },
          headers: auth_header(@owner),
@@ -38,6 +39,16 @@ class CurationProposalsTest < ActionDispatch::IntegrationTest
     assert proposals.all? { |item| item["status"] == "pending" }
     assert proposals.any? { |item| item["preview"].is_a?(Hash) }
     assert proposals.any? { |item| item.dig("preview", "before", "folder_name").present? }
+    curation = response.parsed_body.fetch("curation")
+    assert_nil curation["last_error"]
+    assert_equal "stub", curation["last_provider"]
+    assert curation["last_polled_at"].present?
+
+    get "/api/v1/curation_proposals", headers: auth_header(@owner)
+    assert_response :success
+    row = response.parsed_body.fetch("libraries").find { |item| item["id"] == @library.id }
+    assert_equal "stub", row.dig("curation", "last_provider")
+    assert_nil row.dig("curation", "last_error")
   end
 
   test "contributor can approve a tag immediately and viewer cannot" do
@@ -132,5 +143,26 @@ class CurationProposalsTest < ActionDispatch::IntegrationTest
     get "/api/v1/me", headers: auth_header(@viewer)
     assert_response :success
     refute response.parsed_body.dig("user", "can_curate")
+  end
+
+  test "me and library detail expose curation poll state" do
+    @library.update!(
+      last_polled_at: Time.utc(2026, 9, 6, 12, 0, 0),
+      last_provider: "ollama",
+      last_error: nil
+    )
+
+    get "/api/v1/me", headers: auth_header(@owner)
+    assert_response :success
+    row = response.parsed_body.fetch("user").fetch("libraries").find { |item| item["id"] == @library.id }
+    assert_equal "ollama", row.dig("curation", "last_provider")
+    assert row.dig("curation", "last_polled_at").present?
+    assert_nil row.dig("curation", "last_error")
+
+    get "/api/v1/libraries/#{@library.id}", headers: auth_header(@owner)
+    assert_response :success
+    curation = response.parsed_body.fetch("library").fetch("curation")
+    assert_equal "ollama", curation["last_provider"]
+    assert_nil curation["last_error"]
   end
 end

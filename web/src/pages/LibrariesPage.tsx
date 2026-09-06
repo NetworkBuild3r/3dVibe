@@ -182,6 +182,20 @@ export function LibrariesPage() {
                 <dd className="mt-1 text-rose-300">{detail.scan.last_error}</dd>
               </div>
             ) : null}
+            <div>
+              <dt className="text-slate-500">Curation last poll</dt>
+              <dd className="mt-1 text-slate-200">{formatWhen(detail.curation?.last_polled_at)}</dd>
+            </div>
+            <div>
+              <dt className="text-slate-500">Curation provider</dt>
+              <dd className="mt-1 text-slate-200">{detail.curation?.last_provider || "—"}</dd>
+            </div>
+            {detail.curation?.last_error ? (
+              <div className="md:col-span-2">
+                <dt className="text-slate-500">Curation last error</dt>
+                <dd className="mt-1 text-rose-300">{detail.curation.last_error}</dd>
+              </div>
+            ) : null}
           </dl>
 
           {settings ? (
