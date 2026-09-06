@@ -30,7 +30,7 @@ Storage is the owner's NFS mount. There is one library pile.
 - HITL AI curation: sidecar contract, stub curator, ingest, review queue, path-jailed apply
 - Meilisearch-backed faceted search with a Postgres `ILIKE` fallback when Meili is down or unset
 - In-browser Three.js viewer that **does not** auto-load meshes on cards
-- Print-from-browser: owner printer registry, **owner-only** enqueue, private print history, path-jailed Sidekiq dispatch, mock adapter + SDCP interface
+- Print-from-browser: owner printer registry, **owner-only** enqueue, private print history, path-jailed Sidekiq dispatch, mock adapter (CI) + SDCP-shaped LAN adapter, cancel + retry
 - Personal likes and bookmark folders (organize the shared catalog; they never hide models)
 - Path-jailed model merge/split (move archives/STLs on disk, never load them into RAM)
 - Duplicate review: persisted groups (exact SHA-256, geometry digest, name+size), HITL keep/dismiss/merge. Near-dups are never auto-deleted.
@@ -255,6 +255,14 @@ Environment variables (see `.env.example`):
 | `XAI_MODEL` | xAI model (default `grok-4`) |
 | `VIBE_PRINT_TIMEOUT` | Adapter timeout in seconds (default 15). Timeouts mark the job failed; they do not 502 the UI |
 | `VIBE_PRINT_MOCK_DELAY_MS` | Mock adapter step delay (compose default 400; unset/0 in tests) |
+| `VIBE_SDCP_PORT` | Default SDCP port when the printer host has no `:port` and `settings.port` is unset (3030) |
+| `VIBE_SDCP_TOKEN` | Optional bearer token for SDCP WebSocket + upload (overridden by `printer.settings.token`) |
+| `VIBE_SDCP_TIMEOUT` | SDCP I/O timeout in seconds (falls back to `VIBE_PRINT_TIMEOUT`) |
+| `VIBE_SDCP_OPEN_TIMEOUT` | TCP/WebSocket connect timeout (default 3) |
+| `VIBE_SDCP_WS_PATH` | Control path (default `/websocket`) |
+| `VIBE_SDCP_UPLOAD_PATH` | HTTP upload path (default `/uploadFile/upload`) |
+| `VIBE_SDCP_CLIENT_ID` | SDCP envelope `Id` (default `3dvibe-sdcp`) |
+| `VIBE_SDCP_STUB` | Test-only simulated SDCP transport. Ignored unless `RAILS_ENV=test` |
 | `MEILI_URL` | Meilisearch base URL (`http://meilisearch:7700` in compose). Alias: `MEILISEARCH_URL` |
 | `MEILI_MASTER_KEY` | Admin key used to create the index and write documents |
 | `MEILI_SEARCH_KEY` | Optional search-only key. When blank, search uses the master key |
@@ -495,11 +503,12 @@ All endpoints except `POST /api/v1/session`, invite preview/redeem, and `GET /up
 - `POST /api/v1/curation_proposals/ingest` webhook (`X-Curator-Token` or user auth)
 - `POST /api/v1/curation_proposals/bulk` `{ ids, decision: "approve"|"reject" }`
 - `POST /api/v1/curation_proposals/:id/approve` · `POST .../reject`
-- `GET /api/v1/printers` · `POST /api/v1/printers` `{ library_id, name, host, protocol_type, enabled?, notes? }` (create/update/delete: owner)
+- `GET /api/v1/printers` · `POST /api/v1/printers` `{ library_id, name, host, protocol_type, enabled?, notes?, settings? }` (create/update/delete: owner). `protocol_type` is `mock` \| `sdcp`. Host is a hostname or IP (optional `:port`); no URL.
 - `PATCH /api/v1/printers/:id` · `DELETE /api/v1/printers/:id`
-- `GET /api/v1/print_jobs?status=` · `GET /api/v1/print_jobs/:id` (the signed-in user's jobs only)
-- `POST /api/v1/print_jobs` `{ printer_id, model_id, asset_id }` → `202` + `queued` (**library owner** only)
+- `GET /api/v1/print_jobs?status=` · `GET /api/v1/print_jobs/:id` (the signed-in user's jobs only). Rows include `error_message` and `retryable`.
+- `POST /api/v1/print_jobs` `{ printer_id, model_id, asset_id }` → `202` + `queued` (**library owner** only; `can_print?`)
 - `POST /api/v1/print_jobs/:id/cancel` (requester only)
+- `POST /api/v1/print_jobs/:id/retry` → `202` + `queued` (**library owner** + requester; `failed` \| `cancelled` only)
 - `GET /api/v1/invites` · `POST /api/v1/invites` `{ library_id, email?, role?, expires_in_days? }`
 - `GET /api/v1/invites/token/:token` (public preview)
 - `POST /api/v1/invites/:token/redeem` `{ email, password, display_name }`
@@ -796,7 +805,7 @@ Webhook alternative: the curator can `POST /api/v1/curation_proposals/ingest` wi
 
 ## Printer adapters
 
-`PrinterAdapters` is the only place a printer protocol should live. The SPA has no printer host/port fields on the wire beyond what the owner stored in `Printer`.
+`PrinterAdapters` is the only place a printer protocol should live. The SPA has no printer host/port fields on the wire beyond what the owner stored in `Printer`. Enqueue is **owner-only** (`can_print?`). History is scoped to `requested_by`. The browser never talks to a printer.
 
 ```
 PrinterAdapters.for(printer) → Mock | Sdcp | YourAdapter
@@ -807,14 +816,63 @@ LibraryPathJail#resolve_file  → regular file under the library root only
 
 | `protocol_type` | Behavior |
 | --- | --- |
-| `mock` | Reads the jailed file, simulates sending/printing, marks `succeeded`. No sockets. |
-| `sdcp` | Interface only. `submit` raises `NotConfigured`; the job is `failed` with a clear note. |
+| `mock` | Reads the jailed file, simulates sending/printing, marks `succeeded`. No sockets. **CI stays on mock.** |
+| `sdcp` | SDCP-shaped LAN client. Live: WebSocket JSON control + HTTP multipart upload. Tests: inject `StubTransport` or `settings.stub=true` (test env only). A missing/unreachable device **fails** the job with `error_message` — it never fakes success. |
 
-### Adding a real LAN adapter
+Lifecycle: `queued` → `sending` → `printing` → `succeeded` / `failed` / `cancelled`. Expected printer errors call `job.fail_soft!` and never 500 the API.
 
-1. Implement `PrinterAdapters::Sdcp#submit(absolute_path, job:)` (and optionally `#poll` / `#cancel`) using `printer.host` and `printer.settings`.
+### SDCP request shapes (v3 JSON)
+
+Control (WebSocket `ws://{host}:{port}/websocket`):
+
+```json
+{
+  "Id": "3dvibe-sdcp",
+  "Data": {
+    "Cmd": 128,
+    "Data": { "Filename": "horn.stl", "StartLayer": 0 },
+    "RequestID": "hex16",
+    "MainboardID": "",
+    "TimeStamp": 1687069655,
+    "From": 0
+  },
+  "Topic": "sdcp/request/{MainboardID}"
+}
+```
+
+| Cmd | Meaning |
+| --- | --- |
+| 0 | Status refresh |
+| 1 | Attributes refresh |
+| 128 | Start print (`Filename`, `StartLayer`) |
+| 129 / 130 / 131 | Pause / stop / continue |
+| 255 | Terminate file transfer |
+
+Ack `0` is success. Start-print Ack `1` is busy (retry after idle). Upload is `POST http://{host}:{port}/uploadFile/upload` as `multipart/form-data` with `S-File-MD5`, `Check`, `Offset`, `Uuid`, `TotalSize`, and `File` (1 MiB chunks).
+
+A live start-print Ack does **not** mark the job succeeded — it stays `printing` until a later device status poll exists. The test stub walks to `succeeded` like mock.
+
+Host, token, port, timeout: `Printer#host` + `printer.settings` (`port`, `token`, `timeout`, `mainboard_id`, `client_id`, `ws_path`, `upload_path`) or `VIBE_SDCP_*`.
+
+True wire quirks (post-upload busy race, motherboard `MainboardID`, binary/firmware variants) need a live Athena/Brian device. The adapter is shaped so that handshake can be wired without changing controllers.
+
+### Failure / retry — Frontend bind
+
+| Surface | Bind |
+| --- | --- |
+| Failed job | `print_job.error_message` (and `note`) |
+| Cancel | `POST /api/v1/print_jobs/:id/cancel` — requester; already on Prints |
+| Retry | `POST /api/v1/print_jobs/:id/retry` — owner + requester, `failed` \| `cancelled` only → `202` + `queued` |
+| Flag | `print_job.retryable` |
+| SPA | `api.retryPrint(id)` · Prints page Retry · model page Retry when the current job failed |
+
+Do not invent a new job unless retry is not allowed (disabled printer, not owner, still active).
+
+### Adding another LAN adapter
+
+1. Subclass `PrinterAdapters::Base` and register it in `PrinterAdapters.for`.
 2. Keep all I/O inside `Timeout` / `VIBE_PRINT_TIMEOUT`. Never raise out of `PrinterBridge` — call `job.fail_soft!(message)` instead.
-3. Leave the Rails controllers and React pages unchanged. Point the printer row at the LAN IP and set `protocol_type=sdcp`.
+3. Point the printer row at the LAN IP and set `protocol_type`.
 4. Do not proxy printer APIs through the browser. The worker is the only process that should see the printer.
 
 Resin studio, camera, and consumables are out of scope for this slice.

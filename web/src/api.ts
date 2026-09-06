@@ -317,6 +317,7 @@ export type PrintJob = {
   printer_hint: string | null;
   note: string | null;
   error_message: string | null;
+  retryable?: boolean;
   remote_ref: string | null;
   requested_by?: Author | null;
   started_at: string | null;
@@ -761,10 +762,18 @@ export const api = {
     protocol_type: string;
     enabled?: boolean;
     notes?: string;
+    settings?: Record<string, unknown>;
   }) => request<{ printer: Printer }>("/printers", { method: "POST", body: JSON.stringify(payload) }),
   updatePrinter: (
     id: number,
-    payload: Partial<{ name: string; host: string; protocol_type: string; enabled: boolean; notes: string }>
+    payload: Partial<{
+      name: string;
+      host: string;
+      protocol_type: string;
+      enabled: boolean;
+      notes: string;
+      settings: Record<string, unknown>;
+    }>
   ) => request<{ printer: Printer }>(`/printers/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
   deletePrinter: (id: number) => request<void>(`/printers/${id}`, { method: "DELETE" }),
   printJobs: (status?: string) => {
@@ -778,6 +787,7 @@ export const api = {
       body: JSON.stringify({ model_id: modelId, printer_id: printerId, asset_id: assetId })
     }),
   cancelPrint: (id: number) => request<{ print_job: PrintJob }>(`/print_jobs/${id}/cancel`, { method: "POST" }),
+  retryPrint: (id: number) => request<{ print_job: PrintJob }>(`/print_jobs/${id}/retry`, { method: "POST" }),
   invites: () => request<{ invites: Invite[] }>("/invites"),
   createInvite: (payload: { library_id: number; email?: string; role?: string; expires_in_days?: number | "" }) =>
     request<{ invite: Invite }>("/invites", {

@@ -119,6 +119,20 @@ export function ModelPage() {
     }
   }
 
+  async function retryPrint() {
+    if (!printJob) return;
+    setPrintBusy(true);
+    setPrintError(null);
+    try {
+      const payload = await api.retryPrint(printJob.id);
+      setPrintJob(payload.print_job);
+    } catch (err) {
+      setPrintError(err instanceof Error ? err.message : "Could not retry print");
+    } finally {
+      setPrintBusy(false);
+    }
+  }
+
   const activeMerge = model?.merges?.find((merge) => !merge.split_at);
 
   async function toggleLike() {
@@ -386,6 +400,16 @@ export function ModelPage() {
               </div>
               {printJob.note ? <p className="mt-2 text-xs text-slate-500">{printJob.note}</p> : null}
               {printJob.error_message ? <p className="mt-2 text-xs text-rose-300">{printJob.error_message}</p> : null}
+              {printJob.retryable && user?.can_print ? (
+                <button
+                  type="button"
+                  className="mt-3 text-sm text-accent-400"
+                  disabled={printBusy}
+                  onClick={() => void retryPrint()}
+                >
+                  Retry
+                </button>
+              ) : null}
             </div>
           ) : null}
         </div>

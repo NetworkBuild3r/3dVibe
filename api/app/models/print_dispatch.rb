@@ -15,6 +15,7 @@ class PrintDispatch < ApplicationRecord
 
   ACTIVE = [QUEUED, SENDING, PRINTING].freeze
   TERMINAL = [SUCCEEDED, FAILED, CANCELLED].freeze
+  RETRYABLE = [FAILED, CANCELLED].freeze
   STATUSES = (ACTIVE + TERMINAL + [UNAVAILABLE]).freeze
 
   validates :status, inclusion: { in: STATUSES }
@@ -70,6 +71,29 @@ class PrintDispatch < ApplicationRecord
     return false if terminal?
 
     update!(status: CANCELLED, finished_at: Time.current, note: note_text)
+    true
+  end
+
+  def retryable?
+    RETRYABLE.include?(status)
+  end
+
+  def requeue!(note_text = nil)
+    raise ArgumentError, "job is not retryable" unless retryable?
+
+    printer_name = printer&.name || printer_hint
+    proto = printer&.protocol_type || protocol_type
+    update!(
+      status: QUEUED,
+      progress: 0,
+      error_message: nil,
+      finished_at: nil,
+      started_at: nil,
+      remote_ref: nil,
+      protocol_type: proto,
+      printer_hint: printer_name,
+      note: note_text.presence || "Re-queued for #{printer_name} via #{proto} adapter."
+    )
     true
   end
 end
