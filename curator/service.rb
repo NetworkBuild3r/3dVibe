@@ -44,7 +44,8 @@ module VibeCurator
         raw,
         catalog: catalog,
         provider: provider.name,
-        budget: Config.batch_size(env: env)
+        budget: Config.batch_size(env: env),
+        env: env
       )
       {
         "provider" => provider.name,

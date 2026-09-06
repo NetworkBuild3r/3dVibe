@@ -15,6 +15,8 @@ module VibeCurator
   MAX_BATCH_SIZE = 50
   DEFAULT_CATALOG_LIMIT = 80
   DEFAULT_INFER_TIMEOUT = 60
+  DEFAULT_MAX_PER_KIND = 3
+  DEFAULT_KIND_PRIORITY = %w[merge organize tag rename move].freeze
   # Shape injected by Rails CuratorRuntime.for_sidecar (PR #23). GET /proposals
   # must not carry these on the query string.
   RUNTIME_FIELDS = %w[provider ollama_url ollama_model xai_api_key].freeze
@@ -100,6 +102,31 @@ module VibeCurator
 
     def infer_timeout(env: ENV)
       clamp_int(env["VIBE_CURATOR_INFER_TIMEOUT"], default: DEFAULT_INFER_TIMEOUT, min: 1, max: 600)
+    end
+
+    # Live batch only. Stub ignores this so CI fixtures stay byte-stable.
+    def max_per_kind(env: ENV)
+      clamp_int(env["VIBE_CURATOR_MAX_PER_KIND"], default: DEFAULT_MAX_PER_KIND, min: 1, max: MAX_BATCH_SIZE)
+    end
+
+    def kind_priority(env: ENV)
+      names = env["VIBE_CURATOR_KIND_PRIORITY"].to_s.split(/[,\s]+/).map { |name| name.strip.downcase }
+      names = names.select { |name| KINDS.include?(name) }.uniq
+      names.empty? ? DEFAULT_KIND_PRIORITY.dup : names
+    end
+
+    # Drop live proposals below this score only when the provider returned confidence.
+    # 0 (default) means "do not filter on confidence".
+    def min_confidence(env: ENV)
+      raw = env["VIBE_CURATOR_MIN_CONFIDENCE"].to_s.strip
+      return 0.0 if raw.empty?
+
+      value = Float(raw)
+      return 0.0 unless value.finite?
+
+      [[value, 0.0].max, 1.0].min
+    rescue ArgumentError, TypeError
+      0.0
     end
 
     def library_root(env: ENV)
