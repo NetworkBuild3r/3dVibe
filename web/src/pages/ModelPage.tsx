@@ -1,20 +1,34 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, type ArchiveMember, type BookmarkFolder, type ModelDetail, type Printer, type PrintJob } from "../api";
+import {
+  api,
+  isAbortError,
+  memberContentUrl,
+  memberPreviewUrl,
+  type ArchiveMember,
+  type BookmarkFolder,
+  type ModelDetail,
+  type Printer,
+  type PrintJob
+} from "../api";
 import { ArchivePanel } from "../components/ArchivePanel";
+import { CoverMedia } from "../components/CoverMedia";
 import { ImageViewer } from "../components/ImageViewer";
 import { MeshViewer } from "../components/MeshViewer";
 import { InlineError } from "../components/UiStates";
 import { SaveToShelf } from "../components/SaveToShelf";
 import { useAuth } from "../auth";
+import { CANT_PREVIEW_COPY, CANCELLED_COPY, displayCaption, memberCaption, memberKind } from "../archives";
 import { formatBytes } from "../format";
 
 const ACTIVE_PRINT = new Set(["queued", "sending", "printing"]);
 
 type Viewer =
   | { kind: "idle" }
-  | { kind: "mesh"; url: string; label: string }
-  | { kind: "image"; url: string; label: string };
+  | { kind: "cancelled" }
+  | { kind: "unsupported"; caption?: string }
+  | { kind: "mesh"; url: string; label: string; caption?: string }
+  | { kind: "image"; url: string; label: string; caption?: string };
 
 export function ModelPage() {
   const { id } = useParams();
@@ -35,11 +49,20 @@ export function ModelPage() {
   const [shelfError, setShelfError] = useState<string | null>(null);
 
   useEffect(() => {
+    setViewer({ kind: "idle" });
+  }, [id]);
+
+  useEffect(() => {
     if (!id) return;
+    const abort = new AbortController();
     api
-      .model(id)
+      .model(id, abort.signal)
       .then((payload) => setModel(payload.model))
-      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load"));
+      .catch((err) => {
+        if (isAbortError(err) || abort.signal.aborted) return;
+        setError(err instanceof Error ? err.message : "Failed to load");
+      });
+    return () => abort.abort();
   }, [id]);
 
   const meshAsset = useMemo(() => model?.assets.find((asset) => asset.mesh && asset.kind === "stl"), [model]);
@@ -153,22 +176,44 @@ export function ModelPage() {
     }
   }
 
-  function openArchiveMesh(member: ArchiveMember) {
-    if (!member.id) return;
-    setViewer({ kind: "mesh", url: api.archiveMemberContentUrl(member.id), label: member.name || member.internal_path });
+  function closeViewer() {
+    setViewer({ kind: "cancelled" });
   }
 
-  function openArchiveImage(member: ArchiveMember) {
-    if (!member.id) return;
-    setViewer({
-      kind: "image",
-      url: api.archiveMemberPreviewUrl(member.id),
-      label: member.name || member.internal_path
-    });
+  function openArchiveMember(member: ArchiveMember, packName: string) {
+    const caption = memberCaption(packName, member.internal_path);
+    const label = member.name || member.internal_path;
+    if (!member.streamable || member.directory) {
+      setViewer({ kind: "unsupported", caption });
+      return;
+    }
+    const kind = memberKind(member);
+    if (kind === "mesh") {
+      const url = memberContentUrl(member);
+      if (!url) {
+        setViewer({ kind: "unsupported", caption });
+        return;
+      }
+      setViewer({ kind: "mesh", url, label, caption });
+      return;
+    }
+    if (kind === "image") {
+      const url = memberPreviewUrl(member);
+      if (!url) {
+        setViewer({ kind: "unsupported", caption });
+        return;
+      }
+      setViewer({ kind: "image", url, label, caption });
+      return;
+    }
+    setViewer({ kind: "unsupported", caption });
   }
 
   if (error) return <p className="text-rose-300">{error}</p>;
   if (!model) return <p className="text-slate-400">Loading model…</p>;
+
+  const caption =
+    viewer.kind === "mesh" || viewer.kind === "image" || viewer.kind === "unsupported" ? viewer.caption : undefined;
 
   return (
     <div className="space-y-6">
@@ -197,6 +242,64 @@ export function ModelPage() {
             </span>
           ))}
         </div>
+      </div>
+
+      <section>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h2 className="font-display text-xl">Viewer</h2>
+          <div className="flex flex-wrap items-center gap-2">
+            {meshAsset && viewer.kind !== "mesh" ? (
+              <button
+                type="button"
+                onClick={() =>
+                  setViewer({ kind: "mesh", url: api.assetContentUrl(meshAsset.id), label: meshAsset.filename })
+                }
+                className="rounded-full bg-accent-500 px-3 py-1 text-sm text-ink-950"
+              >
+                Load mesh
+              </button>
+            ) : null}
+            {viewer.kind !== "idle" ? (
+              <button type="button" onClick={closeViewer} className="rounded-full border border-white/10 px-3 py-1 text-sm text-slate-300">
+                Close
+              </button>
+            ) : null}
+          </div>
+        </div>
+        {viewer.kind === "mesh" ? (
+          <MeshViewer key={viewer.url} url={viewer.url} label={viewer.label} />
+        ) : viewer.kind === "image" ? (
+          <ImageViewer key={viewer.url} url={viewer.url} label={viewer.label} />
+        ) : (
+          <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-ink-900">
+            <div className="grid h-80 place-items-center">
+              <CoverMedia model={model} className="absolute inset-0" />
+              {viewer.kind === "cancelled" ? (
+                <p className="relative z-10 rounded-full bg-ink-950/70 px-3 py-1 text-sm text-slate-400">{CANCELLED_COPY}</p>
+              ) : viewer.kind === "unsupported" ? (
+                <p className="relative z-10 rounded-full bg-ink-950/70 px-3 py-1 text-sm text-slate-500">{CANT_PREVIEW_COPY}</p>
+              ) : null}
+            </div>
+          </div>
+        )}
+        {caption ? (
+          <p className="mt-2 font-mono text-xs text-slate-500" title={caption}>
+            {displayCaption(caption)}
+          </p>
+        ) : null}
+      </section>
+
+      {archiveAssets.length > 0 ? (
+        <ArchivePanel
+          modelId={model.id}
+          modelTitle={model.title}
+          assets={model.assets}
+          onOpenMember={openArchiveMember}
+        />
+      ) : null}
+
+      <section className="rounded-2xl border border-white/10 bg-ink-900/70 p-4">
+        <h2 className="font-display text-xl">Actions</h2>
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <button
             type="button"
@@ -216,48 +319,21 @@ export function ModelPage() {
             </button>
           ) : null}
         </div>
-        {shelfError ? <div className="mt-2"><InlineError message={shelfError} /></div> : null}
-        {organizeStatus ? <p className="mt-2 text-sm text-accent-300">{organizeStatus}</p> : null}
-      </div>
-
-      <section className="grid gap-6 lg:grid-cols-2">
-        <div>
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="font-display text-xl">Viewer</h2>
-            {meshAsset && viewer.kind !== "mesh" ? (
-              <button
-                type="button"
-                onClick={() =>
-                  setViewer({ kind: "mesh", url: api.assetContentUrl(meshAsset.id), label: meshAsset.filename })
-                }
-                className="rounded-full bg-accent-500 px-3 py-1 text-sm text-ink-950"
-              >
-                Load mesh
-              </button>
-            ) : null}
+        {shelfError ? (
+          <div className="mt-2">
+            <InlineError message={shelfError} />
           </div>
-          {viewer.kind === "mesh" ? (
-            <MeshViewer url={viewer.url} label={viewer.label} />
-          ) : viewer.kind === "image" ? (
-            <ImageViewer url={viewer.url} label={viewer.label} />
-          ) : (
-            <div className="grid h-80 place-items-center rounded-2xl border border-dashed border-white/15 bg-ink-900 text-slate-500">
-              Preview stays idle until you ask. Archive meshes use the same rule.
-            </div>
-          )}
-        </div>
-        <div className="rounded-2xl border border-white/10 bg-ink-900/70 p-4">
-          <h2 className="font-display text-xl">Print from browser</h2>
-          <p className="mt-2 text-sm text-slate-400">
-            The browser talks only to 3dvibe. A worker path-jails the library file and sends it through the printer
-            adapter (mock in CI/dev).
-          </p>
+        ) : null}
+        {organizeStatus ? <p className="mt-2 text-sm text-accent-300">{organizeStatus}</p> : null}
+
+        <div className="mt-5 border-t border-white/5 pt-4">
+          <h3 className="text-sm font-medium text-slate-200">Print</h3>
           {user?.can_print ? (
-            <>
-              <label className="mt-4 block text-sm text-slate-300">
+            <div className="mt-3 flex flex-wrap items-end gap-3">
+              <label className="text-sm text-slate-300">
                 Printer
                 <select
-                  className="mt-1 w-full rounded-lg border border-white/10 bg-ink-950 px-3 py-2"
+                  className="mt-1 block rounded-lg border border-white/10 bg-ink-950 px-3 py-2"
                   value={printerId}
                   onChange={(event) => setPrinterId(Number(event.target.value))}
                 >
@@ -269,10 +345,10 @@ export function ModelPage() {
                   ))}
                 </select>
               </label>
-              <label className="mt-3 block text-sm text-slate-300">
+              <label className="text-sm text-slate-300">
                 File
                 <select
-                  className="mt-1 w-full rounded-lg border border-white/10 bg-ink-950 px-3 py-2"
+                  className="mt-1 block rounded-lg border border-white/10 bg-ink-950 px-3 py-2"
                   value={assetId}
                   onChange={(event) => setAssetId(Number(event.target.value))}
                 >
@@ -283,40 +359,35 @@ export function ModelPage() {
                   ))}
                 </select>
               </label>
-              <div className="mt-4 flex flex-wrap items-center gap-3">
-                <button
-                  type="button"
-                  disabled={printBusy || printerId === "" || assetId === ""}
-                  onClick={() => void requestPrint()}
-                  className="rounded-lg bg-accent-500 px-4 py-2 text-sm font-medium text-ink-950 hover:bg-accent-400 disabled:opacity-60"
-                >
-                  {printBusy ? "Queueing…" : "Print"}
-                </button>
-                <Link to="/prints" className="text-sm text-accent-400">
-                  Job queue
-                </Link>
-              </div>
-              {printError ? <p className="mt-3 text-sm text-rose-300">{printError}</p> : null}
-              {printJob ? (
-                <div className="mt-4">
-                  <p className="text-sm text-amber-200">
-                    {printJob.status} · {printJob.progress}%
-                    {printJob.printer_name ? ` · ${printJob.printer_name}` : ""}
-                  </p>
-                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/5">
-                    <div className="h-full rounded-full bg-accent-500" style={{ width: `${printJob.progress}%` }} />
-                  </div>
-                  {printJob.note ? <p className="mt-2 text-xs text-slate-500">{printJob.note}</p> : null}
-                  {printJob.error_message ? <p className="mt-2 text-xs text-rose-300">{printJob.error_message}</p> : null}
-                </div>
-              ) : null}
-            </>
+              <button
+                type="button"
+                disabled={printBusy || printerId === "" || assetId === ""}
+                onClick={() => void requestPrint()}
+                className="rounded-lg bg-accent-500 px-4 py-2 text-sm font-medium text-ink-950 hover:bg-accent-400 disabled:opacity-60"
+              >
+                {printBusy ? "Queueing…" : "Print"}
+              </button>
+              <Link to="/prints" className="text-sm text-accent-400">
+                Job queue
+              </Link>
+            </div>
           ) : (
-            <p className="mt-4 text-sm text-slate-500">
-              Only the library owner can send a job to a printer. Contributors and viewers can still share into this
-              catalog.
-            </p>
+            <p className="mt-3 text-sm text-slate-500">Only the library owner can send a job to a printer.</p>
           )}
+          {printError ? <p className="mt-3 text-sm text-rose-300">{printError}</p> : null}
+          {printJob ? (
+            <div className="mt-4">
+              <p className="text-sm text-amber-200">
+                {printJob.status} · {printJob.progress}%
+                {printJob.printer_name ? ` · ${printJob.printer_name}` : ""}
+              </p>
+              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/5">
+                <div className="h-full rounded-full bg-accent-500" style={{ width: `${printJob.progress}%` }} />
+              </div>
+              {printJob.note ? <p className="mt-2 text-xs text-slate-500">{printJob.note}</p> : null}
+              {printJob.error_message ? <p className="mt-2 text-xs text-rose-300">{printJob.error_message}</p> : null}
+            </div>
+          ) : null}
         </div>
       </section>
 
@@ -350,12 +421,12 @@ export function ModelPage() {
                   />
                 ) : null}
                 <div>
-                <p className="text-slate-100">{asset.filename}</p>
-                <p className="text-xs text-slate-500">
-                  {asset.kind} · {formatBytes(asset.byte_size)}
-                  {asset.archive ? ` · ${asset.archive_member_count} members` : ""}
-                  {asset.archive_truncated ? " · index truncated" : ""}
-                </p>
+                  <p className="text-slate-100">{asset.filename}</p>
+                  <p className="text-xs text-slate-500">
+                    {asset.kind} · {formatBytes(asset.byte_size)}
+                    {asset.archive ? ` · ${asset.archive_member_count} members` : ""}
+                    {asset.archive_truncated ? " · index truncated" : ""}
+                  </p>
                 </div>
               </div>
               {asset.mesh && asset.kind === "stl" ? (
@@ -364,22 +435,13 @@ export function ModelPage() {
                   className="text-accent-400"
                   onClick={() => setViewer({ kind: "mesh", url: api.assetContentUrl(asset.id), label: asset.filename })}
                 >
-                  View
+                  Open
                 </button>
               ) : null}
             </li>
           ))}
         </ul>
       </section>
-
-      {id && archiveAssets.length > 0 ? (
-        <ArchivePanel
-          modelId={model.id}
-          assets={model.assets}
-          onOpenMesh={openArchiveMesh}
-          onOpenImage={openArchiveImage}
-        />
-      ) : null}
     </div>
   );
 }

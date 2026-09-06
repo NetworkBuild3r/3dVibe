@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { fetchAuthedBlob, isAbortError } from "../api";
+import { fetchAuthedBytes, isAbortError } from "../api";
+import { CANCELLED_COPY, progressLabel, viewerStatusCopy } from "../archives";
 
 type Props = {
   url: string;
@@ -10,20 +11,33 @@ export function MeshViewer({ url, label }: Props) {
   const host = useRef<HTMLDivElement | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState("Loading mesh…");
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
     let disposed = false;
     let renderer: { dispose: () => void; forceContextLoss?: () => void } | null = null;
     let frame = 0;
     const abort = new AbortController();
+    setError(null);
+    setReady(false);
+    setStatus("Loading mesh…");
 
     async function mount() {
       const [{ WebGLRenderer, Scene, PerspectiveCamera, Color, DirectionalLight, AmbientLight, GridHelper }, { STLLoader }, { OrbitControls }] =
-        await Promise.all([import("three"), import("three/examples/jsm/loaders/STLLoader.js"), import("three/examples/jsm/controls/OrbitControls.js")]);
+        await Promise.all([
+          import("three"),
+          import("three/examples/jsm/loaders/STLLoader.js"),
+          import("three/examples/jsm/controls/OrbitControls.js")
+        ]);
 
       if (!host.current || disposed) return;
-      const blob = await fetchAuthedBlob(url, { signal: abort.signal });
-      const buffer = await blob.arrayBuffer();
+      const buffer = await fetchAuthedBytes(url, {
+        signal: abort.signal,
+        onProgress: (loaded, total) => {
+          if (!disposed) setStatus(progressLabel("mesh", loaded, total));
+        }
+      });
+      if (disposed) return;
       const geometry = new STLLoader().parse(buffer);
       geometry.computeVertexNormals();
       geometry.center();
@@ -56,12 +70,19 @@ export function MeshViewer({ url, label }: Props) {
         frame = requestAnimationFrame(tick);
       };
       tick();
-      setStatus(label);
+      if (!disposed) {
+        setReady(true);
+        setStatus(label);
+      }
     }
 
     mount().catch((err) => {
-      if (disposed || isAbortError(err)) return;
-      setError(err instanceof Error ? err.message : "Viewer failed");
+      if (disposed) return;
+      if (isAbortError(err)) {
+        setStatus(CANCELLED_COPY);
+        return;
+      }
+      setError(viewerStatusCopy(err));
     });
 
     return () => {
@@ -74,7 +95,10 @@ export function MeshViewer({ url, label }: Props) {
 
   return (
     <div className="overflow-hidden rounded-2xl border border-white/10 bg-ink-900">
-      <div ref={host} className="h-80 w-full" />
+      <div className="relative h-80 w-full">
+        <div ref={host} className={`h-full w-full ${ready ? "cover-fade-in" : ""}`} />
+        {!ready && !error ? <div className="cover-shimmer absolute inset-0" role="status" aria-label={status} /> : null}
+      </div>
       <p className="border-t border-white/5 px-4 py-2 text-xs text-slate-400">{error ?? status}</p>
     </div>
   );

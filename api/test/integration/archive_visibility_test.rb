@@ -38,6 +38,11 @@ class ArchiveVisibilityTest < ActionDispatch::IntegrationTest
     refute_includes paths, "extras/nested/note.txt"
     assert body["archives"].any? { |archive| archive["filename"] == "minis.zip" && archive["support"] == "full" }
 
+    hero = body.fetch("members").find { |member| member["internal_path"] == "hero.stl" }
+    assert hero["streamable"]
+    assert_equal "/api/v1/archive_members/#{hero['id']}/content", hero["content_path"]
+    assert_equal "/api/v1/archive_members/#{hero['id']}/preview", hero["preview_path"]
+
     extras = body.fetch("members").find { |member| member["directory"] && member["name"] == "extras" }
     get "/api/v1/models/#{@model.id}/archive_members",
         params: { asset_id: extras["asset_id"], prefix: extras["path"] },
