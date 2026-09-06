@@ -89,8 +89,8 @@ EXTRA.each do |name|
   write_folder(name, "Sample fixture folder #{name.tr('-', ' ')}.", "#{name.split('-').first}.stl")
 end
 
-# 1x1 transparent PNG so archive preview/stream tests have a real image member.
-PNG_1X1 = ["89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c63000100000500010d0a2db40000000049454e44ae426082"].pack("H*")
+# 32x32 teal PNG so archive image preview is visible in the viewer.
+PNG_TEAL = ["89504e470d0a1a0a0000000d4948445200000020000000200802000000fc18eda30000002b4944415478da63d0bdb29fa68861d482510b462d18b560d482510b462d18b560d482510b462d182a16000040b0006a82d8eda00000000049454e44ae426082"].pack("H*")
 
 pack = ROOT.join("packed-minis")
 FileUtils.mkdir_p(pack)
@@ -100,7 +100,7 @@ write_zip(
   [
     ["hero.stl", STL],
     ["sidekick.stl", STL],
-    ["preview/hero.png", PNG_1X1],
+    ["preview/hero.png", PNG_TEAL],
     ["extras/readme.txt", "Packed kit members for archive-tree tests."],
     ["extras/nested/note.txt", "Deeper folder for lazy tree children."]
   ]
