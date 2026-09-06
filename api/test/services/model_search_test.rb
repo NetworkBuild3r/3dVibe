@@ -24,7 +24,7 @@ class ModelSearchTest < ActiveSupport::TestCase
   end
 
   test "postgres fallback finds title, path, tags, and file names" do
-    result = ModelSearch.new(VibeModel.all, query: "horn").call
+    result = ModelSearch.new(library_scope, query: "horn").call
     assert_equal "postgres", result.engine
     refute result.fallback
     assert_includes result.models.map(&:id), @horn.id
@@ -33,14 +33,14 @@ class ModelSearchTest < ActiveSupport::TestCase
   end
 
   test "postgres filters by tag and has_preview with offset" do
-    preview = ModelSearch.new(VibeModel.all, query: "", filters: { has_preview: true }).call
+    preview = ModelSearch.new(library_scope, query: "", filters: { has_preview: true }).call
     assert_includes preview.models.map(&:id), @horn.id
     refute_includes preview.models.map(&:id), @box.id
 
-    tagged = ModelSearch.new(VibeModel.all, query: "", filters: { tags: ["stl"] }).call
+    tagged = ModelSearch.new(library_scope, query: "", filters: { tags: ["stl"] }).call
     assert_equal [@horn.id], tagged.models.map(&:id)
 
-    page = ModelSearch.new(VibeModel.all, query: "", offset: 0, limit: 1).call
+    page = ModelSearch.new(library_scope, query: "", offset: 0, limit: 1).call
     assert_equal 1, page.models.size
     assert_equal 1, page.next_offset
     assert_equal 2, page.estimated_total
@@ -48,7 +48,7 @@ class ModelSearchTest < ActiveSupport::TestCase
 
   test "meilisearch stub hydrates hits in ranked order" do
     client = FakeMeili.new(hits: [{ "id" => @box.id }, { "id" => @horn.id }], total: 2)
-    result = ModelSearch.new(VibeModel.all, query: "anything", client: client).call
+    result = ModelSearch.new(library_scope, query: "anything", client: client).call
     assert_equal "meilisearch", result.engine
     refute result.fallback
     assert_equal [@box.id, @horn.id], result.models.map(&:id)
@@ -58,7 +58,7 @@ class ModelSearchTest < ActiveSupport::TestCase
 
   test "meilisearch outage falls back to postgres" do
     client = FakeMeili.new(error: MeilisearchClient::Error.new("connection refused"))
-    result = ModelSearch.new(VibeModel.all, query: "horn", client: client).call
+    result = ModelSearch.new(library_scope, query: "horn", client: client).call
     assert_equal "postgres", result.engine
     assert result.fallback
     assert_includes result.models.map(&:id), @horn.id
@@ -91,6 +91,10 @@ class ModelSearchTest < ActiveSupport::TestCase
     end
   ensure
     ENV.delete("MEILI_URL")
+  end
+
+  def library_scope
+    @library.vibe_models
   end
 
   class FakeMeili
