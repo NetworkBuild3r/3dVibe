@@ -1,13 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import type { DuplicateGroup } from "../api";
+import type { DuplicateGroup, DuplicateMember } from "../api";
 import {
+  MERGE_UNSUPPORTED_COPY,
+  allMembersMergeable,
   confidenceMeta,
-  coverFromAssets,
+  coverFromMembers,
   digestSnippet,
+  groupMembers,
+  isArchiveResident,
   memberColumns,
+  memberDisplayPath,
+  memberKey,
   reasonLabel,
-  statusMeta
+  statusMeta,
+  truncateArchivePath
 } from "../duplicates";
 import { formatBytes } from "../format";
 import { CoverMedia } from "./CoverMedia";
@@ -52,6 +59,28 @@ export function StatusChip({ status }: { status: string }) {
   );
 }
 
+export function ResidencePill({ archive, size = "md" }: { archive: boolean; size?: "sm" | "md" }) {
+  return (
+    <span
+      className={`inline-flex rounded-full border border-white/10 uppercase tracking-wide text-slate-400 ${
+        size === "sm" ? "px-1.5 py-0.5 text-[10px]" : "px-2 py-0.5 text-[11px]"
+      }`}
+    >
+      {archive ? "In archive" : "Loose"}
+    </span>
+  );
+}
+
+function MemberPath({ member }: { member: DuplicateMember }) {
+  const full = memberDisplayPath(member);
+  const archive = isArchiveResident(member);
+  return (
+    <p className={`mt-1 font-mono text-xs text-slate-500 ${archive ? "" : "truncate"}`} title={full}>
+      {archive ? truncateArchivePath(full) : full}
+    </p>
+  );
+}
+
 export function DuplicateReviewSkeleton() {
   return (
     <div className="grid gap-4 md:grid-cols-2" aria-hidden>
@@ -87,8 +116,10 @@ export function DuplicateReview({
   onClose: () => void;
 }) {
   const columns = useMemo(() => memberColumns(group), [group]);
+  const members = useMemo(() => groupMembers(group), [group]);
   const open = group.status === "open";
   const showActions = canReview && open;
+  const mergeableSelection = allMembersMergeable(group);
   const [targetId, setTargetId] = useState(columns[0]?.modelId);
   const [confirming, setConfirming] = useState(false);
 
@@ -99,7 +130,7 @@ export function DuplicateReview({
 
   const target = columns.find((column) => column.modelId === targetId) || columns[0];
   const sources = columns.filter((column) => column.modelId !== target?.modelId);
-  const canMerge = Boolean(target && sources.length > 0);
+  const canMerge = Boolean(target && sources.length > 0 && mergeableSelection);
 
   function submitMerge() {
     if (!target || !canMerge) return;
@@ -121,7 +152,7 @@ export function DuplicateReview({
               <ConfidenceBadge confidence={group.confidence} reason={group.reason} size="md" />
               <StatusChip status={group.status} />
               <span className="text-xs text-slate-500">
-                {group.assets.length} {group.assets.length === 1 ? "member" : "members"}
+                {members.length} {members.length === 1 ? "member" : "members"}
               </span>
             </div>
             <h2 className="mt-2 font-display text-2xl text-white">{group.filename || "Duplicate group"}</h2>
@@ -140,7 +171,7 @@ export function DuplicateReview({
           <div className={`grid gap-4 ${columns.length > 2 ? "md:grid-cols-3" : "md:grid-cols-2"}`}>
             {columns.map((column) => {
               const creator = column.model?.creator?.name || column.model?.uploaded_by?.display_name;
-              const cover = column.model || coverFromAssets(column.assets, column.title);
+              const cover = column.model || coverFromMembers(column.members, column.title);
               return (
                 <article key={column.modelId} className="rounded-2xl border border-white/10 bg-ink-900/70 p-4">
                   <div className="overflow-hidden rounded-xl bg-ink-950">
@@ -172,23 +203,33 @@ export function DuplicateReview({
                     ) : null}
                   </div>
                   <ul className="mt-3 space-y-3">
-                    {column.assets.map((asset) => (
-                      <li key={asset.id} className="rounded-xl border border-white/5 bg-ink-950/70 p-3 text-sm">
-                        <p className="truncate text-slate-200">{asset.filename}</p>
-                        <p className="mt-1 truncate font-mono text-xs text-slate-500">{asset.relative_path || asset.folder_name}</p>
-                        <p className="mt-2 text-xs text-slate-400">{formatBytes(asset.byte_size)}</p>
-                        <dl className="mt-2 grid gap-1 text-[11px] text-slate-500">
-                          <div>
-                            <dt className="uppercase tracking-wide">Content</dt>
-                            <dd className="font-mono text-slate-300">{digestSnippet(asset.content_digest)}</dd>
+                    {column.members.map((member) => {
+                      const archive = isArchiveResident(member);
+                      return (
+                        <li key={memberKey(member)} className="rounded-xl border border-white/5 bg-ink-950/70 p-3 text-sm">
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="min-w-0 truncate text-slate-200">{member.filename}</p>
+                            <ResidencePill archive={archive} />
                           </div>
-                          <div>
-                            <dt className="uppercase tracking-wide">Geometry</dt>
-                            <dd className="font-mono text-slate-300">{digestSnippet(asset.geometry_digest)}</dd>
-                          </div>
-                        </dl>
-                      </li>
-                    ))}
+                          <MemberPath member={member} />
+                          {member.byte_size != null ? (
+                            <p className="mt-2 text-xs text-slate-400">{formatBytes(member.byte_size)}</p>
+                          ) : null}
+                          <dl className="mt-2 grid gap-1 text-[11px] text-slate-500">
+                            {!archive ? (
+                              <div>
+                                <dt className="uppercase tracking-wide">Content</dt>
+                                <dd className="font-mono text-slate-300">{digestSnippet(member.content_digest)}</dd>
+                              </div>
+                            ) : null}
+                            <div>
+                              <dt className="uppercase tracking-wide">Geometry</dt>
+                              <dd className="font-mono text-slate-300">{digestSnippet(member.geometry_digest)}</dd>
+                            </div>
+                          </dl>
+                        </li>
+                      );
+                    })}
                   </ul>
                 </article>
               );
@@ -218,13 +259,17 @@ export function DuplicateReview({
               <button
                 type="button"
                 disabled={busy || !canMerge}
-                onClick={() => setConfirming(true)}
+                onClick={() => {
+                  if (!canMerge) return;
+                  setConfirming(true);
+                }}
                 className="rounded-lg border border-white/15 px-3 py-1.5 text-sm text-slate-200 disabled:opacity-60"
               >
                 Merge
               </button>
             </div>
-            <p className="mt-2 text-xs text-slate-500">
+            {!mergeableSelection ? <p className="mt-2 text-xs text-slate-500">{MERGE_UNSUPPORTED_COPY}</p> : null}
+            <p className={`text-xs text-slate-500 ${mergeableSelection ? "mt-2" : "mt-1"}`}>
               Keep both in the library. Dismiss means it is not a duplicate — reversible from the Dismissed filter, not a
               delete. Merge reparents into the target model; files stay on NFS under the path jail and are never
               silent-deleted.
@@ -237,7 +282,7 @@ export function DuplicateReview({
         )}
       </aside>
 
-      {confirming && target ? (
+      {confirming && canMerge && target ? (
         <div className="absolute inset-0 z-50 grid place-items-center bg-ink-950/70 px-4">
           <div className="w-full max-w-md rounded-2xl border border-white/10 bg-ink-900 p-5 shadow-2xl">
             <h3 className="font-display text-xl text-white">Merge into {target.title}?</h3>

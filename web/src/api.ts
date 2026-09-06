@@ -89,6 +89,32 @@ export type DuplicateConfidence = "exact" | "geometry" | "likely";
 export type DuplicateReason = "content_hash" | "geometry" | "name_size";
 export type DuplicateStatus = "open" | "kept" | "dismissed" | "merged";
 
+export type DuplicateMemberKind = "asset" | "archive_member";
+
+export type DuplicateMember = {
+  kind: DuplicateMemberKind | string;
+  mergeable: boolean;
+  id: number;
+  asset_id?: number | null;
+  archive_member_id?: number | null;
+  filename: string;
+  relative_path?: string | null;
+  member_path?: string | null;
+  archive_path?: string | null;
+  parent_asset_id?: number | null;
+  parent_filename?: string | null;
+  file_kind?: string | null;
+  byte_size?: number | null;
+  content_digest?: string | null;
+  geometry_digest?: string | null;
+  model_id: number;
+  model_title: string;
+  folder_name?: string;
+  cover_status?: CoverStatus;
+  cover_url?: string | null;
+  cover_placeholder?: boolean;
+};
+
 export type DuplicateAsset = {
   id: number;
   filename: string;
@@ -97,6 +123,7 @@ export type DuplicateAsset = {
   byte_size: number;
   content_digest: string | null;
   geometry_digest?: string | null;
+  mergeable?: boolean;
   model_id: number;
   model_title: string;
   folder_name: string;
@@ -123,6 +150,7 @@ export type DuplicateGroup = {
   status: DuplicateStatus | string;
   filename: string;
   byte_size: number;
+  members?: DuplicateMember[];
   assets: DuplicateAsset[];
   models?: ModelCard[];
   created_at?: string;
@@ -387,6 +415,18 @@ export function setToken(value: string | null) {
   else localStorage.removeItem("vibe_token");
 }
 
+export class ApiError extends Error {
+  status: number;
+  code: string;
+
+  constructor(message: string, status: number, code = "") {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
@@ -401,7 +441,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const details = Array.isArray(data.details) ? data.details.filter(Boolean).join(" ") : "";
-    throw new Error(details || data.error || `Request failed (${response.status})`);
+    const code = typeof data.error === "string" ? data.error : "";
+    const message =
+      details || (typeof data.message === "string" && data.message) || code || `Request failed (${response.status})`;
+    throw new ApiError(message, response.status, code);
   }
   return data as T;
 }

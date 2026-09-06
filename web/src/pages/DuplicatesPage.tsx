@@ -4,11 +4,17 @@ import { api, type DuplicateGroup, type DuplicateStatus, type LibraryInfo } from
 import { useAuth } from "../auth";
 import { CalmChip } from "../components/CalmChip";
 import { CoverMedia } from "../components/CoverMedia";
-import { ConfidenceBadge, DuplicateReview, DuplicateReviewSkeleton, StatusChip } from "../components/DuplicateReview";
+import { ConfidenceBadge, DuplicateReview, DuplicateReviewSkeleton, ResidencePill, StatusChip } from "../components/DuplicateReview";
 import { EmptyState, InlineError, Pulse } from "../components/UiStates";
 import {
+  allMembersMergeable,
   CONFIDENCE_COPY,
+  GEOMETRY_ARCHIVE_LEGEND,
+  MERGE_UNSUPPORTED_COPY,
   formatWhen,
+  groupHasArchive,
+  groupMembers,
+  isMergeUnsupported,
   newestGroupTime,
   previewModels,
   readLastRun,
@@ -236,13 +242,17 @@ export function DuplicatesPage() {
 
   async function mergeGroup(group: DuplicateGroup, body: { source_ids: number[]; target_id: number; title?: string }) {
     if (!canReview || acting) return;
+    if (!allMembersMergeable(group)) {
+      setReviewError(MERGE_UNSUPPORTED_COPY);
+      return;
+    }
     setActing(true);
     setReviewError(null);
     try {
       const payload = await api.mergeDuplicate(group.id, body);
       await afterDecision(payload.group);
     } catch (err) {
-      setReviewError(err instanceof Error ? err.message : "Merge failed");
+      setReviewError(isMergeUnsupported(err) ? MERGE_UNSUPPORTED_COPY : err instanceof Error ? err.message : "Merge failed");
     } finally {
       setActing(false);
     }
@@ -313,16 +323,19 @@ export function DuplicatesPage() {
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        {Object.entries(CONFIDENCE_COPY).map(([key, meta]) => (
-          <span
-            key={key}
-            title={`${meta.hint} · ${key === "exact" ? "content hash" : key === "geometry" ? "geometry digest" : "name and size"}`}
-            className="rounded-full border border-white/10 px-2.5 py-1 text-[11px] uppercase tracking-wide text-slate-400"
-          >
-            {meta.label}
-          </span>
-        ))}
+      <div>
+        <div className="flex flex-wrap gap-2">
+          {Object.entries(CONFIDENCE_COPY).map(([key, meta]) => (
+            <span
+              key={key}
+              title={`${meta.hint} · ${key === "exact" ? "content hash" : key === "geometry" ? "geometry digest" : "name and size"}`}
+              className="rounded-full border border-white/10 px-2.5 py-1 text-[11px] uppercase tracking-wide text-slate-400"
+            >
+              {meta.label}
+            </span>
+          ))}
+        </div>
+        <p className="mt-2 text-xs text-slate-500">{GEOMETRY_ARCHIVE_LEGEND}</p>
       </div>
 
       {error ? <InlineError message={error} onRetry={() => void refresh()} /> : null}
@@ -338,6 +351,7 @@ export function DuplicatesPage() {
           <ul className="space-y-3">
             {groups.map((group) => {
               const thumbs = previewModels(group);
+              const members = groupMembers(group);
               return (
                 <li key={group.id}>
                   <button
@@ -348,8 +362,9 @@ export function DuplicatesPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       <ConfidenceBadge confidence={group.confidence} reason={group.reason} />
                       <span className="text-xs text-slate-500">
-                        {group.assets.length} {group.assets.length === 1 ? "member" : "members"}
+                        {members.length} {members.length === 1 ? "member" : "members"}
                       </span>
+                      {groupHasArchive(group) ? <ResidencePill archive size="sm" /> : null}
                       <StatusChip status={group.status} />
                     </div>
                     <div className="mt-3 flex gap-2">
