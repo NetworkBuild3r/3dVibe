@@ -1,17 +1,24 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, type ArchiveMember, type ModelDetail, type Printer, type PrintJob } from "../api";
+import { ArchivePanel } from "../components/ArchivePanel";
+import { ImageViewer } from "../components/ImageViewer";
 import { MeshViewer } from "../components/MeshViewer";
 import { useAuth } from "../auth";
+import { formatBytes } from "../format";
 
 const ACTIVE_PRINT = new Set(["queued", "sending", "printing"]);
+
+type Viewer =
+  | { kind: "idle" }
+  | { kind: "mesh"; url: string; label: string }
+  | { kind: "image"; url: string; label: string };
 
 export function ModelPage() {
   const { id } = useParams();
   const { user } = useAuth();
   const [model, setModel] = useState<ModelDetail | null>(null);
-  const [members, setMembers] = useState<ArchiveMember[] | null>(null);
-  const [viewerAssetId, setViewerAssetId] = useState<number | null>(null);
+  const [viewer, setViewer] = useState<Viewer>({ kind: "idle" });
   const [printers, setPrinters] = useState<Printer[]>([]);
   const [printerId, setPrinterId] = useState<number | "">("");
   const [assetId, setAssetId] = useState<number | "">("");
@@ -31,6 +38,7 @@ export function ModelPage() {
   const meshAsset = useMemo(() => model?.assets.find((asset) => asset.mesh && asset.kind === "stl"), [model]);
   const printableAssets = useMemo(() => model?.assets.filter((asset) => !asset.archive) || [], [model]);
   const enabledPrinters = useMemo(() => printers.filter((printer) => printer.enabled), [printers]);
+  const archiveAssets = useMemo(() => model?.assets.filter((asset) => asset.archive) || [], [model]);
 
   useEffect(() => {
     api
@@ -60,12 +68,6 @@ export function ModelPage() {
     return () => window.clearInterval(timer);
   }, [printJob]);
 
-  async function loadArchive() {
-    if (!id) return;
-    const payload = await api.archiveMembers(id);
-    setMembers(payload.members);
-  }
-
   async function requestPrint() {
     if (!model || printerId === "" || assetId === "") return;
     setPrintBusy(true);
@@ -78,6 +80,20 @@ export function ModelPage() {
     } finally {
       setPrintBusy(false);
     }
+  }
+
+  function openArchiveMesh(member: ArchiveMember) {
+    if (!member.id) return;
+    setViewer({ kind: "mesh", url: api.archiveMemberContentUrl(member.id), label: member.name || member.internal_path });
+  }
+
+  function openArchiveImage(member: ArchiveMember) {
+    if (!member.id) return;
+    setViewer({
+      kind: "image",
+      url: api.archiveMemberPreviewUrl(member.id),
+      label: member.name || member.internal_path
+    });
   }
 
   if (error) return <p className="text-rose-300">{error}</p>;
@@ -109,21 +125,25 @@ export function ModelPage() {
         <div>
           <div className="mb-3 flex items-center justify-between">
             <h2 className="font-display text-xl">Viewer</h2>
-            {meshAsset && viewerAssetId !== meshAsset.id ? (
+            {meshAsset && viewer.kind !== "mesh" ? (
               <button
                 type="button"
-                onClick={() => setViewerAssetId(meshAsset.id)}
+                onClick={() =>
+                  setViewer({ kind: "mesh", url: api.assetContentUrl(meshAsset.id), label: meshAsset.filename })
+                }
                 className="rounded-full bg-accent-500 px-3 py-1 text-sm text-ink-950"
               >
                 Load mesh
               </button>
             ) : null}
           </div>
-          {viewerAssetId ? (
-            <MeshViewer url={api.assetContentUrl(viewerAssetId)} label={meshAsset?.filename || "mesh"} />
+          {viewer.kind === "mesh" ? (
+            <MeshViewer url={viewer.url} label={viewer.label} />
+          ) : viewer.kind === "image" ? (
+            <ImageViewer url={viewer.url} label={viewer.label} />
           ) : (
             <div className="grid h-80 place-items-center rounded-2xl border border-dashed border-white/15 bg-ink-900 text-slate-500">
-              Preview stays idle until you ask.
+              Preview stays idle until you ask. Archive meshes use the same rule.
             </div>
           )}
         </div>
@@ -206,12 +226,17 @@ export function ModelPage() {
               <div>
                 <p className="text-slate-100">{asset.filename}</p>
                 <p className="text-xs text-slate-500">
-                  {asset.kind} · {asset.byte_size} bytes
+                  {asset.kind} · {formatBytes(asset.byte_size)}
                   {asset.archive ? ` · ${asset.archive_member_count} members` : ""}
+                  {asset.archive_truncated ? " · index truncated" : ""}
                 </p>
               </div>
               {asset.mesh && asset.kind === "stl" ? (
-                <button type="button" className="text-accent-400" onClick={() => setViewerAssetId(asset.id)}>
+                <button
+                  type="button"
+                  className="text-accent-400"
+                  onClick={() => setViewer({ kind: "mesh", url: api.assetContentUrl(asset.id), label: asset.filename })}
+                >
                   View
                 </button>
               ) : null}
@@ -220,27 +245,14 @@ export function ModelPage() {
         </ul>
       </section>
 
-      <section className="rounded-2xl border border-white/10 bg-ink-900/70 p-4">
-        <div className="flex items-center justify-between">
-          <h2 className="font-display text-xl">Archive members</h2>
-          <button type="button" onClick={() => void loadArchive()} className="text-sm text-accent-400">
-            {members ? "Refresh tree" : "Expand archives"}
-          </button>
-        </div>
-        {!members ? (
-          <p className="mt-3 text-sm text-slate-500">Members stay collapsed until you expand them.</p>
-        ) : (
-          <ul className="mt-3 space-y-1 font-mono text-xs text-slate-300">
-            {members.map((member) => (
-              <li key={member.id}>
-                {member.directory ? "▸ " : "· "}
-                {member.internal_path}
-                {member.previewable ? "  (previewable)" : ""}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      {id && archiveAssets.length > 0 ? (
+        <ArchivePanel
+          modelId={model.id}
+          assets={model.assets}
+          onOpenMesh={openArchiveMesh}
+          onOpenImage={openArchiveImage}
+        />
+      ) : null}
     </div>
   );
 }

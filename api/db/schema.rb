@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_09_06_020000) do
+ActiveRecord::Schema[8.0].define(version: 2026_09_06_030000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -33,7 +33,14 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_06_020000) do
     t.datetime "mtime"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.string "content_type"
+    t.string "parent_path", default: "", null: false
+    t.string "basename", default: "", null: false
+    t.string "preview_digest"
+    t.string "listing_source", default: "zip", null: false
+    t.index ["asset_id", "basename"], name: "index_archive_members_on_asset_id_and_basename"
     t.index ["asset_id", "internal_path"], name: "index_archive_members_on_asset_id_and_internal_path", unique: true
+    t.index ["asset_id", "parent_path"], name: "index_archive_members_on_asset_id_and_parent_path"
     t.index ["asset_id"], name: "index_archive_members_on_asset_id"
   end
 
@@ -48,6 +55,8 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_06_020000) do
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.bigint "uploaded_by_id"
+    t.boolean "archive_truncated", default: false, null: false
+    t.string "archive_support"
     t.index ["content_digest"], name: "index_assets_on_content_digest"
     t.index ["uploaded_by_id"], name: "index_assets_on_uploaded_by_id"
     t.index ["vibe_model_id", "relative_path"], name: "index_assets_on_vibe_model_id_and_relative_path", unique: true

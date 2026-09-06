@@ -1,5 +1,6 @@
 require "test_helper"
 require "fileutils"
+require "zip"
 
 class ModelSearchTest < ActiveSupport::TestCase
   include ActiveJob::TestHelper
@@ -11,6 +12,10 @@ class ModelSearchTest < ActiveSupport::TestCase
     File.write(@root.join("signal-horn/readme.txt"), "Handheld signal horn.")
     FileUtils.mkdir_p(@root.join("quiet-box"))
     File.write(@root.join("quiet-box/notes.txt"), "No mesh here.")
+    FileUtils.mkdir_p(@root.join("packed-minis"))
+    Zip::File.open(@root.join("packed-minis/minis.zip"), Zip::File::CREATE) do |zip|
+      zip.get_output_stream("hero.stl") { |io| io.write("solid x\nendsolid x\n") }
+    end
     @owner = create_owner!
     @library = Library.create!(name: "Search", root_path: @root.to_s)
     Membership.create!(user: @owner, library: @library, role: Membership::OWNER)
@@ -43,7 +48,18 @@ class ModelSearchTest < ActiveSupport::TestCase
     page = ModelSearch.new(library_scope, query: "", offset: 0, limit: 1).call
     assert_equal 1, page.models.size
     assert_equal 1, page.next_offset
-    assert_equal 2, page.estimated_total
+    assert_equal 3, page.estimated_total
+  end
+
+  test "postgres finds a model by a member path inside a zip" do
+    pack = @library.vibe_models.find_by!(folder_name: "packed-minis")
+    result = ModelSearch.new(library_scope, query: "hero").call
+    assert_includes result.models.map(&:id), pack.id
+    refute_includes result.models.map(&:id), @box.id
+
+    doc = SearchIndex.new.document_for(pack)
+    assert_includes doc[:archive_paths], "hero.stl"
+    refute_includes doc[:archive_paths], ArchiveMember::PLACEHOLDER_PATH
   end
 
   test "meilisearch stub hydrates hits in ranked order" do

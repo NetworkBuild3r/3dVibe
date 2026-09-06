@@ -18,8 +18,9 @@ Rails.application.routes.draw do
         get :content, on: :member
       end
 
-      resources :archive_members, only: [] do
+      resources :archive_members, only: :show do
         get :preview, on: :member
+        get :content, on: :member
       end
 
       get :search, to: "search#index"

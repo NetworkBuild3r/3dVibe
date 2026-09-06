@@ -47,6 +47,8 @@ module API
               archive: asset.archive?,
               mesh: asset.mesh?,
               archive_member_count: asset.archive_members.size,
+              archive_truncated: asset.archive_truncated,
+              archive_support: asset.archive_support,
               uploaded_by: asset.uploaded_by && { id: asset.uploaded_by.id, display_name: asset.uploaded_by.display_name }
             }
           end

@@ -49,6 +49,8 @@ export type Asset = {
   archive: boolean;
   mesh: boolean;
   archive_member_count: number;
+  archive_truncated?: boolean;
+  archive_support?: string | null;
   uploaded_by?: Author | null;
 };
 
@@ -58,14 +60,55 @@ export type ModelDetail = ModelCard & {
 };
 
 export type ArchiveMember = {
-  id: number;
+  id: number | null;
   asset_id: number;
   internal_path: string;
+  name: string;
+  path: string;
+  parent_path: string;
   directory: boolean;
   compressed_size: number | null;
   uncompressed_size: number | null;
+  content_type: string | null;
   previewable: boolean;
+  has_preview: boolean;
+  mesh: boolean;
+  image: boolean;
+  streamable: boolean;
   extension: string;
+  listing_source: string | null;
+  child_count: number | null;
+  has_children: boolean;
+};
+
+export type ArchiveSummary = {
+  asset_id: number;
+  filename: string;
+  kind: string;
+  member_count: number;
+  truncated: boolean;
+  support: string | null;
+};
+
+export type ArchiveTreeResponse = {
+  model_id: number;
+  view: "tree" | "flat" | "search";
+  prefix?: string;
+  q?: string;
+  archives: ArchiveSummary[];
+  nodes: ArchiveMember[];
+  members: ArchiveMember[];
+  next_offset: number | null;
+  estimated_total: number;
+  truncated?: boolean;
+};
+
+export type ArchiveMemberDetail = ArchiveMember & {
+  model_id: number;
+  asset_filename: string;
+  asset_kind: string;
+  archive_support: string | null;
+  mtime: string | null;
 };
 
 export type CurationTarget = {
@@ -228,8 +271,28 @@ export const api = {
     return request<{ models: ModelCard[]; next_cursor: number | null }>(`/models?${params}`);
   },
   model: (id: string | number) => request<{ model: ModelDetail }>(`/models/${id}`),
-  archiveMembers: (modelId: string | number) =>
-    request<{ members: ArchiveMember[] }>(`/models/${modelId}/archive_members`),
+  archiveMembers: (
+    modelId: string | number,
+    options: {
+      asset_id?: number;
+      prefix?: string;
+      q?: string;
+      view?: "tree" | "flat" | "search";
+      limit?: number;
+      offset?: number;
+    } = {}
+  ) => {
+    const params = new URLSearchParams();
+    if (options.asset_id != null) params.set("asset_id", String(options.asset_id));
+    if (options.prefix != null) params.set("prefix", options.prefix);
+    if (options.q) params.set("q", options.q);
+    if (options.view) params.set("view", options.view);
+    if (options.limit != null) params.set("limit", String(options.limit));
+    if (options.offset != null) params.set("offset", String(options.offset));
+    const suffix = params.toString() ? `?${params}` : "";
+    return request<ArchiveTreeResponse>(`/models/${modelId}/archive_members${suffix}`);
+  },
+  archiveMember: (id: number) => request<{ member: ArchiveMemberDetail }>(`/archive_members/${id}`),
   search: (options: {
     q?: string;
     tag?: string;
@@ -332,7 +395,10 @@ export const api = {
     if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
     return data as { upload: LibraryUpload };
   },
-  assetContentUrl: (assetId: number) => `${API_BASE}/assets/${assetId}/content`
+  assetContentUrl: (assetId: number) => `${API_BASE}/assets/${assetId}/content`,
+  archiveMemberContentUrl: (id: number, download = false) =>
+    `${API_BASE}/archive_members/${id}/content${download ? "?download=1" : ""}`,
+  archiveMemberPreviewUrl: (id: number) => `${API_BASE}/archive_members/${id}/preview`
 };
 
 export async function fetchAuthedBlob(url: string): Promise<Blob> {
@@ -340,7 +406,7 @@ export async function fetchAuthedBlob(url: string): Promise<Blob> {
   const response = await fetch(url, {
     headers: current ? { Authorization: `Bearer ${current}` } : undefined
   });
-  if (!response.ok) throw new Error("Could not load mesh");
+  if (!response.ok) throw new Error("Could not load file");
   return response.blob();
 }
 

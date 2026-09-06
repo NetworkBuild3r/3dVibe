@@ -3,7 +3,7 @@ FROM ruby:3.3.6-bookworm
 WORKDIR /app
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends libpq-dev libyaml-dev shared-mime-info \
+  && apt-get install -y --no-install-recommends libpq-dev libyaml-dev shared-mime-info p7zip-full \
   && rm -rf /var/lib/apt/lists/*
 
 COPY Gemfile Gemfile.lock ./
