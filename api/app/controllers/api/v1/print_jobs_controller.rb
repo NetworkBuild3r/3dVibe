@@ -55,6 +55,37 @@ module API
         render json: { print_job: serialize(job.reload) }
       end
 
+      def retry
+        job = own_jobs.find(params[:id])
+        library = job.library || job.vibe_model&.library
+        if library.blank?
+          render json: { error: "invalid", details: ["print job has no library"], print_job: serialize(job) },
+                 status: :unprocessable_entity
+          return
+        end
+        return if require_print!(library)
+
+        unless job.retryable?
+          render json: { error: "not_retryable", print_job: serialize(job) }, status: :conflict
+          return
+        end
+        if job.printer.blank?
+          render json: { error: "invalid", details: ["No printer selected"], print_job: serialize(job) },
+                 status: :unprocessable_entity
+          return
+        end
+        unless job.printer.enabled?
+          render json: { error: "invalid", details: ["printer is disabled"], print_job: serialize(job) },
+                 status: :unprocessable_entity
+          return
+        end
+
+        job.requeue!
+        payload = serialize(job)
+        DispatchPrintJob.perform_later(job.id)
+        render json: { print_job: payload }, status: :accepted
+      end
+
       private
 
       def find_asset!(model)
@@ -99,6 +130,7 @@ module API
           printer_hint: job.printer_hint,
           note: job.note,
           error_message: job.error_message,
+          retryable: job.retryable?,
           remote_ref: job.remote_ref,
           requested_by: job.requested_by && {
             id: job.requested_by.id,

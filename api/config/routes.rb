@@ -65,6 +65,7 @@ Rails.application.routes.draw do
       resources :printers, only: %i[index show create update destroy]
       resources :print_jobs, only: %i[index show create] do
         post :cancel, on: :member
+        post :retry, on: :member
       end
       resources :invites, only: %i[index create] do
         post :revoke, on: :member

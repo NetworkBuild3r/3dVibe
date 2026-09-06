@@ -39,7 +39,13 @@ class PrinterBridge
       progress: (result[:progress] || 25).to_i.clamp(0, 99)
     )
     adapter.simulate_progress(@job)
-    @job.reload.mark_succeeded!(result[:message]) unless @job.reload.terminal?
+    return if @job.reload.terminal?
+
+    if result[:complete] == false || !adapter.complete_after_submit?
+      return
+    end
+
+    @job.mark_succeeded!(result[:message])
   rescue PrinterAdapters::Timeout, Timeout::Error => error
     @job.fail_soft!("Printer timed out: #{error.message}")
   rescue PrinterAdapters::Error, ArgumentError, Errno::ENOENT => error

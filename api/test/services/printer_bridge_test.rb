@@ -64,13 +64,18 @@ class PrinterBridgeServiceTest < ActiveSupport::TestCase
     assert_raises(ArgumentError) { jail.resolve_file("..", "horn.stl") }
   end
 
-  test "sdcp adapter is an explicit not-configured interface" do
-    sdcp = @library.printers.create!(name: "SDCP", host: "10.0.0.5", protocol_type: Printer::SDCP)
+  test "live sdcp adapter fails soft when the host is unreachable" do
+    sdcp = @library.printers.create!(
+      name: "SDCP",
+      host: "127.0.0.1",
+      protocol_type: Printer::SDCP,
+      settings: { "port" => 1 }
+    )
     job = build_job(printer: sdcp)
     PrinterBridge.new(job).run!
     job.reload
     assert_equal PrintDispatch::FAILED, job.status
-    assert_match(/not implemented/i, job.error_message)
+    assert_match(/unreachable|timed out|refused|SDCP/i, job.error_message)
   end
 
   test "dispatch job never raises to the web process" do

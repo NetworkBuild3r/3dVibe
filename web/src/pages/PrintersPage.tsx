@@ -3,7 +3,7 @@ import { api, type LibraryInfo, type Printer } from "../api";
 
 const PROTOCOLS = [
   { id: "mock", label: "Mock (local stub — always works in CI/dev)" },
-  { id: "sdcp", label: "SDCP-like (adapter interface only)" }
+  { id: "sdcp", label: "SDCP (LAN — worker talks to the device)" }
 ];
 
 export function PrintersPage() {
@@ -183,8 +183,9 @@ export function PrintersPage() {
       <section className="rounded-2xl border border-dashed border-white/10 bg-ink-900/40 p-5 text-sm text-slate-500">
         <p className="font-display text-base text-slate-300">Later</p>
         <p className="mt-2">
-          Resin studio, camera preview, and consumables are placeholders. A real SDCP (or similar) adapter belongs in{" "}
-          <code className="text-slate-400">PrinterAdapters::Sdcp</code> and talks to the printer from the worker only.
+          Resin studio, camera preview, and consumables stay out of this slice. SDCP control is JSON over WebSocket plus
+          HTTP upload from <code className="text-slate-400">PrinterAdapters::Sdcp</code> — the browser never opens a
+          printer socket. CI keeps <code className="text-slate-400">mock</code>.
         </p>
       </section>
     </div>

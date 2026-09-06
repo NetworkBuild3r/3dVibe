@@ -12,10 +12,10 @@ module PrinterAdapters
   class Timeout < Error; end
   class NotConfigured < Error; end
 
-  def self.for(printer, timeout: ENV.fetch("VIBE_PRINT_TIMEOUT", "15").to_i)
+  def self.for(printer, timeout: ENV.fetch("VIBE_PRINT_TIMEOUT", "15").to_i, transport: nil)
     case printer.protocol_type
     when Printer::MOCK then Mock.new(printer, timeout: timeout)
-    when Printer::SDCP then Sdcp.new(printer, timeout: timeout)
+    when Printer::SDCP then Sdcp.new(printer, timeout: timeout, transport: transport)
     else
       raise Error, "unknown printer protocol #{printer.protocol_type}"
     end
@@ -45,6 +45,12 @@ module PrinterAdapters
 
     def simulate_progress(_job)
       nil
+    end
+
+    # Mock and the SDCP stub finish in-process. A live SDCP start-print Ack
+    # must not fake succeeded — the job stays printing until the device reports.
+    def complete_after_submit?
+      true
     end
   end
 
@@ -82,30 +88,6 @@ module PrinterAdapters
 
     def mock_delay
       ENV.fetch("VIBE_PRINT_MOCK_DELAY_MS", "0").to_f / 1000.0
-    end
-  end
-
-  # Placeholder for a future LAN SDCP (or SDCP-like) client. The interface is
-  # stable; this class must not open sockets in this slice.
-  class Sdcp < Base
-    def submit(_absolute_path, job:)
-      raise NotConfigured, sdcp_message(job)
-    end
-
-    def poll(_job)
-      raise NotConfigured, "SDCP poll is not implemented. Set protocol_type=mock for local/CI."
-    end
-
-    def cancel(_job)
-      raise NotConfigured, "SDCP cancel is not implemented."
-    end
-
-    private
-
-    def sdcp_message(job)
-      host = printer.host
-      "SDCP adapter is not implemented yet (host=#{host}, job=#{job.id}). " \
-        "Use protocol_type=mock, or add a PrinterAdapters::Sdcp client that talks to the printer from the worker."
     end
   end
 end

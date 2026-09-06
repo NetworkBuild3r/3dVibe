@@ -75,6 +75,16 @@ export function PrintsPage() {
     }
   }
 
+  async function retry(id: number) {
+    setError(null);
+    try {
+      await api.retryPrint(id);
+      await refresh({ silent: true });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not retry print");
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -136,6 +146,11 @@ export function PrintsPage() {
                     {ACTIVE.has(job.status) && user?.id === job.requested_by?.id ? (
                       <button type="button" className="mt-2 text-xs text-rose-300" onClick={() => void cancel(job.id)}>
                         Cancel
+                      </button>
+                    ) : null}
+                    {job.retryable && user?.can_print ? (
+                      <button type="button" className="mt-2 block text-xs text-accent-400" onClick={() => void retry(job.id)}>
+                        Retry
                       </button>
                     ) : null}
                   </div>
