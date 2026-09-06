@@ -24,6 +24,62 @@ class Library < ApplicationRecord
     scan_runs.recent.first
   end
 
+  def current_scan_run
+    scan_runs.active.recent.first
+  end
+
+  def last_finished_scan_run
+    scan_runs.where(status: [ScanRun::COMPLETED, ScanRun::FAILED]).recent.first
+  end
+
+  def scan_as_api
+    latest_scan_run&.as_api || ScanRun.idle_as_api
+  end
+
+  def scan_status_as_api
+    {
+      scan: scan_as_api,
+      current: current_scan_run&.as_api,
+      last: last_finished_scan_run&.as_api
+    }
+  end
+
+  def cover_backlog_as_api
+    counts = vibe_models.group(:cover_status).count
+    {
+      pending: counts[VibeModel::COVER_PENDING].to_i,
+      failed: counts[VibeModel::COVER_FAILED].to_i,
+      missing: counts[VibeModel::COVER_MISSING].to_i
+    }
+  end
+
+  def geometry_backlog_as_api
+    {
+      assets_missing: assets_missing_geometry_digest_count,
+      archive_members_missing: archive_members_missing_geometry_digest_count
+    }
+  end
+
+  def assets_missing_geometry_digest_count
+    Asset.joins(:vibe_model)
+         .where(vibe_models: { library_id: id })
+         .where(kind: GeometryFingerprint::FINGERPRINT_KINDS)
+         .where(geometry_digest: [nil, ""])
+         .count
+  end
+
+  def archive_members_missing_geometry_digest_count
+    suffixes = GeometryFingerprint::FINGERPRINT_KINDS.map { |kind| ".#{kind}" }
+    ArchiveMember.joins(asset: :vibe_model)
+                 .where(vibe_models: { library_id: id })
+                 .where(directory: false)
+                 .where.not(listing_source: "placeholder")
+                 .where.not(internal_path: ArchiveMember::PLACEHOLDER_PATH)
+                 .where(geometry_digest: [nil, ""])
+                 .where("RIGHT(LOWER(internal_path), 4) IN (?)", suffixes)
+                 .count
+  end
+
   def record_curation_poll!(provider:, error: nil)
     update!(
       last_polled_at: Time.current,

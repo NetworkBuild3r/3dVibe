@@ -2,13 +2,25 @@ module API
   module V1
     class LibrariesController < ApplicationController
       def index
-        libraries = accessible_libraries.includes(:scan_runs).order(:name)
+        libraries = accessible_libraries.includes(:scan_runs, :scan_cursors).order(:name)
         render json: { libraries: libraries.map { |library| serialize(library) } }
       end
 
       def show
         library = accessible_libraries.find(params[:id])
         render json: { library: serialize(library, detail: true) }
+      end
+
+      def show_scan
+        library = accessible_libraries.find(params[:id])
+        render json: library.scan_status_as_api.merge(library_id: library.id)
+      end
+
+      def ops
+        library = accessible_libraries.find(params[:id])
+        return if require_curator!(library)
+
+        render json: { ops: OpsSnapshot.new(library).as_api }
       end
 
       def create
@@ -61,22 +73,15 @@ module API
           can_merge: current_user.can_merge?(library),
           can_manage_printers: owner,
           can_scan: owner,
-          curation: library.curation_as_api
+          curation: library.curation_as_api,
+          scan: library.scan_as_api
         }
-        payload[:scan] = serialize_scan(library) if owner
         return payload unless detail
 
         extra = {}
         extra[:scan_settings] = ScanSettings.as_api if owner
         extra[:cursors] = library.scan_cursors.order(:path_prefix).map { |cursor| serialize_cursor(cursor) } if owner
         payload.merge(extra)
-      end
-
-      def serialize_scan(library)
-        run = library.latest_scan_run
-        return { status: "idle" } unless run
-
-        run.as_api
       end
 
       def serialize_cursor(cursor)

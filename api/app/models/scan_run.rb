@@ -150,7 +150,47 @@ class ScanRun < ApplicationRecord
       deep_walks: deep_walks,
       budget_exhausted: budget_exhausted,
       last_error: last_error,
+      budgets: ScanSettings.budgets_as_api,
+      resume: resume_as_api,
       updated_at: updated_at
     }
+  end
+
+  def self.idle_as_api
+    {
+      status: "idle",
+      budgets: ScanSettings.budgets_as_api,
+      resume: nil
+    }
+  end
+
+  def resume_as_api
+    cursor = resume_cursor
+    path = cursor&.resume_relative_path
+    return nil if resume_after.blank? && path.blank?
+
+    {
+      resume_after: resume_after,
+      path_prefix: cursor&.path_prefix || path_prefix,
+      resume_relative_path: path
+    }
+  end
+
+  private
+
+  def resume_cursor
+    return unless resume_after.present? || budget_exhausted?
+
+    if library.association(:scan_cursors).loaded?
+      if resume_after.present?
+        library.scan_cursors.find { |cursor| cursor.path_prefix == resume_after }
+      else
+        library.scan_cursors.find { |cursor| cursor.resume_relative_path.present? }
+      end
+    elsif resume_after.present?
+      library.scan_cursors.find_by(path_prefix: resume_after)
+    else
+      library.scan_cursors.where.not(resume_relative_path: [nil, ""]).first
+    end
   end
 end

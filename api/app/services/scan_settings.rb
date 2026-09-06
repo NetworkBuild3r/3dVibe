@@ -60,6 +60,14 @@ class ScanSettings
       }
     end
 
+    def budgets_as_api
+      {
+        max_seconds: max_seconds,
+        max_files: max_files,
+        max_folders: max_folders
+      }
+    end
+
     private
 
     def int(key, default)
