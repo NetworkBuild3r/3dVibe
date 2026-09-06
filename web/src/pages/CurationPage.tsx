@@ -305,6 +305,14 @@ export function CurationPage() {
             <StatusStripChip>Provider {poll?.last_provider || "—"}</StatusStripChip>
             <StatusStripChip>{lastRunLabel(poll?.last_polled_at)}</StatusStripChip>
             {poll?.last_error ? <StatusStripChip tone="rose">{poll.last_error}</StatusStripChip> : null}
+            {user?.can_invite ? (
+              <Link
+                to="/settings/curator"
+                className="inline-flex items-center rounded-full border border-accent-500/30 px-3 py-1.5 text-sm text-accent-300 hover:border-accent-500/50 hover:text-accent-200"
+              >
+                Configure
+              </Link>
+            ) : null}
           </div>
         </div>
         {canCurate ? (

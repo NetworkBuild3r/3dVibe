@@ -170,7 +170,7 @@ Likes, shelves, merge/split, and duplicates:
 3. Review before/after, then approve, reject, or use bulk actions.
 4. Tags write immediately. Rename/move/merge run through `ApplyCurationProposalJob` inside the library path jail, then enqueue a targeted incremental scan.
 5. Poll status (`last_polled_at`, `last_provider`, `last_error`) is on Curation, Libraries, and `GET /me`. A success clears a stale error. `last_provider` is the sidecar echo or the effective UI/ENV provider used on that poll. Nothing is auto-approved.
-6. Owner-only **curator settings** (`GET`/`PATCH /api/v1/curator_settings`) choose `stub` / `ollama` / `xai` and store an encrypted xAI key. Env vars stay the compose/CI fallback when the UI is unset. The SPA never receives the decrypted key.
+6. Owner-only **Curator** settings (`/settings/curator`, Avatar menu, or **Configure** on the Curation status strip) choose `stub` / `ollama` / `xai` and store an encrypted xAI key. Env vars stay the compose/CI fallback when the UI is unset. The SPA never receives the decrypted key.
 
 ```bash
 # in-process stub (default in compose: VIBE_CURATOR_URL=stub) — CI path
@@ -586,9 +586,11 @@ Rails injects the resolved hash as `curator_runtime` on `POST /proposals` only. 
 
 **Key pattern:** `PATCH` updates provider / Ollama URL / model. `PUT /api/v1/curator_settings/xai_api_key` `{ "xai_api_key": "..." }` sets the key. `DELETE` clears it. Never echo the secret.
 
+**Owner UI:** `/settings/curator` (Avatar menu → **Curator**, or Curation **Configure**). Non-owners do not see the entry point. The key field is a one-shot password input (`autocomplete=new-password`); it is never prefilled from `GET` and is cleared from the DOM after a successful `PUT`. Settings apply on the next **Refresh proposals**. Stub stays available.
+
 **Encryption:** `ActiveRecord::Encryption` on `curator_settings.xai_api_key`. Wire keys with `VIBE_ACTIVE_RECORD_ENCRYPTION_PRIMARY_KEY`, `VIBE_ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY`, and `VIBE_ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT`, or Rails credentials `active_record_encryption.*`. Compose and CI use documented deterministic test keys. Generate production keys with `bin/rails db:encryption:init`.
 
-**Security:** do not store the xAI key in `localStorage`, cookies, or chat paste. The SPA only shows `xai_api_key_status`. Owner-only (403 otherwise).
+**Security:** do not store the xAI key in `localStorage`, cookies, Meilisearch, proposal payloads, or chat paste. The SPA only shows `xai_api_key_status`. Owner-only (403 otherwise).
 
 ### Poll observability (Frontend bind)
 

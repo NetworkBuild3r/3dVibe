@@ -1,4 +1,8 @@
+import { parseCuratorSetting, type CuratorProvider } from "./curatorSettings";
+
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api/v1";
+
+export type { CuratorProvider, CuratorSetting, XaiApiKeyStatus } from "./curatorSettings";
 
 export type CurationPollStatus = {
   last_polled_at: string | null;
@@ -623,6 +627,36 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ library_id: libraryId })
     }),
+  curatorSettings: async () => {
+    const payload = await request<unknown>("/curator_settings");
+    return { curator_setting: parseCuratorSetting(payload) };
+  },
+  updateCuratorSettings: async (payload: {
+    provider: CuratorProvider;
+    ollama_url?: string | null;
+    ollama_model?: string | null;
+  }) => {
+    const body = await request<unknown>("/curator_settings", {
+      method: "PATCH",
+      body: JSON.stringify({
+        provider: payload.provider,
+        ollama_url: payload.ollama_url ?? null,
+        ollama_model: payload.ollama_model ?? null
+      })
+    });
+    return { curator_setting: parseCuratorSetting(body) };
+  },
+  setCuratorXaiApiKey: async (xaiApiKey: string) => {
+    const body = await request<unknown>("/curator_settings/xai_api_key", {
+      method: "PUT",
+      body: JSON.stringify({ xai_api_key: xaiApiKey })
+    });
+    return { curator_setting: parseCuratorSetting(body) };
+  },
+  clearCuratorXaiApiKey: async () => {
+    const body = await request<unknown>("/curator_settings/xai_api_key", { method: "DELETE" });
+    return { curator_setting: parseCuratorSetting(body) };
+  },
   bulkProposals: (ids: number[], action: "approve" | "reject") =>
     request<{ proposals: CurationProposal[] }>("/curation_proposals/bulk", {
       method: "POST",

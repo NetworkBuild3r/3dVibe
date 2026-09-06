@@ -55,6 +55,11 @@ export function AvatarMenu() {
           <Link to="/curation" role="menuitem" className="block px-3 py-2 text-sm text-slate-200 hover:bg-white/5" onClick={() => setOpen(false)}>
             Curation
           </Link>
+          {user.can_invite ? (
+            <Link to="/settings/curator" role="menuitem" className="block px-3 py-2 text-sm text-slate-200 hover:bg-white/5" onClick={() => setOpen(false)}>
+              Curator
+            </Link>
+          ) : null}
           {user.can_manage_printers ? (
             <Link to="/printers" role="menuitem" className="block px-3 py-2 text-sm text-slate-200 hover:bg-white/5" onClick={() => setOpen(false)}>
               Printers
