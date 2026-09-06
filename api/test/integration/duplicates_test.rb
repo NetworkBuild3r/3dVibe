@@ -198,4 +198,150 @@ class DuplicatesTest < ActionDispatch::IntegrationTest
   ensure
     ENV.delete("VIBE_GEOMETRY_TOKEN")
   end
+
+  test "geometry writeback sets archive_member.geometry_digest" do
+    member = seed_packed_member!
+
+    ENV["VIBE_GEOMETRY_TOKEN"] = "geo-secret"
+    post "/api/v1/geometry/writeback",
+         params: { archive_member_id: member.id, geometry_digest: "mesh:v1:packed" },
+         headers: { "X-Geometry-Token" => "geo-secret" },
+         as: :json
+    assert_response :success
+    assert_equal "mesh:v1:packed", member.reload.geometry_digest
+    assert_equal member.id, response.parsed_body.dig("archive_member", "archive_member_id")
+    assert_equal "pack.zip → path/foo.stl", response.parsed_body.dig("archive_member", "archive_path")
+
+    post "/api/v1/geometry/writeback",
+         params: { archive_member_id: member.id, geometry_digest: "mesh:v1:packed-2" },
+         headers: auth_header(@contributor),
+         as: :json
+    assert_response :success
+    assert_equal "mesh:v1:packed-2", member.reload.geometry_digest
+
+    post "/api/v1/geometry/writeback",
+         params: { archive_member_id: member.id, geometry_digest: "mesh:v1:nope" },
+         headers: auth_header(@viewer),
+         as: :json
+    assert_response :forbidden
+    assert_equal "mesh:v1:packed-2", member.reload.geometry_digest
+  ensure
+    ENV.delete("VIBE_GEOMETRY_TOKEN")
+  end
+
+  test "analyze clusters a loose asset and archive member on the same geometry digest" do
+    member = seed_packed_member!
+    loose = @library.vibe_models.find_by!(folder_name: "crate").assets.find_by!(filename: "box.stl")
+    GeometryWriteback.apply!(archive_member_id: member.id, geometry_digest: "mesh:v1:shared")
+    GeometryWriteback.apply!(asset_id: loose.id, geometry_digest: "mesh:v1:shared")
+
+    AnalyzeDuplicatesJob.perform_now(@library.id)
+
+    get "/api/v1/duplicates",
+        params: { library_id: @library.id, status: "open" },
+        headers: auth_header(@owner)
+    assert_response :success
+    geo = response.parsed_body.fetch("groups").find { |group| group["reason"] == "geometry" && group["digest"] == "mesh:v1:shared" }
+    assert geo
+    assert_equal "geometry", geo["confidence"]
+    kinds = geo.fetch("members").map { |row| row["kind"] }
+    assert_includes kinds, "asset"
+    assert_includes kinds, "archive_member"
+    packed = geo.fetch("members").find { |row| row["kind"] == "archive_member" }
+    assert_equal member.id, packed["archive_member_id"]
+    assert_equal "path/foo.stl", packed["member_path"]
+    assert_equal "pack.zip → path/foo.stl", packed["archive_path"]
+    assert_equal false, packed["mergeable"]
+    assert_equal member.asset_id, packed["parent_asset_id"]
+    assert_equal "pack.zip", packed["parent_filename"]
+    loose_row = geo.fetch("members").find { |row| row["kind"] == "asset" }
+    assert_equal loose.id, loose_row["asset_id"]
+    assert_equal true, loose_row["mergeable"]
+  end
+
+  test "merge returns merge_unsupported when an archive member is selected" do
+    member = seed_packed_member!
+    loose = @library.vibe_models.find_by!(folder_name: "crate").assets.find_by!(filename: "box.stl")
+    GeometryWriteback.apply!(archive_member_id: member.id, geometry_digest: "mesh:v1:merge-block")
+    GeometryWriteback.apply!(asset_id: loose.id, geometry_digest: "mesh:v1:merge-block")
+    AnalyzeDuplicatesJob.perform_now(@library.id)
+    group = DuplicateGroup.open.find_by!(reason: DuplicateGroup::REASON_GEOMETRY, digest: "mesh:v1:merge-block")
+    target = loose.vibe_model
+
+    post "/api/v1/duplicates/#{group.id}/merge",
+         params: { archive_member_ids: [member.id], target_id: target.id },
+         headers: auth_header(@contributor),
+         as: :json
+    assert_response :unprocessable_entity
+    assert_equal "merge_unsupported", response.parsed_body["error"]
+    assert_match(/archive-resident/i, response.parsed_body["message"])
+    assert_equal DuplicateGroup::OPEN, group.reload.status
+    refute group.duplicate_reviews.exists?
+  end
+
+  test "keep and dismiss still work on groups that include an archive member" do
+    member = seed_packed_member!
+    loose = @library.vibe_models.find_by!(folder_name: "crate").assets.find_by!(filename: "box.stl")
+    GeometryWriteback.apply!(archive_member_id: member.id, geometry_digest: "mesh:v1:hitl")
+    GeometryWriteback.apply!(asset_id: loose.id, geometry_digest: "mesh:v1:hitl")
+    AnalyzeDuplicatesJob.perform_now(@library.id)
+    group = DuplicateGroup.open.find_by!(reason: DuplicateGroup::REASON_GEOMETRY, digest: "mesh:v1:hitl")
+
+    post "/api/v1/duplicates/#{group.id}/keep", headers: auth_header(@contributor), as: :json
+    assert_response :success
+    assert_equal "kept", response.parsed_body.dig("group", "status")
+    assert_equal "keep", response.parsed_body.dig("review", "decision")
+    assert_equal DuplicateGroup::KEPT, group.reload.status
+
+    other = seed_second_packed_member!
+    GeometryWriteback.apply!(archive_member_id: other.id, geometry_digest: "mesh:v1:hitl-b")
+    GeometryWriteback.apply!(asset_id: loose.id, geometry_digest: "mesh:v1:hitl-b")
+    AnalyzeDuplicatesJob.perform_now(@library.id)
+    dismissable = DuplicateGroup.open.find_by!(reason: DuplicateGroup::REASON_GEOMETRY, digest: "mesh:v1:hitl-b")
+
+    post "/api/v1/duplicates/#{dismissable.id}/dismiss", headers: auth_header(@owner), as: :json
+    assert_response :success
+    assert_equal "dismissed", response.parsed_body.dig("group", "status")
+    assert_equal DuplicateGroup::DISMISSED, dismissable.reload.status
+
+    AnalyzeDuplicatesJob.perform_now(@library.id)
+    assert_equal DuplicateGroup::KEPT, group.reload.status
+    assert_equal DuplicateGroup::DISMISSED, dismissable.reload.status
+  end
+
+  test "analyze enqueues archive member geometry stub without extracting the zip" do
+    member = seed_packed_member!
+    assert_nil member.geometry_digest
+
+    assert_enqueued_with(job: ComputeArchiveMemberGeometryDigestJob, args: [member.id]) do
+      AnalyzeDuplicatesJob.perform_now(@library.id)
+    end
+    assert_nil member.reload.geometry_digest
+    assert File.file?(@root.join("packed/pack.zip"))
+    refute File.exist?(@root.join("packed/path/foo.stl"))
+  end
+
+  private
+
+  def seed_packed_member!
+    require "zip"
+    FileUtils.mkdir_p(@root.join("packed"))
+    Zip::File.open(@root.join("packed/pack.zip"), Zip::File::CREATE) do |zip|
+      zip.get_output_stream("path/foo.stl") { |io| io.write("solid foo\nendsolid foo\n") }
+    end
+    LibraryScanner.new(@library, budget: ScanBudget.unlimited).scan!
+    archive = @library.vibe_models.find_by!(folder_name: "packed").assets.find_by!(filename: "pack.zip")
+    archive.archive_members.find_by!(internal_path: "path/foo.stl")
+  end
+
+  def seed_second_packed_member!
+    require "zip"
+    FileUtils.mkdir_p(@root.join("packed-b"))
+    Zip::File.open(@root.join("packed-b/other.zip"), Zip::File::CREATE) do |zip|
+      zip.get_output_stream("inner/bar.stl") { |io| io.write("solid bar\nendsolid bar\n") }
+    end
+    LibraryScanner.new(@library, budget: ScanBudget.unlimited).scan!
+    archive = @library.vibe_models.find_by!(folder_name: "packed-b").assets.find_by!(filename: "other.zip")
+    archive.archive_members.find_by!(internal_path: "inner/bar.stl")
+  end
 end

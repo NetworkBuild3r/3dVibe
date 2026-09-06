@@ -1,9 +1,20 @@
 # Cluster likely duplicate files in a shared library.
-# Exact groups use stored SHA-256. Geometry groups use assets.geometry_digest
-# (written by Rendering). Name+size leftovers are a heuristic.
+# Exact groups use stored SHA-256 (whole-file Asset only). Geometry groups
+# use assets.geometry_digest and archive_members.geometry_digest (same digest
+# → one group: loose↔member↔member). Name+size leftovers stay asset-oriented.
 # Size-prefilter + streamed hashing (never slurp archives). Path-jailed.
 class DuplicateFinder
-  Cluster = Struct.new(:reason, :confidence, :digest, :assets, keyword_init: true)
+  Cluster = Struct.new(:reason, :confidence, :digest, :assets, :archive_members, keyword_init: true) do
+    def initialize(*)
+      super
+      self.assets = Array(assets)
+      self.archive_members = Array(archive_members)
+    end
+
+    def size
+      assets.size + archive_members.size
+    end
+  end
 
   def initialize(library, budget: nil)
     @library = library
@@ -21,7 +32,7 @@ class DuplicateFinder
 
   def call
     groups = clusters.map { |cluster| serialize_group(cluster) }
-    groups.sort_by! { |group| [-group[:assets].size, group[:reason], group[:id].to_s] }
+    groups.sort_by! { |group| [-group[:members].size, group[:reason], group[:id].to_s] }
     {
       library_id: @library.id,
       group_count: groups.size,
@@ -31,6 +42,10 @@ class DuplicateFinder
 
   def mesh_missing_geometry
     load_assets.select { |asset| asset.mesh? && asset.geometry_digest.blank? }
+  end
+
+  def archive_members_missing_geometry
+    load_mesh_archive_members.select { |member| member.geometry_digest.blank? }
   end
 
   private
@@ -50,6 +65,16 @@ class DuplicateFinder
          .where(vibe_models: { library_id: @library.id })
          .includes(vibe_model: :library)
          .to_a
+  end
+
+  def load_mesh_archive_members
+    @mesh_archive_members ||= ArchiveMember.joins(asset: :vibe_model)
+      .where(vibe_models: { library_id: @library.id })
+      .where(directory: false)
+      .where.not(listing_source: "placeholder")
+      .where.not(internal_path: ArchiveMember::PLACEHOLDER_PATH)
+      .includes(asset: { vibe_model: :library })
+      .select(&:mesh?)
   end
 
   # Only stream-hash files that share a byte size with another asset.
@@ -105,21 +130,33 @@ class DuplicateFinder
   end
 
   def geometry_groups(assets, claimed)
-    groups = assets
-      .reject { |asset| claimed.include?(asset.id) }
-      .select { |asset| asset.geometry_digest.present? }
-      .group_by(&:geometry_digest)
-      .filter_map do |digest, members|
-        next if members.size < 2
+    by_digest = Hash.new { |hash, key| hash[key] = { assets: [], archive_members: [] } }
 
-        members.each { |asset| claimed << asset.id }
-        Cluster.new(
-          reason: DuplicateGroup::REASON_GEOMETRY,
-          confidence: DuplicateGroup::CONFIDENCE_GEOMETRY,
-          digest: digest,
-          assets: members
-        )
-      end
+    assets.each do |asset|
+      next if claimed.include?(asset.id)
+      next if asset.geometry_digest.blank?
+
+      by_digest[asset.geometry_digest][:assets] << asset
+    end
+
+    load_mesh_archive_members.each do |member|
+      next if member.geometry_digest.blank?
+
+      by_digest[member.geometry_digest][:archive_members] << member
+    end
+
+    groups = by_digest.filter_map do |digest, parts|
+      next if parts[:assets].size + parts[:archive_members].size < 2
+
+      parts[:assets].each { |asset| claimed << asset.id }
+      Cluster.new(
+        reason: DuplicateGroup::REASON_GEOMETRY,
+        confidence: DuplicateGroup::CONFIDENCE_GEOMETRY,
+        digest: digest,
+        assets: parts[:assets],
+        archive_members: parts[:archive_members]
+      )
+    end
     [groups, claimed]
   end
 
@@ -157,13 +194,17 @@ class DuplicateFinder
 
   def serialize_group(cluster)
     sample = cluster.assets.min_by { |asset| [asset.vibe_model.title, asset.relative_path, asset.id] }
+    sample_member = cluster.archive_members.min_by { |member| [member.asset.vibe_model.title, member.internal_path, member.id] }
+    members = cluster.assets.map { |asset| serialize_asset(asset).merge(kind: "asset", mergeable: true, asset_id: asset.id) } +
+      cluster.archive_members.map { |member| serialize_archive_member(member) }
     {
-      id: cluster.digest.present? ? "#{cluster.reason}:#{cluster.digest}" : "name-size:#{sample.filename.to_s.downcase}:#{sample.byte_size.to_i}",
+      id: cluster.digest.present? ? "#{cluster.reason}:#{cluster.digest}" : "name-size:#{sample&.filename.to_s.downcase}:#{sample&.byte_size.to_i}",
       reason: cluster.reason,
       confidence: cluster.confidence,
       digest: cluster.digest,
-      filename: sample.filename,
-      byte_size: sample.byte_size,
+      filename: sample&.filename || sample_member&.basename,
+      byte_size: sample&.byte_size || sample_member&.uncompressed_size,
+      members: members,
       assets: cluster.assets.sort_by { |asset| [asset.vibe_model.title, asset.relative_path, asset.id] }.map { |asset| serialize_asset(asset) }
     }
   end
@@ -177,6 +218,26 @@ class DuplicateFinder
       byte_size: asset.byte_size,
       content_digest: asset.content_digest,
       geometry_digest: asset.geometry_digest,
+      model_id: asset.vibe_model_id,
+      model_title: asset.vibe_model.title,
+      folder_name: asset.vibe_model.folder_name
+    }
+  end
+
+  def serialize_archive_member(member)
+    asset = member.asset
+    {
+      kind: "archive_member",
+      mergeable: false,
+      id: member.id,
+      archive_member_id: member.id,
+      asset_id: asset.id,
+      parent_asset_id: asset.id,
+      parent_filename: asset.filename,
+      member_path: member.internal_path,
+      archive_path: member.archive_path,
+      filename: member.basename,
+      geometry_digest: member.geometry_digest,
       model_id: asset.vibe_model_id,
       model_title: asset.vibe_model.title,
       folder_name: asset.vibe_model.folder_name

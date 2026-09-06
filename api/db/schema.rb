@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_09_06_160000) do
+ActiveRecord::Schema[8.0].define(version: 2026_09_06_170000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -38,10 +38,12 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_06_160000) do
     t.string "basename", default: "", null: false
     t.string "preview_digest"
     t.string "listing_source", default: "zip", null: false
+    t.string "geometry_digest"
     t.index ["asset_id", "basename"], name: "index_archive_members_on_asset_id_and_basename"
     t.index ["asset_id", "internal_path"], name: "index_archive_members_on_asset_id_and_internal_path", unique: true
     t.index ["asset_id", "parent_path"], name: "index_archive_members_on_asset_id_and_parent_path"
     t.index ["asset_id"], name: "index_archive_members_on_asset_id"
+    t.index ["geometry_digest"], name: "index_archive_members_on_geometry_digest"
   end
 
   create_table "assets", force: :cascade do |t|
@@ -121,14 +123,18 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_06_160000) do
 
   create_table "duplicate_group_members", force: :cascade do |t|
     t.bigint "duplicate_group_id", null: false
-    t.bigint "asset_id", null: false
+    t.bigint "asset_id"
     t.bigint "vibe_model_id"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.bigint "archive_member_id"
+    t.index ["archive_member_id"], name: "index_duplicate_group_members_on_archive_member_id"
     t.index ["asset_id"], name: "index_duplicate_group_members_on_asset_id"
-    t.index ["duplicate_group_id", "asset_id"], name: "idx_dup_group_members_on_group_and_asset", unique: true
+    t.index ["duplicate_group_id", "archive_member_id"], name: "idx_dup_group_members_on_group_and_member", unique: true, where: "(archive_member_id IS NOT NULL)"
+    t.index ["duplicate_group_id", "asset_id"], name: "idx_dup_group_members_on_group_and_asset", unique: true, where: "(asset_id IS NOT NULL)"
     t.index ["duplicate_group_id"], name: "index_duplicate_group_members_on_duplicate_group_id"
     t.index ["vibe_model_id"], name: "index_duplicate_group_members_on_vibe_model_id"
+    t.check_constraint "asset_id IS NOT NULL AND archive_member_id IS NULL OR asset_id IS NULL AND archive_member_id IS NOT NULL", name: "dup_group_members_asset_xor_archive_member"
   end
 
   create_table "duplicate_groups", force: :cascade do |t|
@@ -384,6 +390,7 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_06_160000) do
   add_foreign_key "bookmarks", "vibe_models"
   add_foreign_key "curation_proposals", "libraries"
   add_foreign_key "curation_proposals", "users", column: "reviewed_by_id"
+  add_foreign_key "duplicate_group_members", "archive_members", on_delete: :cascade
   add_foreign_key "duplicate_group_members", "assets"
   add_foreign_key "duplicate_group_members", "duplicate_groups"
   add_foreign_key "duplicate_group_members", "vibe_models"

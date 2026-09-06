@@ -55,10 +55,10 @@ Domain objects (original names):
 | `Library` | Root path on disk (your NFS mount) |
 | `VibeModel` | One folder under that root |
 | `Asset` | An on-disk file, with a content digest when the file is small enough and an optional `geometry_digest` from `GeometryFingerprint` |
+| `ArchiveMember` | An indexed zip/3mf entry. Optional `geometry_digest` (`mesh:v1:…`) written by Rendering — not a second Asset row |
 | `DuplicateGroup` | Persisted cluster (`content_hash` / `geometry` / `name_size`) with HITL status `open` \| `kept` \| `dismissed` \| `merged` |
-| `DuplicateGroupMember` | Asset (and optional model) in a group |
+| `DuplicateGroupMember` | Exactly one of `asset_id` or `archive_member_id` in a group |
 | `DuplicateReview` | Keep / dismiss / merge decision + payload |
-| `ArchiveMember` | An indexed entry inside a zip/3mf (7z/rar listing is best-effort) |
 | `Tag` / `TagAssignment` | Lightweight joins for search and display |
 | `User` / `Membership` / `Invite` | Owner, contributor, or viewer |
 | `LibraryUpload` | Resumable upload session that lands inside the library jail |
@@ -81,10 +81,11 @@ Background jobs:
 - `ApplyCurationProposalJob` — applies an approved rename/move/merge (tags apply in-request)
 - `DispatchPrintJob` — path-jails a library file and sends it through a printer adapter (mock simulates progress)
 - `ModelComposer` — merge/split first-level folders and selected files inside the path jail
-- `AnalyzeDuplicatesJob` — on-demand (not every NFS poll): size-prefilter, stream SHA-256, upsert `open` groups, enqueue geometry fingerprints
+- `AnalyzeDuplicatesJob` — on-demand (not every NFS poll): size-prefilter, stream SHA-256, upsert `open` groups (loose + archive members on geometry), enqueue geometry fingerprints
 - `ComputeGeometryDigestJob` / `GeometryFingerprint` — path-jailed STL/OBJ/3MF fingerprint (`mesh:v1:<sha256>`). Writes via `GeometryWriteback.apply!`. Huge meshes skip / time out; 3MF streams the `.model` member
-- `DuplicateFinder` / `DuplicateAnalyzer` — cluster by content hash, geometry digest, then name+size; persist only; never delete NFS files
-- `GeometryWriteback` — Rendering sets `assets.geometry_digest` (`POST /api/v1/geometry/writeback` or `GeometryWriteback.apply!`)
+- `ComputeArchiveMemberGeometryDigestJob` — **stub** for Rendering: path-jails the parent archive + `member_path` only. Does not stream zip members or write a digest
+- `DuplicateFinder` / `DuplicateAnalyzer` — cluster by content hash (Asset only), geometry digest (Asset + ArchiveMember), then name+size (Asset); persist only; never delete NFS files
+- `GeometryWriteback` — Rendering sets `assets.geometry_digest` or `archive_members.geometry_digest` (`POST /api/v1/geometry/writeback` or `GeometryWriteback.apply!`)
 - `GenerateCoverJob` — path-jails the locked cover payload, generates a budgeted libvips webp (or fails for mesh-without-preview), writes back via `CoverWriteback.apply!`
 - `CoverEnqueue` / `CoverWriteback` — scan sets `cover_status=pending`; write-back sets `ready`/`failed` + `cover_url`
 
@@ -334,17 +335,17 @@ Model card / index fields:
 
 Analyze is on-demand — it is **not** hooked to every NFS poll. `POST /api/v1/libraries/:id/duplicates/analyze` queues `AnalyzeDuplicatesJob`.
 
-The worker size-prefilters (only files that share a byte size are streamed for SHA-256), path-jails every hash (`LibraryPathJail#resolve_file` + `Digest::SHA256.file`), and never loads archives into RAM. Pending `stl` / `obj` / `3mf` meshes are fingerprinted in-process (`GeometryFingerprint.compute` → `GeometryWriteback.apply!`) so the same analyze pass can open geometry groups. Leftovers enqueue `ComputeGeometryDigestJob`.
+The worker size-prefilters (only files that share a byte size are streamed for SHA-256), path-jails every hash (`LibraryPathJail#resolve_file` + `Digest::SHA256.file`), and never loads archives into RAM. Pending loose `stl` / `obj` / `3mf` meshes are fingerprinted in-process (`GeometryFingerprint.compute` → `GeometryWriteback.apply!`) so the same analyze pass can open geometry groups. Leftover loose meshes enqueue `ComputeGeometryDigestJob`. Mesh `archive_members` missing a digest enqueue `ComputeArchiveMemberGeometryDigestJob` (Rendering stub — path-jail only; no zip extract).
 
 Clustering, highest confidence first:
 
 | reason | confidence | rule |
 | --- | --- | --- |
-| `content_hash` | `exact` | shared `content_digest` (SHA-256) |
-| `geometry` | `geometry` | shared `geometry_digest` (near-dup; HITL only) |
-| `name_size` | `likely` | leftover same filename + size |
+| `content_hash` | `exact` | shared `content_digest` (SHA-256), whole-file Asset only |
+| `geometry` | `geometry` | shared `geometry_digest` on `assets` **or** `archive_members` (loose↔member↔member; HITL only) |
+| `name_size` | `likely` | leftover same filename + size (Asset only) |
 
-**Rematch.** Terminal groups (`kept` / `dismissed` / `merged`) are never rewritten. If they still match a current cluster (same reason+digest or same name+size, and at least two current members overlap), those assets stay reserved and will not open a new group. Only `open` groups are created or have members refreshed. Stale `open` groups that no longer match are destroyed. Re-analyze after a keep/dismiss does not wipe that decision.
+**Rematch.** Terminal groups (`kept` / `dismissed` / `merged`) are never rewritten. If they still match a current cluster (same reason+digest or same name+size, and at least two current members overlap), those members stay reserved and will not open a new group. Only `open` groups are created or have members refreshed. Stale `open` groups that no longer match are destroyed. Re-analyze after a keep/dismiss does not wipe that decision.
 
 **Geometry fingerprint.** `ComputeGeometryDigestJob` / `GeometryFingerprint.compute` path-jails the file (`LibraryPathJail#resolve_file`), streams a loose STL / OBJ / 3MF (3MF via zip entry stream — never a whole-archive RAM load), quantizes vertices, drops colors / names / 3MF transforms, and writes `mesh:v1:<sha256>` through `GeometryWriteback.apply!`. Gcode, images, and other non-mesh kinds skip. Jail escape, files over `VIBE_GEO_MAX_BYTES`, or meshes over `VIBE_GEO_MAX_VERTS` / `VIBE_GEO_MAX_SECONDS` skip without crashing and without writing an empty digest. Near-dup grouping stays on `AnalyzeDuplicatesJob`. No native mesh library — pure Ruby + `rubyzip`.
 
@@ -359,11 +360,19 @@ X-Geometry-Token: $VIBE_GEOMETRY_TOKEN
 { "asset_id": 99, "geometry_digest": "mesh:v1:…" }
 ```
 
-In-process: `GeometryWriteback.apply!(asset_id:, geometry_digest:)` or `asset.update!(geometry_digest:)`. `GeometryFingerprint.compute` returns a `mesh:v1:` digest or `nil` for skip/timeout/empty mesh. The analyze job writes that digest through `GeometryWriteback` — there is no second writeback API. After switching prefix from `qv1:` to `mesh:v1:`, re-run Analyze so open groups refresh (mixed prefixes will not cluster).
+or (XOR — exactly one target):
 
-**Frontend bind.** The Duplicates page calls `POST /libraries/:id/duplicates/analyze` (busy + last-run), then `GET /duplicates?library_id=&status=` with Open / Kept / Dismissed / Merged / All. Group `id` is an integer. Cards show Exact / Geometry / Likely from `confidence`, member count, and 2–4 covers. `/duplicates/:id` is a side-by-side review drawer (cover · title · creator · path · size · content/geometry digest snippets). Owner/contributor Keep / Dismiss / Merge hit `/duplicates/:id/{keep,dismiss,merge}` (merge confirm never silent-deletes). Viewers get a read-only compare.
+```json
+{ "archive_member_id": 12, "geometry_digest": "mesh:v1:…" }
+```
 
-NFS remains source of truth. The DB is an index. Merge only moves files through `ModelComposer`'s path jail. Nothing auto-deletes library files.
+In-process: `GeometryWriteback.apply!(asset_id:, geometry_digest:)` or `GeometryWriteback.apply!(archive_member_id:, geometry_digest:)`. `GeometryFingerprint.compute` returns a `mesh:v1:` digest or `nil` for skip/timeout/empty mesh (loose files only). The analyze job writes loose-file digests through `GeometryWriteback` — there is no second writeback API. After switching prefix from `qv1:` to `mesh:v1:`, re-run Analyze so open groups refresh (mixed prefixes will not cluster).
+
+**Rendering bind.** `ComputeArchiveMemberGeometryDigestJob` is a stub: it path-jails the parent archive (`LibraryPathJail#resolve_file` on the zip/3mf) and logs `member_path`. It does **not** stream the zip, extract to disk, or write `geometry_digest`. Rendering should stream **one** member, compute `mesh:v1:…`, and `POST /api/v1/geometry/writeback` with `archive_member_id`. Never extract the whole archive into RAM or onto disk by default. NFS stays source of truth; path jail only.
+
+**Frontend bind.** The Duplicates page calls `POST /libraries/:id/duplicates/analyze` (busy + last-run), then `GET /duplicates?library_id=&status=` with Open / Kept / Dismissed / Merged / All. Group `id` is an integer. Prefer `members[]` (`kind: asset | archive_member`). Archive members include `archive_member_id`, parent archive `parent_asset_id` / `parent_filename`, `member_path`, display `archive_path` (`pack.zip → path/foo.stl`), `geometry_digest`, and model card fields. `mergeable` is `false` for `archive_member` and `true` for on-disk assets `ModelComposer` can reparent. `assets[]` remains the loose-file subset (existing cards). Cards show Exact / Geometry / Likely from `confidence`, member count, and 2–4 covers. `/duplicates/:id` is a side-by-side review drawer (cover · title · creator · path · size · content/geometry digest snippets). Owner/contributor Keep / Dismiss / Merge hit `/duplicates/:id/{keep,dismiss,merge}`. If any selected member is archive-resident / `mergeable=false`, merge returns **422** `{ "error": "merge_unsupported" }` — do not offer extract/reparent-out-of-zip. Keep/Dismiss are unchanged. Viewers get a read-only compare.
+
+NFS remains source of truth. The DB is an index. Merge only moves on-disk files through `ModelComposer`'s path jail. Nothing auto-deletes library files.
 
 **Cover write-back** (also `CoverWriteback.apply!` in-process):
 
@@ -406,10 +415,10 @@ All endpoints except `POST /api/v1/session`, invite preview/redeem, and `GET /up
 - `GET /api/v1/bookmark_folders` · `POST /api/v1/bookmark_folders` `{ name }`
 - `GET /api/v1/bookmark_folders/:id` · `PATCH` · `DELETE`
 - `POST /api/v1/bookmark_folders/:id/bookmarks` `{ model_id }` · `DELETE .../bookmarks/:model_id`
-- `GET /api/v1/duplicates?library_id=&status=` persisted groups + members (asset fields + model cards). `status` is `open` \| `kept` \| `dismissed` \| `merged`; omit for all
+- `GET /api/v1/duplicates?library_id=&status=` persisted groups + `members[]` (`kind: asset \| archive_member`, `mergeable`) and `assets[]` (loose files + model cards). `status` is `open` \| `kept` \| `dismissed` \| `merged`; omit for all
 - `POST /api/v1/libraries/:id/duplicates/analyze` → `202` + `AnalyzeDuplicatesJob` (owner/contributor)
-- `POST /api/v1/duplicates/:id/keep` · `POST .../dismiss` · `POST .../merge` `{ source_ids?|asset_ids?, target_id?, title? }` (owner/contributor; merge calls `ModelComposer` inside the path jail)
-- `POST /api/v1/geometry/writeback` `{ asset_id, geometry_digest }` (`GeometryWriteback.apply!` in-process; `X-Geometry-Token: $VIBE_GEOMETRY_TOKEN` or a signed-in owner/contributor)
+- `POST /api/v1/duplicates/:id/keep` · `POST .../dismiss` · `POST .../merge` `{ source_ids?|asset_ids?, target_id?, title?, archive_member_ids? }` (owner/contributor; merge calls `ModelComposer` inside the path jail; **422** `{ "error": "merge_unsupported" }` if any selected member is archive-resident)
+- `POST /api/v1/geometry/writeback` `{ asset_id \| archive_member_id, geometry_digest }` (`GeometryWriteback.apply!` in-process; `X-Geometry-Token: $VIBE_GEOMETRY_TOKEN` or a signed-in owner/contributor)
 - `GET /api/v1/models/:id/archive_members?asset_id=&prefix=&q=&view=tree|flat&limit=&offset=` (nested children by default; `q` searches paths; `view=flat` paginates every member)
 - `GET /api/v1/archive_members/:id` (size, path, content type, streamable)
 - `GET /api/v1/archive_members/:id/content` (stream one member; `?download=1` for attachment)
