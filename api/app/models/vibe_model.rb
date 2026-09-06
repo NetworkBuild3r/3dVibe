@@ -33,6 +33,10 @@ class VibeModel < ApplicationRecord
     File.join(library.root_path, folder_name)
   end
 
+  def has_cover?
+    cover_status == COVER_READY
+  end
+
   def previewable?
     if association(:assets).loaded?
       return true if assets.any?(&:mesh?)

@@ -109,6 +109,28 @@ class APIV1Test < ActionDispatch::IntegrationTest
     assert response.parsed_body.fetch("models").all? { |model| model["has_preview"] }
   end
 
+  test "search and gallery filter creator tags and cover without melting" do
+    headers = auth_header(@owner)
+    horn = @library.vibe_models.find_by!(folder_name: "signal-horn")
+    horn.update!(cover_status: VibeModel::COVER_READY, cover_url: "/covers/horn.webp", cover_placeholder: false)
+
+    get "/api/v1/search", params: { creator_slug: horn.creator.slug, has_cover: true, tag: "stl" }, headers: headers
+    assert_response :success
+    body = response.parsed_body
+    ids = body.fetch("models").map { |model| model["id"] }
+    assert_includes ids, horn.id
+    assert body["facets"].key?("creator_slug")
+    assert body["facets"].key?("cover_status")
+    assert body["facets"].key?("has_cover")
+    refute body["capped"]
+
+    get "/api/v1/models", params: { creator_slug: horn.creator.slug, has_cover: true, tag: "stl", limit: 24 }, headers: headers
+    assert_response :success
+    listed = response.parsed_body.fetch("models").map { |model| model["id"] }
+    assert_includes listed, horn.id
+    assert response.parsed_body.fetch("models").all? { |model| model["cover_status"] == VibeModel::COVER_READY }
+  end
+
   test "owner can approve and reject curation proposals" do
     headers = auth_header(@owner)
     pending = @library.curation_proposals.pending.first

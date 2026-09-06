@@ -10,7 +10,9 @@ module API
             library_id: params[:library_id],
             uploaded_by_id: params[:uploaded_by_id],
             has_preview: params[:has_preview],
-            creator_slug: params[:creator_slug]
+            creator_slug: params[:creator_slug].presence || params[:creator],
+            cover_status: params[:cover_status],
+            has_cover: params[:has_cover]
           },
           offset: params.fetch(:offset, 0),
           limit: params.fetch(:limit, 18)
@@ -24,6 +26,7 @@ module API
           limit: result.limit,
           estimated_total: result.estimated_total,
           next_offset: result.next_offset,
+          capped: result.capped,
           facets: result.facets,
           models: VibeModel.card_payloads(result.models, viewer: current_user)
         }

@@ -2,8 +2,14 @@ module API
   module V1
     class VibeModelsController < ApplicationController
       def index
-        scope = accessible_models.for_cards.recent
-        scope = scope.where(library_id: params[:library_id]) if params[:library_id].present?
+        scope = ModelCatalogFilters.apply(
+          accessible_models.for_cards.recent,
+          library_id: params[:library_id],
+          tags: gallery_tags,
+          creator_slug: params[:creator_slug].presence || params[:creator],
+          cover_status: params[:cover_status],
+          has_cover: params[:has_cover]
+        )
         limit = [[params.fetch(:limit, 24).to_i, 1].max, 60].min
 
         if params[:cursor].present?
@@ -75,6 +81,13 @@ module API
       end
 
       private
+
+      def gallery_tags
+        values = []
+        values.concat(Array(params[:tags]))
+        values << params[:tag]
+        values.flatten.compact
+      end
 
       def detail_payload(model)
         card = VibeModel.card_payloads([model], viewer: current_user).first

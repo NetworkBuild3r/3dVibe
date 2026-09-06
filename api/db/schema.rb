@@ -10,9 +10,10 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_09_06_200000) do
+ActiveRecord::Schema[8.0].define(version: 2026_09_06_210000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
+  enable_extension "pg_trgm"
 
   create_table "access_tokens", force: :cascade do |t|
     t.bigint "user_id", null: false
@@ -44,6 +45,7 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_06_200000) do
     t.index ["asset_id", "parent_path"], name: "index_archive_members_on_asset_id_and_parent_path"
     t.index ["asset_id"], name: "index_archive_members_on_asset_id"
     t.index ["geometry_digest"], name: "index_archive_members_on_geometry_digest"
+    t.index ["internal_path"], name: "index_archive_members_on_internal_path_trgm", opclass: :gin_trgm_ops, using: :gin
   end
 
   create_table "assets", force: :cascade do |t|
@@ -64,6 +66,8 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_06_200000) do
     t.index ["content_digest"], name: "index_assets_on_content_digest"
     t.index ["geometry_digest"], name: "index_assets_on_geometry_digest"
     t.index ["uploaded_by_id"], name: "index_assets_on_uploaded_by_id"
+    t.index ["filename"], name: "index_assets_on_filename_trgm", opclass: :gin_trgm_ops, using: :gin
+    t.index ["relative_path"], name: "index_assets_on_relative_path_trgm", opclass: :gin_trgm_ops, using: :gin
     t.index ["vibe_model_id", "relative_path"], name: "index_assets_on_vibe_model_id_and_relative_path", unique: true
     t.index ["vibe_model_id"], name: "index_assets_on_vibe_model_id"
   end
@@ -98,7 +102,9 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_06_200000) do
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.index ["name"], name: "index_creators_on_name"
+    t.index ["name"], name: "index_creators_on_name_trgm", opclass: :gin_trgm_ops, using: :gin
     t.index ["slug"], name: "index_creators_on_slug", unique: true
+    t.index ["slug"], name: "index_creators_on_slug_trgm", opclass: :gin_trgm_ops, using: :gin
   end
 
   create_table "curation_proposals", force: :cascade do |t|
@@ -357,6 +363,7 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_06_200000) do
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.index ["name"], name: "index_tags_on_name", unique: true
+    t.index ["name"], name: "index_tags_on_name_trgm", opclass: :gin_trgm_ops, using: :gin
   end
 
   create_table "users", force: :cascade do |t|
@@ -365,6 +372,7 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_06_200000) do
     t.string "password_digest", null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.index ["display_name"], name: "index_users_on_display_name_trgm", opclass: :gin_trgm_ops, using: :gin
     t.index ["email"], name: "index_users_on_email", unique: true
   end
 
@@ -387,6 +395,9 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_06_200000) do
     t.bigint "cover_asset_id"
     t.index ["cover_cache_key"], name: "index_vibe_models_on_cover_cache_key"
     t.index ["cover_status"], name: "index_vibe_models_on_cover_status"
+    t.index ["folder_name"], name: "index_vibe_models_on_folder_name_trgm", opclass: :gin_trgm_ops, using: :gin
+    t.index ["synopsis"], name: "index_vibe_models_on_synopsis_trgm", opclass: :gin_trgm_ops, using: :gin
+    t.index ["title"], name: "index_vibe_models_on_title_trgm", opclass: :gin_trgm_ops, using: :gin
     t.index ["creator_id"], name: "index_vibe_models_on_creator_id"
     t.index ["library_id", "folder_name"], name: "index_vibe_models_on_library_id_and_folder_name", unique: true
     t.index ["library_id", "updated_at", "id"], name: "index_vibe_models_on_library_id_and_updated_at_and_id"

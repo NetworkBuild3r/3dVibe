@@ -79,8 +79,10 @@ class SearchIndex
       library_id: model.library_id,
       kinds: assets.map(&:kind).uniq,
       creator_slug: model.creator&.slug,
+      creator: model.creator&.slug,
       creator_name: model.creator&.name,
-      cover_status: model.cover_status
+      cover_status: model.cover_status,
+      has_cover: model.has_cover?
     }
   end
 
