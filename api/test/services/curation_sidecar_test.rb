@@ -108,6 +108,7 @@ class CurationSidecarTest < ActiveSupport::TestCase
     @library.reload
     assert_equal "curator unreachable: test", @library.last_error
     assert @library.last_polled_at.present?
+    assert_equal "stub", @library.last_provider
     assert @library.curation_proposals.none?
   end
 

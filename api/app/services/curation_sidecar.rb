@@ -157,7 +157,10 @@ class CurationSidecar
   end
 
   def record_poll_error!(error)
-    @library.record_curation_poll!(provider: resolved_provider, error: error.message)
+    @library.record_curation_poll!(
+      provider: resolved_provider.presence || @library.last_provider,
+      error: error.message
+    )
   end
 
   def resolved_provider(remote = nil)
