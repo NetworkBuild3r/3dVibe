@@ -90,7 +90,8 @@ class User < ApplicationRecord
         {
           id: membership.library_id,
           name: membership.library.name,
-          role: membership.role
+          role: membership.role,
+          curation: membership.library.curation_as_api
         }
       end
     }

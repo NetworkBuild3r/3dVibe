@@ -66,14 +66,18 @@ server.mount_proc "/proposals" do |request, response|
 
   payload = request.request_method == "POST" ? read_json(request) : {}
   models = catalog_models(request, payload)
-  json(response, 200, { "proposals" => CuratorStub.proposals_for(models) })
+  provider = payload["provider_hint"].to_s
+  provider = request.query["provider_hint"].to_s if provider.empty?
+  provider = "stub" if provider.empty?
+  response["X-Curator-Provider"] = provider
+  json(response, 200, { "proposals" => CuratorStub.proposals_for(models), "provider" => provider })
 end
 
 server.mount_proc "/" do |_request, response|
   json(response, 200, {
     "service" => "3dvibe-curator-stub",
     "contract" => {
-      "POST /proposals" => "preferred; send catalog snapshot { library_id, library_root, models[] }",
+      "POST /proposals" => "preferred; send catalog snapshot { library_id, library_root, provider_hint, creators_index, models[] }",
       "GET /proposals" => "fallback; lists LIBRARY_ROOT first-level folders",
       "auth" => "Bearer VIBE_CURATOR_TOKEN or X-Curator-Token"
     }

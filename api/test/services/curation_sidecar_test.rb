@@ -5,12 +5,15 @@ require "socket"
 class CurationSidecarTest < ActiveSupport::TestCase
   def setup
     @root = Rails.root.join("tmp/sidecar-#{SecureRandom.hex(4)}")
-    FileUtils.mkdir_p(@root.join("alpha-one"))
-    File.write(@root.join("alpha-one/a.stl"), "solid a\nendsolid a\n")
+    FileUtils.mkdir_p(@root.join("Mz4250 - Alpha One"))
+    File.write(@root.join("Mz4250 - Alpha One/a.stl"), "solid a\nendsolid a\n")
+    File.write(@root.join("Mz4250 - Alpha One/pack.zip"), "PK\x03\x04")
     FileUtils.mkdir_p(@root.join("beta-two"))
     File.write(@root.join("beta-two/b.stl"), "solid b\nendsolid b\n")
     @library = Library.create!(name: "Sidecar", root_path: @root.to_s)
     LibraryScanner.new(@library).scan!
+    @alpha = @library.vibe_models.find_by!(folder_name: "Mz4250 - Alpha One")
+    @alpha.update!(cover_status: VibeModel::COVER_READY)
   end
 
   def teardown
@@ -51,6 +54,64 @@ class CurationSidecarTest < ActiveSupport::TestCase
     assert_equal [], sidecar.fetch_drafts
   end
 
+  test "catalog includes locked snapshot fields without file bytes" do
+    ENV["VIBE_CURATOR_PROVIDER"] = "ollama"
+    catalog = CurationSidecar.new(@library, endpoint: "stub").catalog
+
+    assert_equal @library.id, catalog[:library_id]
+    assert_equal @library.name, catalog[:library_name]
+    assert_equal @library.root_path, catalog[:library_root]
+    assert_equal "ollama", catalog[:provider_hint]
+    assert catalog[:models].all? { |row| row.key?(:id) && row.key?(:folder_name) && row.key?(:title) }
+    assert catalog[:models].all? { |row| row.key?(:tags) && row.key?(:asset_count) && row.key?(:byte_size) }
+
+    alpha = catalog[:models].find { |row| row[:folder_name] == "Mz4250 - Alpha One" }
+    assert_equal({ id: @alpha.creator.id, slug: "mz4250", name: "Mz4250" }, alpha[:creator])
+    assert_equal VibeModel::COVER_READY, alpha[:cover_status]
+    assert_equal 1, alpha[:mesh_count]
+    assert_equal 1, alpha[:archive_count]
+    assert alpha[:has_archives]
+    assert_equal ["Mz4250 - Alpha One/a.stl", "Mz4250 - Alpha One/pack.zip"], alpha[:sample_paths]
+    refute alpha.key?(:bytes)
+    refute alpha[:sample_paths].any? { |path| path.include?("\0") || path.bytesize > 400 }
+
+    index = catalog[:creators_index]
+    assert index.is_a?(Array)
+    mz = index.find { |row| row[:slug] == "mz4250" }
+    assert_equal 1, mz[:model_count]
+    assert_equal "Mz4250", mz[:name]
+  ensure
+    ENV.delete("VIBE_CURATOR_PROVIDER")
+  end
+
+  test "poll success clears last_error and sets last_polled_at" do
+    @library.update!(last_error: "stale sidecar", last_provider: "xai", last_polled_at: 2.days.ago)
+    sidecar = CurationSidecar.new(@library, endpoint: "stub", provider_hint: "stub")
+
+    records = sidecar.ingest_remote!
+    assert records.size >= 3
+
+    @library.reload
+    assert_nil @library.last_error
+    assert_equal "stub", @library.last_provider
+    assert @library.last_polled_at > 1.minute.ago
+  end
+
+  test "poll failure records last_error without leaving a stale success" do
+    @library.update!(last_error: nil, last_provider: "stub", last_polled_at: nil)
+    client = FailingCuratorClient.new("curator unreachable: test")
+    sidecar = CurationSidecar.new(@library, endpoint: "http://curator.test", client: client)
+
+    error = assert_raises(CurationHttpClient::Error) { sidecar.ingest_remote! }
+    assert_equal "curator unreachable: test", error.message
+
+    @library.reload
+    assert_equal "curator unreachable: test", @library.last_error
+    assert @library.last_polled_at.present?
+    assert_equal "stub", @library.last_provider
+    assert @library.curation_proposals.none?
+  end
+
   test "HTTP client posts the catalog and parses proposals" do
     body = {
       proposals: [
@@ -65,13 +126,28 @@ class CurationSidecarTest < ActiveSupport::TestCase
     @http = MiniCuratorServer.new(JSON.generate(body))
     port = @http.start
 
-    sidecar = CurationSidecar.new(@library, endpoint: "http://127.0.0.1:#{port}", token: "secret")
+    sidecar = CurationSidecar.new(@library, endpoint: "http://127.0.0.1:#{port}", token: "secret", provider_hint: "xai")
     records = sidecar.ingest_remote!
     assert_equal 1, records.size
     assert_equal "From HTTP", records.first.summary
     assert_equal "remote", records.first.payload["tag"]
     assert @http.last_auth.to_s.include?("secret")
     assert_equal @library.id, @http.last_catalog["library_id"]
+    assert_equal "xai", @http.last_catalog["provider_hint"]
+    assert @http.last_catalog["models"].first.key?("cover_status")
+    assert @http.last_catalog.key?("creators_index")
+    assert_equal "live-xai", @library.reload.last_provider
+    assert_nil @library.last_error
+  end
+
+  class FailingCuratorClient
+    def initialize(message)
+      @message = message
+    end
+
+    def fetch_proposals(_catalog)
+      raise CurationHttpClient::Error, @message
+    end
   end
 
   class MiniCuratorServer
@@ -109,7 +185,7 @@ class CurationSidecarTest < ActiveSupport::TestCase
       raw = length.positive? ? socket.read(length) : "{}"
       @last_auth = headers.join
       @last_catalog = JSON.parse(raw)
-      socket.write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: #{@body.bytesize}\r\nConnection: close\r\n\r\n#{@body}")
+      socket.write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-Curator-Provider: live-xai\r\nContent-Length: #{@body.bytesize}\r\nConnection: close\r\n\r\n#{@body}")
       socket.close
     rescue IOError
       nil

@@ -5,9 +5,13 @@ module API
       before_action :authenticate_ingest!, only: :ingest
 
       def index
-        proposals = CurationProposal.where(library_id: accessible_libraries.select(:id)).includes(:library, :reviewed_by)
+        libraries = accessible_libraries.order(:name)
+        proposals = CurationProposal.where(library_id: libraries.select(:id)).includes(:library, :reviewed_by)
         proposals = proposals.where(status: params[:status]) if params[:status].present?
-        render json: { proposals: proposals.order(created_at: :desc).map { |proposal| serialize(proposal) } }
+        render json: {
+          proposals: proposals.order(created_at: :desc).map { |proposal| serialize(proposal) },
+          libraries: libraries.map { |library| serialize_library_poll(library) }
+        }
       end
 
       def create
@@ -23,9 +27,16 @@ module API
         return if require_curator!(library)
 
         records = CurationSidecar.new(library).ingest_remote!
-        render json: { proposals: records.map { |proposal| serialize(proposal) } }
+        render json: {
+          proposals: records.map { |proposal| serialize(proposal) },
+          curation: library.reload.curation_as_api
+        }
       rescue CurationHttpClient::Error => e
-        render json: { error: "curator_unreachable", details: [e.message] }, status: :bad_gateway
+        render json: {
+          error: "curator_unreachable",
+          details: [e.message],
+          curation: library.reload.curation_as_api
+        }, status: :bad_gateway
       end
 
       def ingest
@@ -190,6 +201,14 @@ module API
           result: proposal.result,
           preview: CurationPreview.new(proposal).as_json,
           created_at: proposal.created_at
+        }
+      end
+
+      def serialize_library_poll(library)
+        {
+          id: library.id,
+          name: library.name,
+          curation: library.curation_as_api
         }
       end
     end

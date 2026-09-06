@@ -79,7 +79,10 @@ namespace :vibe do
     scope = ENV["LIBRARY_ID"].present? ? Library.where(id: ENV["LIBRARY_ID"]) : Library.all
     scope.find_each do |library|
       records = CurationSidecar.new(library).ingest_remote!
-      puts "Library #{library.name}: upserted #{records.size} proposal(s)"
+      library.reload
+      puts "Library #{library.name}: upserted #{records.size} proposal(s) " \
+           "provider=#{library.last_provider || '—'} polled=#{library.last_polled_at || '—'}"
+      puts "  last_error=#{library.last_error}" if library.last_error.present?
     end
   end
 end

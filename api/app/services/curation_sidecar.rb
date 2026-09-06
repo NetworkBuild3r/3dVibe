@@ -7,17 +7,29 @@
 #   X-Curator-Token: {VIBE_CURATOR_TOKEN}
 #
 # Env:
-#   VIBE_CURATOR_URL       base URL, or `stub` for in-process fixtures
-#   VIBE_CURATOR_TOKEN     shared bearer token (optional in stub mode)
-#   VIBE_CURATOR_TIMEOUT   seconds (default 8)
-#   VIBE_CURATOR_STUB      when `1`/`true`, use in-process stub if URL is blank
+#   VIBE_CURATOR_URL        base URL, or `stub` for in-process fixtures
+#   VIBE_CURATOR_TOKEN      shared bearer token (optional in stub mode)
+#   VIBE_CURATOR_TIMEOUT    seconds (default 8)
+#   VIBE_CURATOR_STUB       when `1`/`true`, use in-process stub if URL is blank
+#   VIBE_CURATOR_PROVIDER   optional hint (ollama|xai|stub|…) sent as catalog
+#                           `provider_hint`. Does not replace VIBE_CURATOR_URL.
+#
+# Live providers must return a stable `sidecar_ref` per suggestion so upsert
+# is idempotent. Pending rows update; reviewed rows are never clobbered.
+# Rails only polls + HITL apply. Inference adapters live in Rendering.
 class CurationSidecar
   ProposalDraft = Struct.new(:kind, :summary, :payload, :sidecar_ref, keyword_init: true)
+  FetchResult = Struct.new(:drafts, :provider, keyword_init: true)
+  SAMPLE_PATH_LIMIT = 5
+  CREATORS_INDEX_LIMIT = 50
 
-  def initialize(library, endpoint: ENV["VIBE_CURATOR_URL"], token: ENV["VIBE_CURATOR_TOKEN"])
+  def initialize(library, endpoint: ENV["VIBE_CURATOR_URL"], token: ENV["VIBE_CURATOR_TOKEN"],
+                 provider_hint: ENV["VIBE_CURATOR_PROVIDER"], client: nil)
     @library = library
     @endpoint = endpoint.to_s.strip
     @token = token
+    @provider_hint = provider_hint.to_s.strip.presence
+    @client = client
   end
 
   def stub_mode?
@@ -30,33 +42,29 @@ class CurationSidecar
   end
 
   def catalog
-    models = @library.vibe_models.includes(:tags).order(:folder_name, :id)
+    models = @library.vibe_models.includes(:tags, :creator, :assets).order(:folder_name, :id)
     {
       library_id: @library.id,
       library_name: @library.name,
       library_root: @library.root_path,
-      models: models.map do |model|
-        {
-          id: model.id,
-          folder_name: model.folder_name,
-          title: model.title,
-          tags: model.tags.map(&:name),
-          asset_count: model.asset_count,
-          byte_size: model.byte_size
-        }
-      end
+      provider_hint: @provider_hint,
+      creators_index: creators_index,
+      models: models.map { |model| catalog_model(model) }
     }
   end
 
   def fetch_drafts
-    return CurationStubProposals.new(@library).drafts if stub_mode?
-    return [] if @endpoint.blank?
-
-    CurationHttpClient.new(endpoint: @endpoint, token: @token).fetch_proposals(catalog)
+    fetch_result.drafts
   end
 
   def ingest_remote!
-    ingest!(fetch_drafts)
+    result = fetch_result
+    records = ingest!(result.drafts)
+    record_poll_success!(result.provider)
+    records
+  rescue CurationHttpClient::Error => e
+    record_poll_error!(e)
+    raise
   end
 
   def ingest!(drafts)
@@ -65,6 +73,60 @@ class CurationSidecar
 
   private
 
+  def fetch_result
+    if stub_mode?
+      return FetchResult.new(drafts: CurationStubProposals.new(@library).drafts, provider: resolved_provider)
+    end
+    return FetchResult.new(drafts: [], provider: resolved_provider) if @endpoint.blank?
+
+    remote = (@client || CurationHttpClient.new(endpoint: @endpoint, token: @token)).fetch_proposals(catalog)
+    return remote if remote.is_a?(FetchResult)
+
+    FetchResult.new(drafts: Array(remote), provider: resolved_provider)
+  end
+
+  def catalog_model(model)
+    assets = model.assets.sort_by { |asset| [asset.relative_path.to_s, asset.id] }
+    mesh_count = assets.count(&:mesh?)
+    archive_count = assets.count(&:archive?)
+    {
+      id: model.id,
+      folder_name: model.folder_name,
+      title: model.title,
+      tags: model.tags.map(&:name),
+      asset_count: model.asset_count,
+      byte_size: model.byte_size,
+      creator: model.creator&.as_card,
+      cover_status: model.cover_status,
+      mesh_count: mesh_count,
+      archive_count: archive_count,
+      has_archives: archive_count.positive?,
+      sample_paths: assets.first(SAMPLE_PATH_LIMIT).map { |asset| jail_relative_path(model, asset) }
+    }
+  end
+
+  def jail_relative_path(model, asset)
+    File.join(model.folder_name, asset.relative_path.to_s).delete_prefix("/").tr("\\", "/")
+  end
+
+  def creators_index
+    counts = @library.vibe_models.where.not(creator_id: nil).group(:creator_id).count
+    return [] if counts.empty?
+
+    Creator.where(id: counts.keys).ordered.sort_by { |creator| [-counts[creator.id].to_i, creator.name.to_s.downcase, creator.id] }
+      .first(CREATORS_INDEX_LIMIT)
+      .map do |creator|
+        {
+          id: creator.id,
+          slug: creator.slug,
+          name: creator.name,
+          model_count: counts[creator.id].to_i
+        }
+      end
+  end
+
+  # Upsert by stable sidecar_ref. Live providers must reuse the same ref for
+  # the same suggestion; reviewed rows are left untouched.
   def upsert_draft!(draft)
     kind = draft.kind.to_s
     return unless CurationProposal::KINDS.include?(kind)
@@ -88,6 +150,21 @@ class CurationSidecar
     else
       @library.curation_proposals.create!(attrs.merge(status: CurationProposal::PENDING))
     end
+  end
+
+  def record_poll_success!(provider)
+    @library.record_curation_poll!(provider: resolved_provider(provider), error: nil)
+  end
+
+  def record_poll_error!(error)
+    @library.record_curation_poll!(
+      provider: resolved_provider.presence || @library.last_provider,
+      error: error.message
+    )
+  end
+
+  def resolved_provider(remote = nil)
+    remote.to_s.presence || @provider_hint || (stub_mode? ? "stub" : nil)
   end
 
   def truthy?(value)

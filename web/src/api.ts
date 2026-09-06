@@ -1,9 +1,16 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api/v1";
 
+export type CurationPollStatus = {
+  last_polled_at: string | null;
+  last_provider: string | null;
+  last_error: string | null;
+};
+
 export type MembershipInfo = {
   id: number;
   name: string;
   role: string;
+  curation?: CurationPollStatus;
 };
 
 export type User = {
@@ -392,6 +399,7 @@ export type LibraryInfo = {
   scan?: ScanStatus;
   scan_settings?: ScanSettings;
   cursors?: ScanCursorInfo[];
+  curation?: CurationPollStatus;
 };
 
 export type LibraryUpload = {
@@ -595,14 +603,17 @@ export const api = {
   },
   proposals: (status?: string) => {
     const suffix = status ? `?status=${encodeURIComponent(status)}` : "";
-    return request<{ proposals: CurationProposal[] }>(`/curation_proposals${suffix}`);
+    return request<{
+      proposals: CurationProposal[];
+      libraries?: Array<{ id: number; name: string; curation?: CurationPollStatus }>;
+    }>(`/curation_proposals${suffix}`);
   },
   approveProposal: (id: number) =>
     request<{ proposal: CurationProposal }>(`/curation_proposals/${id}/approve`, { method: "POST" }),
   rejectProposal: (id: number) =>
     request<{ proposal: CurationProposal }>(`/curation_proposals/${id}/reject`, { method: "POST" }),
   fetchProposals: (libraryId: number) =>
-    request<{ proposals: CurationProposal[] }>("/curation_proposals/fetch", {
+    request<{ proposals: CurationProposal[]; curation?: CurationPollStatus }>("/curation_proposals/fetch", {
       method: "POST",
       body: JSON.stringify({ library_id: libraryId })
     }),

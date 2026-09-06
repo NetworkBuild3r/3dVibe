@@ -60,7 +60,8 @@ module API
           can_print: current_user.can_print?(library),
           can_merge: current_user.can_merge?(library),
           can_manage_printers: owner,
-          can_scan: owner
+          can_scan: owner,
+          curation: library.curation_as_api
         }
         payload[:scan] = serialize_scan(library) if owner
         return payload unless detail

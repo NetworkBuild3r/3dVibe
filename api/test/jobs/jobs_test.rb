@@ -129,12 +129,35 @@ class JobsTest < ActiveJob::TestCase
     root = Rails.root.join("tmp/fetch-lib-#{SecureRandom.hex(4)}")
     FileUtils.mkdir_p(root.join("only"))
     File.write(root.join("only/a.txt"), "x")
-    library = Library.create!(name: "Fetch", root_path: root.to_s)
+    library = Library.create!(name: "Fetch", root_path: root.to_s, last_error: "stale")
     LibraryScanner.new(library).scan!
 
     FetchCurationProposalsJob.perform_now(library.id)
     assert library.curation_proposals.pending.exists?
+    library.reload
+    assert_nil library.last_error
+    assert library.last_polled_at.present?
+    assert_equal "stub", library.last_provider
   ensure
+    FileUtils.rm_rf(root)
+  end
+
+  test "fetch job records last_error when the sidecar fails" do
+    root = Rails.root.join("tmp/fetch-fail-#{SecureRandom.hex(4)}")
+    FileUtils.mkdir_p(root.join("only"))
+    File.write(root.join("only/a.txt"), "x")
+    library = Library.create!(name: "Fetch fail", root_path: root.to_s)
+    LibraryScanner.new(library).scan!
+
+    previous = ENV["VIBE_CURATOR_URL"]
+    ENV["VIBE_CURATOR_URL"] = "http://127.0.0.1:1"
+    assert_raises(CurationHttpClient::Error) { FetchCurationProposalsJob.perform_now(library.id) }
+    library.reload
+    assert library.last_error.present?
+    assert_match(/unreachable|HTTP|curator/i, library.last_error)
+    assert library.last_polled_at.present?
+  ensure
+    ENV["VIBE_CURATOR_URL"] = previous
     FileUtils.rm_rf(root)
   end
 end

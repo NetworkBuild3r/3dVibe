@@ -77,7 +77,7 @@ Background jobs:
 - `ScheduledScanJob` — sidekiq-cron entry that queues a scan for every library (default every 6 hours)
 - `IndexVibeModelJob` / `RemoveVibeModelIndexJob` / `ReindexSearchJob` — keep Meilisearch in sync after scan, upload, destroy, and curation apply
 - `DerivePreviewJob` — copies hot image members out of an archive into a preview cache (mesh rasterization is still a stub)
-- `FetchCurationProposalsJob` — polls the curator sidecar (or in-process stub) and upserts pending `CurationProposal` rows
+- `FetchCurationProposalsJob` — polls the curator sidecar (or in-process stub), upserts pending `CurationProposal` rows by stable `sidecar_ref`, and writes per-library `last_polled_at` / `last_provider` / `last_error`
 - `ApplyCurationProposalJob` — applies an approved rename/move/merge (tags apply in-request)
 - `DispatchPrintJob` — path-jails a library file and sends it through a printer adapter (mock simulates progress)
 - `ModelComposer` — merge/split first-level folders and selected files inside the path jail
@@ -169,6 +169,7 @@ Likes, shelves, merge/split, and duplicates:
 2. Click **Fetch proposals** (or `docker compose exec api bin/rails vibe:curate`).
 3. Review before/after, then approve, reject, or use bulk actions.
 4. Tags write immediately. Rename/move/merge run through `ApplyCurationProposalJob` inside the library path jail, then enqueue a targeted incremental scan.
+5. Poll status (`last_polled_at`, `last_provider`, `last_error`) is on Curation, Libraries, and `GET /me`. A success clears a stale error. Nothing is auto-approved.
 
 ```bash
 # in-process stub (default in compose: VIBE_CURATOR_URL=stub)
@@ -215,7 +216,8 @@ Environment variables (see `.env.example`):
 | `VIBE_MAX_UPLOAD_BYTES` | Per-file upload cap (default 5 GiB) |
 | `VIBE_OWNER_EMAIL` / `VIBE_OWNER_PASSWORD` | Seeded owner account |
 | `VIBE_NFS_SERVER` / `VIBE_NFS_EXPORT` / `VIBE_NFS_MOUNT_OPTIONS` | Host-side mount hints only |
-| `VIBE_CURATOR_URL` | Curator base URL, or `stub` for the in-process fixture generator |
+| `VIBE_CURATOR_URL` | Curator base URL, or `stub` for the in-process fixture generator (CI default) |
+| `VIBE_CURATOR_PROVIDER` | Optional hint (`ollama` \| `xai` \| `stub` \| …) sent as catalog `provider_hint`. Does **not** replace the URL. Rails does not run inference. |
 | `VIBE_CURATOR_TOKEN` | Shared bearer token for poll + webhook ingest |
 | `VIBE_CURATOR_TIMEOUT` | HTTP timeout in seconds (default 8) |
 | `VIBE_PRINT_TIMEOUT` | Adapter timeout in seconds (default 15). Timeouts mark the job failed; they do not 502 the UI |
@@ -401,8 +403,8 @@ Generated files live in `VIBE_COVER_ROOT` (default `api/tmp/covers`) and are ser
 All endpoints except `POST /api/v1/session`, invite preview/redeem, and `GET /up` require `Authorization: Bearer <token>`.
 
 - `POST /api/v1/session` `{ email, password }`
-- `GET /api/v1/me`
-- `GET /api/v1/libraries` · `GET /api/v1/libraries/:id` (owner payload includes `scan`, `scan_settings`, `cursors`)
+- `GET /api/v1/me` (each `user.libraries[]` includes `curation: { last_polled_at, last_provider, last_error }`)
+- `GET /api/v1/libraries` · `GET /api/v1/libraries/:id` (every library includes `curation` poll state; owner payload also includes `scan`, `scan_settings`, `cursors`)
 - `POST /api/v1/libraries/:id/scan` `{ path_prefix? }` owner-only; `202` + latest scan status
 - `GET /api/v1/creators` (`id`, `slug`, `name`, `source`, `model_count`)
 - `GET /api/v1/creators/:id` or `GET /api/v1/creators/:slug` (paginated models; `cursor` / `limit` like the catalog)
@@ -427,9 +429,9 @@ All endpoints except `POST /api/v1/session`, invite preview/redeem, and `GET /up
 - `GET /api/v1/search?q=&tag=&tags[]=&has_preview=&library_id=&uploaded_by_id=&creator_slug=&offset=&limit=` (Meilisearch when configured; Postgres `ILIKE` fallback; facet/filter `creator_slug`)
 - `GET /covers/:id.webp` generated cover bytes (libvips webp under `VIBE_COVER_ROOT`)
 - `POST /api/v1/covers/writeback` `{ model_id, status: "ready"|"failed", cover_url?, cover_placeholder?, asset_id?, cache_key? }` (`GenerateCoverJob` uses `CoverWriteback.apply!` in-process; `X-Cover-Token: $VIBE_COVER_TOKEN` or Bearer user)
-- `GET /api/v1/curation_proposals?status=`
+- `GET /api/v1/curation_proposals?status=` (`proposals` plus `libraries[]` with `curation` poll state for Frontend bind)
 - `POST /api/v1/curation_proposals` `{ library_id, curation_proposal: { kind, summary, payload, sidecar_ref? } }`
-- `POST /api/v1/curation_proposals/fetch` `{ library_id }` (owner/contributor; polls sidecar)
+- `POST /api/v1/curation_proposals/fetch` `{ library_id }` (owner/contributor; polls sidecar; returns `curation` poll state; 502 includes `curation.last_error`)
 - `POST /api/v1/curation_proposals/ingest` webhook (`X-Curator-Token` or user auth)
 - `POST /api/v1/curation_proposals/bulk` `{ ids, decision: "approve"|"reject" }`
 - `POST /api/v1/curation_proposals/:id/approve` · `POST .../reject`
@@ -468,7 +470,9 @@ docker-compose.yml   api, worker, db, redis, web, meilisearch (+ optional curato
 
 ## Curation sidecar contract
 
-The sidecar never talks to the GPU from this repo. 3dvibe posts a catalog snapshot and upserts whatever comes back.
+HITL only. Rails never auto-approves and never silently deletes NFS files. `VIBE_CURATOR_URL=stub` stays the CI path (in-process fixtures, no network).
+
+The sidecar never talks to the GPU from this repo. 3dvibe posts a **locked catalog snapshot** (metadata + path hints only — never blobs or mesh bytes) and upserts whatever comes back as **pending** proposals.
 
 `POST {VIBE_CURATOR_URL}/proposals`
 
@@ -477,16 +481,36 @@ The sidecar never talks to the GPU from this repo. 3dvibe posts a catalog snapsh
   "library_id": 1,
   "library_name": "Studio library",
   "library_root": "/library",
+  "provider_hint": "ollama",
+  "creators_index": [
+    { "id": 3, "slug": "mz4250", "name": "Mz4250", "model_count": 12 }
+  ],
   "models": [
-    { "id": 12, "folder_name": "signal-horn", "title": "Signal Horn", "tags": ["stl"], "asset_count": 2, "byte_size": 1200 }
+    {
+      "id": 12,
+      "folder_name": "signal-horn",
+      "title": "Signal Horn",
+      "tags": ["stl"],
+      "asset_count": 2,
+      "byte_size": 1200,
+      "creator": { "id": 3, "slug": "mz4250", "name": "Mz4250" },
+      "cover_status": "ready",
+      "mesh_count": 1,
+      "archive_count": 1,
+      "has_archives": true,
+      "sample_paths": ["signal-horn/horn.stl", "signal-horn/pack.zip"]
+    }
   ]
 }
 ```
+
+Existing keys stay stable. New model fields: `creator` (`{ id, slug, name }` or `null`), `cover_status` (`missing` \| `pending` \| `ready` \| `failed`), `mesh_count`, `archive_count`, `has_archives`, `sample_paths` (up to 5 jail-relative asset paths — hints only). New library fields: `creators_index` (budgeted, top 50 by model count) and `provider_hint` from `VIBE_CURATOR_PROVIDER`.
 
 Response:
 
 ```json
 {
+  "provider": "ollama",
   "proposals": [
     {
       "sidecar_ref": "stable-id-for-upsert",
@@ -498,9 +522,43 @@ Response:
 }
 ```
 
-`GET /proposals?library_id=&library_root=` is a fallback when POST is not implemented.
+`sidecar_ref` must be **stable** for the same suggestion. Rails upserts pending rows by `(library_id, sidecar_ref)` (unique when present). Reviewed rows are never clobbered. Live providers that rotate refs will create duplicates.
+
+Optional: return `provider` in the body and/or `X-Curator-Provider` so Rails can persist `libraries.last_provider`. When absent, Rails stores `VIBE_CURATOR_PROVIDER` or `stub`.
+
+`GET /proposals?library_id=&library_root=&provider_hint=` is a fallback when POST is not implemented.
 
 Auth: `Authorization: Bearer {VIBE_CURATOR_TOKEN}` and/or `X-Curator-Token`.
+
+### Poll observability (Frontend bind)
+
+`FetchCurationProposalsJob` and `POST /curation_proposals/fetch` write three columns on `libraries`:
+
+| Field | Meaning |
+| --- | --- |
+| `last_polled_at` | Last poll attempt (success or failure) |
+| `last_provider` | Sidecar `provider` / `X-Curator-Provider`, else `VIBE_CURATOR_PROVIDER`, else `stub` |
+| `last_error` | Last failure message; **cleared on the next success** |
+
+Exposed as `curation: { last_polled_at, last_provider, last_error }` on:
+
+- `GET /api/v1/libraries` and `GET /api/v1/libraries/:id`
+- `GET /api/v1/me` → `user.libraries[].curation`
+- `GET /api/v1/curation_proposals` → `libraries[].curation`
+- `POST /api/v1/curation_proposals/fetch` → top-level `curation` (also on 502)
+
+### Contract gaps (Rendering)
+
+Rails only polls the sidecar and runs HITL approve/reject/apply. It does **not** load models, talk to Ollama/xAI, or interpret `provider_hint` beyond passing it through.
+
+Rendering owns:
+
+- Ollama / xAI (and other) inference adapters behind `POST /proposals`
+- Using the new catalog fields (`creator`, `cover_status`, mesh/archive counts, `sample_paths`, `creators_index`) to rank suggestions
+- Returning **stable** `sidecar_ref` values for idempotent upsert
+- Optional `provider` body field or `X-Curator-Provider` header
+
+Keep apply path-jailed. Do not auto-approve. Do not delete NFS files from the sidecar.
 
 | `kind` | Payload | Apply |
 | --- | --- | --- |
@@ -514,10 +572,11 @@ Rename/move destinations must be a single non-hidden segment. `../`, `.hidden`, 
 
 ### Pointing at a Spark / DGX curator later
 
-1. Run your real curator (vision model, NudeNet, etc.) so it implements `POST /proposals` above.
+1. Run your real curator (Rendering adapter) so it implements `POST /proposals` above.
 2. Set `VIBE_CURATOR_URL=http://<spark-host>:<port>` and a long `VIBE_CURATOR_TOKEN`.
-3. Increase `VIBE_CURATOR_TIMEOUT` if inference is slow.
-4. Keep this Rails app unchanged — fetch, HITL, and apply stay here.
+3. Set `VIBE_CURATOR_PROVIDER=ollama` or `xai` (hint only; URL still wins).
+4. Increase `VIBE_CURATOR_TIMEOUT` if inference is slow.
+5. Keep this Rails app unchanged — fetch, HITL, and apply stay here.
 
 Webhook alternative: the curator can `POST /api/v1/curation_proposals/ingest` with the same proposal array and `X-Curator-Token`.
 

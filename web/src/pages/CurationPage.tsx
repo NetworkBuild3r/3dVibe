@@ -156,6 +156,15 @@ export function CurationPage() {
             Human review of sidecar suggestions. Tags apply immediately. Rename, move, and merge stay inside the library
             path jail and rescan the touched folders. Spark/DGX is optional — the stub curator is enough for this loop.
           </p>
+          {libraries[0]?.curation ? (
+            <p className="mt-2 text-xs text-slate-500">
+              Last poll {libraries[0].curation.last_polled_at ? new Date(libraries[0].curation.last_polled_at).toLocaleString() : "never"}
+              {libraries[0].curation.last_provider ? ` · ${libraries[0].curation.last_provider}` : ""}
+              {libraries[0].curation.last_error ? (
+                <span className="ml-1 text-rose-300">· {libraries[0].curation.last_error}</span>
+              ) : null}
+            </p>
+          ) : null}
         </div>
         {canCurate ? (
           <button
