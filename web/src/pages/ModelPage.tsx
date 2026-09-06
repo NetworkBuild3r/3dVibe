@@ -178,6 +178,13 @@ export function ModelPage() {
         </Link>
         <h1 className="mt-2 font-display text-3xl text-white">{model.title}</h1>
         <p className="mt-1 text-slate-400">{model.synopsis || model.folder_name}</p>
+        {model.creator ? (
+          <p className="mt-2 text-sm text-slate-400">
+            <Link to={`/creators/${model.creator.slug}`} className="text-accent-400 hover:text-accent-300">
+              {model.creator.name}
+            </Link>
+          </p>
+        ) : null}
         {model.uploaded_by ? (
           <p className="mt-2 text-xs text-slate-500">Uploaded by {model.uploaded_by.display_name} · shared with everyone</p>
         ) : (

@@ -8,21 +8,20 @@ export function SidebarSkeleton({ rows = 5 }: { rows?: number }) {
   return (
     <div className="space-y-3" aria-hidden>
       {Array.from({ length: rows }, (_, index) => (
-        <Pulse key={index} className="h-10 w-full" />
+        <Pulse key={index} className="h-14 w-full" />
       ))}
     </div>
   );
 }
 
-export function CardGridSkeleton({ cards = 6 }: { cards?: number }) {
+export function CardGridSkeleton({ cards = 8 }: { cards?: number }) {
   return (
     <div className="card-grid" aria-hidden>
       {Array.from({ length: cards }, (_, index) => (
-        <div key={index} className="rounded-2xl border border-white/10 bg-ink-900/70 p-4">
-          <Pulse className="mb-4 h-28" />
-          <Pulse className="h-5 w-3/4" />
-          <Pulse className="mt-2 h-4 w-full" />
-          <Pulse className="mt-3 h-3 w-1/2" />
+        <div key={index}>
+          <Pulse className="aspect-square" />
+          <Pulse className="mt-2.5 h-4 w-3/4" />
+          <Pulse className="mt-2 h-3 w-1/2" />
         </div>
       ))}
     </div>

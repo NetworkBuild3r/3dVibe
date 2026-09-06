@@ -10,8 +10,7 @@ body {
   margin: 0;
   min-height: 100vh;
   background:
-    radial-gradient(1200px 600px at 10% -10%, rgba(45, 212, 191, 0.12), transparent 50%),
-    radial-gradient(900px 500px at 100% 0%, rgba(56, 189, 248, 0.08), transparent 45%),
+    radial-gradient(900px 480px at 8% -12%, rgba(45, 212, 191, 0.07), transparent 55%),
     #0b0f14;
 }
 
@@ -21,6 +20,45 @@ body {
 
 .card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 1.25rem;
+}
+
+.cover-checker {
+  background-color: #121821;
+  background-image:
+    linear-gradient(45deg, #1a2330 25%, transparent 25%),
+    linear-gradient(-45deg, #1a2330 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #1a2330 75%),
+    linear-gradient(-45deg, transparent 75%, #1a2330 75%);
+  background-size: 18px 18px;
+  background-position: 0 0, 0 9px, 9px -9px, -9px 0;
+}
+
+.cover-shimmer {
+  background: linear-gradient(90deg, #1a2330 0%, #243044 42%, #1a2330 80%);
+  background-size: 200% 100%;
+  animation: cover-shimmer 1.35s ease-in-out infinite;
+}
+
+.cover-fade-in {
+  animation: cover-fade 420ms ease-out;
+}
+
+@keyframes cover-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes cover-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }

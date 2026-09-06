@@ -26,6 +26,19 @@ export type Author = {
   display_name: string;
 };
 
+export type CoverStatus = "missing" | "pending" | "ready" | "failed";
+
+export type CreatorRef = {
+  id: number;
+  slug: string;
+  name: string;
+};
+
+export type Creator = CreatorRef & {
+  source?: string | null;
+  model_count?: number;
+};
+
 export type ModelCard = {
   id: number;
   title: string;
@@ -43,6 +56,10 @@ export type ModelCard = {
   like_count?: number;
   bookmark_folder_ids?: number[];
   merged?: boolean;
+  creator?: CreatorRef | null;
+  cover_status?: CoverStatus;
+  cover_url?: string | null;
+  cover_placeholder?: boolean;
 };
 
 export type BookmarkFolder = {
@@ -376,6 +393,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify(pathPrefix ? { path_prefix: pathPrefix } : {})
     }),
+  creators: () => request<{ creators: Creator[] }>("/creators"),
+  creator: (idOrSlug: string | number, cursor?: string | null, limit = 24) => {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (cursor) params.set("cursor", cursor);
+    return request<{ creator: Creator; models: ModelCard[]; next_cursor: number | null }>(
+      `/creators/${encodeURIComponent(String(idOrSlug))}?${params}`
+    );
+  },
   models: (cursor?: string | null, limit = 18) => {
     const params = new URLSearchParams({ limit: String(limit) });
     if (cursor) params.set("cursor", cursor);
@@ -454,6 +479,7 @@ export const api = {
     q?: string;
     tag?: string;
     has_preview?: boolean | "";
+    creator_slug?: string;
     offset?: number;
     limit?: number;
     library_id?: number | string;
@@ -464,6 +490,7 @@ export const api = {
     if (options.has_preview === true || options.has_preview === false) {
       params.set("has_preview", String(options.has_preview));
     }
+    if (options.creator_slug) params.set("creator_slug", options.creator_slug);
     if (options.offset != null) params.set("offset", String(options.offset));
     if (options.limit != null) params.set("limit", String(options.limit));
     if (options.library_id) params.set("library_id", String(options.library_id));
@@ -473,7 +500,11 @@ export const api = {
       fallback: boolean;
       next_offset: number | null;
       estimated_total: number;
-      facets: { tags: Record<string, number>; has_preview: Record<string, number> };
+      facets: {
+        tags: Record<string, number>;
+        has_preview: Record<string, number>;
+        creator_slug?: Record<string, number>;
+      };
     }>(`/search?${params}`);
   },
   proposals: (status?: string) => {

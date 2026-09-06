@@ -12,6 +12,7 @@ import { PrintsPage } from "./pages/PrintsPage";
 import { RedeemPage } from "./pages/RedeemPage";
 import { UploadPage } from "./pages/UploadPage";
 import { BookmarksPage } from "./pages/BookmarksPage";
+import { CreatorsPage } from "./pages/CreatorsPage";
 import { DuplicatesPage } from "./pages/DuplicatesPage";
 
 function Guard({ children }: { children: React.ReactNode }) {
@@ -49,6 +50,8 @@ export default function App() {
       >
         <Route path="/" element={<GalleryPage />} />
         <Route path="/models/:id" element={<ModelPage />} />
+        <Route path="/creators" element={<CreatorsPage />} />
+        <Route path="/creators/:slug" element={<CreatorsPage />} />
         <Route path="/shelves" element={<BookmarksPage />} />
         <Route path="/duplicates" element={<DuplicatesPage />} />
         <Route path="/curation" element={<CurationPage />} />

@@ -1,8 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
 import { api, type BookmarkFolder, type ModelCard } from "../api";
+import { ModelCard as ModelCardView } from "../components/ModelCard";
 import { CardGridSkeleton, EmptyState, InlineError, SidebarSkeleton } from "../components/UiStates";
-import { formatBytes } from "../format";
 
 export function BookmarksPage() {
   const [folders, setFolders] = useState<BookmarkFolder[]>([]);
@@ -263,17 +262,11 @@ export function BookmarksPage() {
           ) : (
             <div className="card-grid">
               {models.map((model) => (
-                <div key={model.id} className="rounded-2xl border border-white/10 bg-ink-900/70 p-4">
-                  <Link to={`/models/${model.id}`} className="font-display text-lg text-white hover:text-accent-400">
-                    {model.title}
-                  </Link>
-                  <p className="mt-1 line-clamp-2 text-sm text-slate-400">{model.synopsis || model.folder_name}</p>
-                  <p className="mt-3 text-xs text-slate-500">
-                    {model.asset_count} files · {formatBytes(model.byte_size)}
-                  </p>
+                <div key={model.id}>
+                  <ModelCardView model={model} />
                   <button
                     type="button"
-                    className="mt-3 text-xs text-rose-300"
+                    className="mt-2 text-xs text-rose-300"
                     disabled={busy}
                     onClick={() => void removeBookmark(model.id)}
                   >
