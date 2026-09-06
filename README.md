@@ -89,7 +89,7 @@ Background jobs:
 - `GenerateCoverJob` — path-jails the locked cover payload, generates a budgeted libvips webp (or fails for mesh-without-preview), writes back via `CoverWriteback.apply!`
 - `CoverEnqueue` / `CoverWriteback` — scan sets `cover_status=pending`; write-back sets `ready`/`failed` + `cover_url`
 
-The curation sidecar is `CurationSidecar`. In development/test a blank or `stub` URL generates deterministic fixture proposals. A compose profile runs the same contract as HTTP.
+The curation sidecar is `CurationSidecar`. In development/test a blank or `stub` URL generates deterministic fixture proposals. Compose profile `curator` runs the live HTTP sidecar (`stub` | `ollama` | `xai`) behind the same contract. HITL approve/apply stays in Rails.
 
 ## Quick start (Docker Compose)
 
@@ -112,7 +112,7 @@ Services:
 | Postgres | localhost:5432 |
 | Redis | localhost:6379 |
 | Meilisearch | http://localhost:7700 (`MEILI_URL` / `MEILI_MASTER_KEY`) |
-| Curator stub (optional) | `docker compose --profile curator up` → localhost:8088 |
+| Curator sidecar (optional) | `docker compose --profile curator up` → localhost:8088 (`VIBE_CURATOR_PROVIDER=stub` default) |
 
 On first boot the API runs `db:prepare`. Seed the owner and scan the sample library:
 
@@ -172,13 +172,31 @@ Likes, shelves, merge/split, and duplicates:
 5. Poll status (`last_polled_at`, `last_provider`, `last_error`) is on Curation, Libraries, and `GET /me`. A success clears a stale error. Nothing is auto-approved.
 
 ```bash
-# in-process stub (default in compose: VIBE_CURATOR_URL=stub)
+# in-process stub (default in compose: VIBE_CURATOR_URL=stub) — CI path
 docker compose exec api bin/rails vibe:curate
 
-# HTTP stub curator (same JSON contract a Spark box should implement)
+# HTTP sidecar (same JSON contract). Provider defaults to stub.
 docker compose --profile curator up --build
 # set VIBE_CURATOR_URL=http://curator:8088 in .env and restart api/worker
+
+# Ollama on the host (native /api/chat, or OpenAI-compat if URL ends in /v1)
+# ollama serve && ollama pull llama3.1
+VIBE_CURATOR_URL=http://curator:8088
+VIBE_CURATOR_PROVIDER=ollama
+VIBE_OLLAMA_URL=http://host.docker.internal:11434
+VIBE_OLLAMA_MODEL=llama3.1
+VIBE_CURATOR_TIMEOUT=90
+
+# xAI Grok
+VIBE_CURATOR_URL=http://curator:8088
+VIBE_CURATOR_PROVIDER=xai
+XAI_API_KEY=...
+XAI_BASE_URL=https://api.x.ai/v1
+XAI_MODEL=grok-4
+VIBE_CURATOR_TIMEOUT=90
 ```
+
+Raise Rails `VIBE_CURATOR_TIMEOUT` above `VIBE_CURATOR_INFER_TIMEOUT` (sidecar default 60s) when using a live provider. The sidecar only suggests; nothing is auto-approved.
 
 ## Host install (`bin/dev` without Docker)
 
@@ -217,9 +235,18 @@ Environment variables (see `.env.example`):
 | `VIBE_OWNER_EMAIL` / `VIBE_OWNER_PASSWORD` | Seeded owner account |
 | `VIBE_NFS_SERVER` / `VIBE_NFS_EXPORT` / `VIBE_NFS_MOUNT_OPTIONS` | Host-side mount hints only |
 | `VIBE_CURATOR_URL` | Curator base URL, or `stub` for the in-process fixture generator (CI default) |
-| `VIBE_CURATOR_PROVIDER` | Optional hint (`ollama` \| `xai` \| `stub` \| …) sent as catalog `provider_hint`. Does **not** replace the URL. Rails does not run inference. |
+| `VIBE_CURATOR_PROVIDER` | Sidecar adapter (`ollama` \| `xai` \| `stub`). Rails also sends it as catalog `provider_hint`. Does **not** replace the URL. |
 | `VIBE_CURATOR_TOKEN` | Shared bearer token for poll + webhook ingest |
-| `VIBE_CURATOR_TIMEOUT` | HTTP timeout in seconds (default 8) |
+| `VIBE_CURATOR_TIMEOUT` | Rails HTTP poll timeout in seconds (default 8). Raise this for live inference. |
+| `VIBE_CURATOR_BATCH_SIZE` | Sidecar proposal budget (default 8, max 50) |
+| `VIBE_CURATOR_CATALOG_LIMIT` | Max models sent to a live LLM (default 80; ranked by missing tags/cover) |
+| `VIBE_CURATOR_INFER_TIMEOUT` | Sidecar LLM HTTP timeout in seconds (default 60) |
+| `VIBE_OLLAMA_URL` | Ollama base (`http://host.docker.internal:11434` or `…/v1` for OpenAI-compat) |
+| `VIBE_OLLAMA_MODEL` | Ollama model (default `llama3.1`) |
+| `VIBE_OLLAMA_API` | `openai` or `native` (blank = native unless URL ends in `/v1`) |
+| `XAI_API_KEY` | xAI API key (`VIBE_XAI_API_KEY` alias) |
+| `XAI_BASE_URL` | xAI base (default `https://api.x.ai/v1`) |
+| `XAI_MODEL` | xAI model (default `grok-4`) |
 | `VIBE_PRINT_TIMEOUT` | Adapter timeout in seconds (default 15). Timeouts mark the job failed; they do not 502 the UI |
 | `VIBE_PRINT_MOCK_DELAY_MS` | Mock adapter step delay (compose default 400; unset/0 in tests) |
 | `MEILI_URL` | Meilisearch base URL (`http://meilisearch:7700` in compose). Alias: `MEILISEARCH_URL` |
@@ -454,25 +481,26 @@ All endpoints except `POST /api/v1/session`, invite preview/redeem, and `GET /up
 ```bash
 cd api && RAILS_ENV=test bin/rails db:prepare && bin/rails test
 cd ../web && npm run build
+cd ../curator && ruby test/run.rb
 ```
 
-CI runs both jobs on GitHub Actions.
+CI runs api, web, and curator jobs on GitHub Actions.
 
 ## Layout
 
 ```
 api/                 Rails 8 API-only application
 web/                 React + Vite SPA
-curator/             Dev stub curator (compose profile `curator`)
+curator/             Live curator sidecar (stub / ollama / xai; compose profile `curator`)
 fixtures/library/    Sample on-disk collection used by seed/scan
 docker-compose.yml   api, worker, db, redis, web, meilisearch (+ optional curator)
 ```
 
 ## Curation sidecar contract
 
-HITL only. Rails never auto-approves and never silently deletes NFS files. `VIBE_CURATOR_URL=stub` stays the CI path (in-process fixtures, no network).
+HITL only. Rails never auto-approves and never silently deletes NFS files. `VIBE_CURATOR_URL=stub` stays the CI path (in-process fixtures, no network). The compose sidecar defaults to `VIBE_CURATOR_PROVIDER=stub` and can switch to `ollama` or `xai` without changing the HTTP contract.
 
-The sidecar never talks to the GPU from this repo. 3dvibe posts a **locked catalog snapshot** (metadata + path hints only — never blobs or mesh bytes) and upserts whatever comes back as **pending** proposals.
+3dvibe posts a **locked catalog snapshot** (metadata + path hints only — never blobs or mesh bytes) and upserts whatever comes back as **pending** proposals. The sidecar never deletes NFS files.
 
 `POST {VIBE_CURATOR_URL}/proposals`
 
@@ -547,18 +575,21 @@ Exposed as `curation: { last_polled_at, last_provider, last_error }` on:
 - `GET /api/v1/curation_proposals` → `libraries[].curation`
 - `POST /api/v1/curation_proposals/fetch` → top-level `curation` (also on 502)
 
-### Contract gaps (Rendering)
+### Live sidecar (Rendering)
 
-Rails only polls the sidecar and runs HITL approve/reject/apply. It does **not** load models, talk to Ollama/xAI, or interpret `provider_hint` beyond passing it through.
+`curator/` implements `GET /health` and `POST|GET /proposals` against the catalog above.
 
-Rendering owns:
+| Provider | When | Notes |
+| --- | --- | --- |
+| `stub` | `VIBE_CURATOR_PROVIDER=stub` (default) or `VIBE_CURATOR_URL=stub` on Rails | Deterministic fixture proposals. CI-safe. |
+| `ollama` | `VIBE_CURATOR_PROVIDER=ollama` | Native `POST {VIBE_OLLAMA_URL}/api/chat` or OpenAI `…/v1/chat/completions` |
+| `xai` | `VIBE_CURATOR_PROVIDER=xai` | `POST {XAI_BASE_URL}/chat/completions` with `XAI_API_KEY` |
 
-- Ollama / xAI (and other) inference adapters behind `POST /proposals`
-- Using the new catalog fields (`creator`, `cover_status`, mesh/archive counts, `sample_paths`, `creators_index`) to rank suggestions
-- Returning **stable** `sidecar_ref` values for idempotent upsert
-- Optional `provider` body field or `X-Curator-Provider` header
+The sidecar ranks models using `creator`, `cover_status`, mesh/archive counts, `sample_paths`, and `creators_index`. Live `sidecar_ref` values are minted from kind + payload so upsert stays stable even if the model rotates ids. Optional `rationale` / `reason` / `explanation` / `confidence` are passed through when the provider returns them and omitted otherwise.
 
-Keep apply path-jailed. Do not auto-approve. Do not delete NFS files from the sidecar.
+Responses include `provider` and `X-Curator-Provider`. Path-jail drops `../`, hidden segments, nested rename/move destinations, and any delete intent.
+
+Keep apply path-jailed on Rails. Do not auto-approve. Do not delete NFS files from the sidecar.
 
 | `kind` | Payload | Apply |
 | --- | --- | --- |
@@ -570,13 +601,13 @@ Keep apply path-jailed. Do not auto-approve. Do not delete NFS files from the si
 
 Rename/move destinations must be a single non-hidden segment. `../`, `.hidden`, and `kits/nested` are rejected. Apply never deletes user files.
 
-### Pointing at a Spark / DGX curator later
+### Pointing Rails at the live sidecar
 
-1. Run your real curator (Rendering adapter) so it implements `POST /proposals` above.
-2. Set `VIBE_CURATOR_URL=http://<spark-host>:<port>` and a long `VIBE_CURATOR_TOKEN`.
-3. Set `VIBE_CURATOR_PROVIDER=ollama` or `xai` (hint only; URL still wins).
+1. `docker compose --profile curator up --build` (or run `curator/server.rb` on a Spark/DGX host).
+2. Set `VIBE_CURATOR_URL=http://curator:8088` (compose) or `http://<spark-host>:<port>` and a long `VIBE_CURATOR_TOKEN`.
+3. Set `VIBE_CURATOR_PROVIDER=ollama` or `xai` on **both** Rails (hint) and the sidecar (adapter). URL still wins over the hint for "which process to call".
 4. Increase `VIBE_CURATOR_TIMEOUT` if inference is slow.
-5. Keep this Rails app unchanged — fetch, HITL, and apply stay here.
+5. Keep HITL approve/apply in Rails.
 
 Webhook alternative: the curator can `POST /api/v1/curation_proposals/ingest` with the same proposal array and `X-Curator-Token`.
 
