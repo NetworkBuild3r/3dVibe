@@ -29,7 +29,7 @@ Storage is the owner's NFS mount. There is one library pile.
 - Token auth
 - HITL AI curation: sidecar contract, stub curator, ingest, review queue, path-jailed apply
 - Meilisearch-backed faceted search with a Postgres `ILIKE` fallback when Meili is down or unset
-- In-browser Three.js viewer that **does not** auto-load meshes on cards
+- In-browser Three.js viewer that **does not** auto-load meshes on cards. STL/OBJ/3MF decode runs in a Web Worker with size/vert budgets; Close / navigate aborts the fetch
 - Print-from-browser: owner printer registry, **owner-only** enqueue, private print history, path-jailed Sidekiq dispatch, mock adapter (CI) + SDCP-shaped LAN adapter, cancel + retry
 - Personal likes and bookmark folders (organize the shared catalog; they never hide models)
 - Path-jailed model merge/split (move archives/STLs on disk, never load them into RAM)
@@ -358,6 +358,51 @@ The indexer never extracts an archive to disk. HTTP open/preview (`ArchiveMember
 **Backend contract gaps (follow-ups, do not block browse):** list/search has offset pagination (`next_offset`) but no `kind=mesh\|image` filter, no cursor token beyond integer offset, and no server-side “hot members only” page. Frontend can filter `mesh` / `image` / `streamable` on the returned page. 7z/rar listing stays best-effort. Mesh raster thumbs stay a stub (`DerivePreviewJob` copies hot images only).
 
 **Design bind (model detail).** Cover / viewer shell on top (cover states; mesh/image lazy-load + `AbortController` cancel-on-navigate / Close). Archive panel: tree/flat toggle + search within pack. Breadcrumb `model → pack.zip → folder`. Files show name · size · kind pill (`mesh` / `image` / `other`). Streamable rows Open / click into the preview pane; non-streamable stay muted with no fake Open. Mono caption `pack.zip → path/foo.stl` (middle-truncate). Loading skeleton, empty folder, rose + Retry on GET only. Mesh: shimmer → progressive `/content`. Image: `/preview`; 422 `use_content` falls back to `content_path` without toast-spam. Abort → calm “Cancelled”. Budget / unsupported → muted “Can't preview this member”. Actions stay like / shelf / print — do not invent Extract all. Gallery cards may show an **In archive** hint only when the card payload includes `in_archive`. Path jail; never “download whole zip to preview”; never market whole-archive RAM.
+
+### Frontend shell (lazy 3D viewer)
+
+Program B — Rendering. Same URLs as stream-one (#28). No parallel preview API. Decode is **not** on the main thread.
+
+**Sources**
+
+| Source | Bytes | Format hints | Decode |
+| --- | --- | --- | --- |
+| Loose asset | `GET /api/v1/assets/:id/content` | `asset.kind` + filename (`stl` / `obj` / `3mf`) | Worker |
+| Archive member | `GET /api/v1/archive_members/:id/content` (stream-one, abortable) | `member.extension` + name / path | Worker |
+
+`gcode` / `bgcode` stay `asset.mesh` for catalog/print but are **not** viewable. Do not invent Extract all. Do not download the parent zip to preview a member.
+
+**Signals / stages** (`web/src/meshViewer.ts` — keep these stable)
+
+| Stage | When | Status copy | UI |
+| --- | --- | --- | --- |
+| `idle` | Cover only; nothing requested | — | Cover |
+| `fetching` | Authenticated `/content` stream | `Loading mesh…` / `Loading mesh… N%` | Shimmer |
+| `decoding` | Worker parse (STL/OBJ/3MF) | `Decoding mesh…` | Shimmer |
+| `displaying` | First mesh in the scene; more may follow (3MF) | `Loading remaining…` | Canvas + caption |
+| `ready` | Decode finished | filename / member name | Canvas, fade-in |
+| `cancelled` | Close, route change, or unmount `AbortController.abort()` | `Cancelled` | Calm; no toast |
+| `unavailable` | Oversize, vert budget, unsupported, empty, 422 | `Can't preview this member` | Muted |
+
+Cancel-on-navigate: the SPA passes `signal` into `fetchAuthedBytes` and terminates the decode worker on unmount. Aborting the member `/content` fetch is what stops the #28 stream-one read on the API. Close sets the shell to `cancelled` (same copy).
+
+**Budgets** (client; refuse before a whole-file main-thread parse)
+
+| Cap | Default | Aligns with |
+| --- | --- | --- |
+| Loose size | 64 MiB | `VIBE_GEO_MAX_BYTES` |
+| Archive member size | 32 MiB | `VIBE_ARCHIVE_STREAM_BYTES` |
+| Vertices | 1_500_000 | Viewer cap (fingerprint `VIBE_GEO_MAX_VERTS` stays 250k) |
+
+Known `byte_size` / `uncompressed_size` or `Content-Length` over the size cap → `unavailable` without buffering the rest. The fetch reader is cancelled so the stream-one connection drops. Vertex budget is checked from a binary STL header before expanding triangles, and while scanning OBJ / 3MF.
+
+**Loading rules**
+
+- Cards never auto-load a mesh. `Load mesh` / Open is explicit.
+- Loose `stl` / `obj` / `3mf` use `/assets/:id/content`. A loose `3mf` is also an archive — the panel still lists members; Load mesh previews the whole file.
+- Archive mesh members still use `/content`, never `/preview` (422 `use_content`).
+- Image members stay on `/preview` (ImageViewer).
+- Worker + transferable typed arrays; Three.js on the main thread is scene/orbit only. If `Worker` is missing, the same parsers run on-thread as a fallback.
 
 `DerivePreviewJob` copies up to 24 hot image members (shallow / names like preview, thumb, cover, hero) into `VIBE_PREVIEW_ROOT`. Mesh members stay lazy: the tree shows Open; Three.js only runs after a click.
 

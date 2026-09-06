@@ -824,7 +824,7 @@ export const api = {
     return data as { upload: LibraryUpload };
   },
   assetContentUrl: (assetId: number) => `${API_BASE}/assets/${assetId}/content`,
-  // Stream-one member bytes. Abort the fetch on navigate-away.
+  // Stream-one member bytes. Abort the fetch on navigate-away (MeshViewer + worker terminate).
   // Supports Range: bytes=start-end (206). Mesh preview is this URL, not /preview.
   archiveMemberContentUrl: (id: number, download = false) =>
     `${API_BASE}/archive_members/${id}/content${download ? "?download=1" : ""}`,
@@ -893,9 +893,9 @@ export async function fetchAuthedBlob(url: string, init: RequestInit = {}): Prom
 
 export async function fetchAuthedBytes(
   url: string,
-  init: RequestInit & { onProgress?: (loaded: number, total: number | null) => void } = {}
+  init: RequestInit & { onProgress?: (loaded: number, total: number | null) => void; maxBytes?: number } = {}
 ): Promise<ArrayBuffer> {
-  const { onProgress, ...rest } = init;
+  const { onProgress, maxBytes, ...rest } = init;
   const current = token();
   const headers = new Headers(rest.headers);
   if (current && !headers.has("Authorization")) headers.set("Authorization", `Bearer ${current}`);
@@ -904,8 +904,15 @@ export async function fetchAuthedBytes(
 
   const totalHeader = Number(response.headers.get("Content-Length"));
   const total = Number.isFinite(totalHeader) && totalHeader > 0 ? totalHeader : null;
+  if (maxBytes && maxBytes > 0 && total != null && total > maxBytes) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new ApiError("Refusing to load oversized mesh", 422, "oversized");
+  }
   if (!response.body) {
     const buffer = await response.arrayBuffer();
+    if (maxBytes && maxBytes > 0 && buffer.byteLength > maxBytes) {
+      throw new ApiError("Refusing to load oversized mesh", 422, "oversized");
+    }
     onProgress?.(buffer.byteLength, total ?? buffer.byteLength);
     return buffer;
   }
@@ -918,6 +925,10 @@ export async function fetchAuthedBytes(
     if (done) break;
     chunks.push(value);
     loaded += value.byteLength;
+    if (maxBytes && maxBytes > 0 && loaded > maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      throw new ApiError("Refusing to load oversized mesh", 422, "oversized");
+    }
     onProgress?.(loaded, total);
   }
 

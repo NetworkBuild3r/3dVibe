@@ -52,9 +52,21 @@ export function prefixThrough(segments: string[], index: number) {
 
 export function isPreviewUnavailable(error: unknown) {
   if (!(error instanceof ApiError)) {
-    return error instanceof Error && /oversized|not streamable|preview_unavailable|directory/i.test(error.message);
+    return (
+      error instanceof Error &&
+      /oversized|too_many_verts|unsupported|empty mesh|not streamable|preview_unavailable|directory/i.test(error.message)
+    );
   }
-  if (error.code === "preview_unavailable" || error.code === "use_content") return true;
+  if (
+    error.code === "preview_unavailable" ||
+    error.code === "use_content" ||
+    error.code === "oversized" ||
+    error.code === "too_many_verts" ||
+    error.code === "unsupported" ||
+    error.code === "empty"
+  ) {
+    return true;
+  }
   if (error.status === 422) return true;
   return /oversized|not streamable|directory/i.test(error.message);
 }
