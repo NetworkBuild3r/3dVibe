@@ -20,6 +20,7 @@ import { InlineError } from "../components/UiStates";
 import { SaveToShelf } from "../components/SaveToShelf";
 import { useAuth } from "../auth";
 import { CANT_PREVIEW_COPY, CANCELLED_COPY, displayCaption, memberCaption, memberKind } from "../archives";
+import { isViewableMeshAsset, preferredLooseMesh } from "../meshViewer";
 import { formatBytes } from "../format";
 import {
   BROWSER_NEVER_COPY,
@@ -43,7 +44,16 @@ type Viewer =
   | { kind: "idle" }
   | { kind: "cancelled" }
   | { kind: "unsupported"; caption?: string }
-  | { kind: "mesh"; url: string; label: string; caption?: string }
+  | {
+      kind: "mesh";
+      url: string;
+      label: string;
+      caption?: string;
+      filename?: string;
+      meshKind?: string | null;
+      byteSize?: number | null;
+      source: "loose" | "archive";
+    }
   | { kind: "image"; url: string; label: string; caption?: string };
 
 export function ModelPage() {
@@ -81,7 +91,7 @@ export function ModelPage() {
     return () => abort.abort();
   }, [id]);
 
-  const meshAsset = useMemo(() => model?.assets.find((asset) => asset.mesh && asset.kind === "stl"), [model]);
+  const meshAsset = useMemo(() => (model ? preferredLooseMesh(model.assets) : undefined), [model]);
   const printableAssets = useMemo(() => (model ? printableAssetsOf(model.assets) : []), [model]);
   const printerChoices = useMemo(() => pickerPrinters(printers), [printers]);
   const enabledPrinters = useMemo(() => printerChoices.filter((printer) => printer.enabled), [printerChoices]);
@@ -225,7 +235,16 @@ export function ModelPage() {
         setViewer({ kind: "unsupported", caption });
         return;
       }
-      setViewer({ kind: "mesh", url, label, caption });
+      setViewer({
+        kind: "mesh",
+        url,
+        label,
+        caption,
+        filename: member.name || member.internal_path,
+        meshKind: member.extension,
+        byteSize: member.uncompressed_size,
+        source: "archive"
+      });
       return;
     }
     if (kind === "image") {
@@ -283,7 +302,15 @@ export function ModelPage() {
               <button
                 type="button"
                 onClick={() =>
-                  setViewer({ kind: "mesh", url: api.assetContentUrl(meshAsset.id), label: meshAsset.filename })
+                  setViewer({
+                    kind: "mesh",
+                    url: api.assetContentUrl(meshAsset.id),
+                    label: meshAsset.filename,
+                    filename: meshAsset.filename,
+                    meshKind: meshAsset.kind,
+                    byteSize: meshAsset.byte_size,
+                    source: meshAsset.archive ? "archive" : "loose"
+                  })
                 }
                 className="rounded-full bg-accent-500 px-3 py-1 text-sm text-ink-950"
               >
@@ -298,7 +325,15 @@ export function ModelPage() {
           </div>
         </div>
         {viewer.kind === "mesh" ? (
-          <MeshViewer key={viewer.url} url={viewer.url} label={viewer.label} />
+          <MeshViewer
+            key={viewer.url}
+            url={viewer.url}
+            label={viewer.label}
+            filename={viewer.filename}
+            meshKind={viewer.meshKind}
+            byteSize={viewer.byteSize}
+            source={viewer.source}
+          />
         ) : viewer.kind === "image" ? (
           <ImageViewer key={viewer.url} url={viewer.url} label={viewer.label} />
         ) : (
@@ -484,11 +519,21 @@ export function ModelPage() {
                   </p>
                 </div>
               </div>
-              {asset.mesh && asset.kind === "stl" ? (
+              {isViewableMeshAsset(asset) ? (
                 <button
                   type="button"
                   className="text-accent-400"
-                  onClick={() => setViewer({ kind: "mesh", url: api.assetContentUrl(asset.id), label: asset.filename })}
+                  onClick={() =>
+                    setViewer({
+                      kind: "mesh",
+                      url: api.assetContentUrl(asset.id),
+                      label: asset.filename,
+                      filename: asset.filename,
+                      meshKind: asset.kind,
+                      byteSize: asset.byte_size,
+                      source: asset.archive ? "archive" : "loose"
+                    })
+                  }
                 >
                   Open
                 </button>
