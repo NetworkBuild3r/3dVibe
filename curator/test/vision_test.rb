@@ -61,6 +61,18 @@ class VisionTest < Minitest::Test
     assert_equal "/covers/12.webp", pick[:url]
   end
 
+  def test_cover_candidates_lists_lqip_then_cover_then_next_ready_model
+    catalog = catalog_with_ready_cover
+    catalog["models"][1]["cover_status"] = "ready"
+    catalog["models"][1]["cover_url"] = "/covers/13.webp"
+    picks = VibeCurator::Vision.cover_candidates(catalog)
+    assert_equal %w[cover_lqip_url cover_url cover_url], picks.map { |pick| pick[:source] }
+    assert_equal [12, 12, 13], picks.map { |pick| pick[:model_id] }
+    assert_equal "/covers/12.lqip.webp", picks[0][:url]
+    assert_equal "/covers/12.webp", picks[1][:url]
+    assert_equal "/covers/13.webp", picks[2][:url]
+  end
+
   def test_pick_cover_skips_missing_pending_failed
     catalog = sample_catalog
     catalog["models"][0]["cover_status"] = "failed"
@@ -188,6 +200,104 @@ class VisionTest < Minitest::Test
     )
     VibeCurator::Service.proposals(payload: catalog, env: env, transport: transport, fetch: fetch)
     assert seen["messages"][1]["content"].is_a?(String)
+  end
+
+  def test_lqip_miss_uses_same_model_cover_url
+    Dir.mktmpdir do |root|
+      FileUtils.mkdir_p(root)
+      File.binwrite(File.join(root, "12.webp"), File.binread(FIXTURE_COVER))
+      seen = nil
+      transport = fake_openai_transport(llm_payload) do |_uri, request|
+        seen = JSON.parse(request.body)
+      end
+      env = env_hash(
+        "VIBE_CURATOR_PROVIDER" => "xai",
+        "XAI_API_KEY" => "xai-test-key",
+        "VIBE_COVER_ROOT" => root
+      )
+      VibeCurator::Service.proposals(payload: catalog_with_ready_cover, env: env, transport: transport)
+
+      user = seen["messages"][1]
+      assert user["content"].is_a?(Array)
+      payload = JSON.parse(user["content"][0]["text"])
+      assert_equal 12, payload.dig("cover_image", "model_id")
+      assert_equal "cover_url", payload.dig("cover_image", "source")
+    end
+  end
+
+  def test_over_budget_lqip_falls_back_to_cover_url
+    Dir.mktmpdir do |root|
+      FileUtils.mkdir_p(root)
+      File.binwrite(File.join(root, "12.lqip.webp"), File.binread(FIXTURE_COVER) + ("\x00" * 2000))
+      File.binwrite(File.join(root, "12.webp"), File.binread(FIXTURE_COVER))
+      seen = nil
+      transport = fake_openai_transport(llm_payload) do |_uri, request|
+        seen = JSON.parse(request.body)
+      end
+      env = env_hash(
+        "VIBE_CURATOR_PROVIDER" => "xai",
+        "XAI_API_KEY" => "xai-test-key",
+        "VIBE_COVER_ROOT" => root,
+        "VIBE_CURATOR_VISION_MAX_BYTES" => "256"
+      )
+      VibeCurator::Service.proposals(payload: catalog_with_ready_cover, env: env, transport: transport)
+
+      user = seen["messages"][1]
+      assert user["content"].is_a?(Array)
+      payload = JSON.parse(user["content"][0]["text"])
+      assert_equal "cover_url", payload.dig("cover_image", "source")
+    end
+  end
+
+  def test_first_ready_cover_failure_uses_next_ready_model
+    Dir.mktmpdir do |root|
+      FileUtils.mkdir_p(root)
+      File.binwrite(File.join(root, "13.webp"), File.binread(FIXTURE_COVER))
+      catalog = catalog_with_ready_cover
+      catalog["models"][0]["cover_lqip_url"] = "/covers/12.lqip.webp"
+      catalog["models"][0]["cover_url"] = "/covers/12.webp"
+      catalog["models"][1]["cover_status"] = "ready"
+      catalog["models"][1]["cover_url"] = "/covers/13.webp"
+      seen = nil
+      transport = fake_openai_transport(llm_payload) do |_uri, request|
+        seen = JSON.parse(request.body)
+      end
+      env = env_hash(
+        "VIBE_CURATOR_PROVIDER" => "openai",
+        "OPENAI_API_KEY" => "openai-test-key",
+        "VIBE_COVER_ROOT" => root
+      )
+      VibeCurator::Service.proposals(payload: catalog, env: env, transport: transport)
+
+      user = seen["messages"][1]
+      assert user["content"].is_a?(Array)
+      payload = JSON.parse(user["content"][0]["text"])
+      assert_equal 13, payload.dig("cover_image", "model_id")
+      assert_equal "cover_url", payload.dig("cover_image", "source")
+    end
+  end
+
+  def test_lqip_fetch_error_still_tries_cover_url
+    seen = nil
+    fetch = lambda do |url, _env|
+      raise "lqip timeout" if url.include?("lqip")
+
+      File.binread(FIXTURE_COVER)
+    end
+    transport = fake_openai_transport(llm_payload) do |_uri, request|
+      seen = JSON.parse(request.body)
+    end
+    env = env_hash(
+      "VIBE_CURATOR_PROVIDER" => "xai",
+      "XAI_API_KEY" => "xai-test-key",
+      "VIBE_COVER_BASE_URL" => "http://api.test"
+    )
+    VibeCurator::Service.proposals(payload: catalog_with_ready_cover, env: env, transport: transport, fetch: fetch)
+
+    user = seen["messages"][1]
+    assert user["content"].is_a?(Array)
+    payload = JSON.parse(user["content"][0]["text"])
+    assert_equal "cover_url", payload.dig("cover_image", "source")
   end
 
   def test_over_budget_bytes_are_skipped
