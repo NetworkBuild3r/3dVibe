@@ -10,6 +10,7 @@ module ActiveSupport
       SearchIndexBuffer.reset!
       MeilisearchClient.reset_health_cache!
       CoverPacer.reset!
+      CuratorSetting.delete_all
     end
 
     def fixture_library_root
