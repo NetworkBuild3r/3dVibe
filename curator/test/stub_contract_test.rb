@@ -56,4 +56,13 @@ class StubContractTest < Minitest::Test
     result = VibeCurator::Service.proposals(payload: catalog, env: env_hash("VIBE_CURATOR_PROVIDER" => ""))
     assert_equal "stub", result["provider"]
   end
+
+  def test_unknown_hint_does_not_silently_stub
+    catalog = sample_catalog.merge("provider_hint" => "gemini")
+    error = assert_raises(VibeCurator::Error) do
+      VibeCurator::Service.proposals(payload: catalog, env: env_hash("VIBE_CURATOR_PROVIDER" => ""))
+    end
+    assert_equal "unknown_provider", error.code
+    assert_match(/gemini/, error.message)
+  end
 end

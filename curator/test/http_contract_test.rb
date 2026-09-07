@@ -96,6 +96,20 @@ class HTTPContractTest < Minitest::Test
     assert_equal "alpha-one", tag["payload"]["folder_name"]
   end
 
+  def test_unknown_provider_is_503
+    result = VibeCurator::HTTP.handle(
+      method: "POST",
+      path: "/proposals",
+      headers: { "Authorization" => "Bearer secret" },
+      body: JSON.generate(sample_catalog),
+      env: env_hash("VIBE_CURATOR_PROVIDER" => "gemini")
+    )
+    assert_equal 503, result[:status]
+    assert_equal "unknown_provider", result[:body]["error"]
+    assert_match(/gemini/, result[:body]["message"])
+    refute_equal "stub", result[:body]["provider"]
+  end
+
   def test_xai_misconfig_is_503
     result = VibeCurator::HTTP.handle(
       method: "POST",
