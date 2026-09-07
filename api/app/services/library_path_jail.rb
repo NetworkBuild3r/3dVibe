@@ -8,12 +8,14 @@ class LibraryPathJail
     relative = normalize_relative(relative_path)
     candidate = @root.join(folder, relative).expand_path
     assert_inside!(candidate)
+    assert_physical_inside!(candidate)
     candidate
   end
 
   def folder_path(name)
     path = @root.join(normalize_model_folder(name)).expand_path
     assert_inside!(path)
+    assert_physical_inside!(path)
     path
   end
 
@@ -42,7 +44,9 @@ class LibraryPathJail
 
   def incoming_dir
     dir = @root.join(".vibe-incoming")
-    assert_inside!(dir.expand_path)
+    expanded = dir.expand_path
+    assert_inside!(expanded)
+    assert_physical_inside!(expanded)
     dir
   end
 
@@ -67,7 +71,7 @@ class LibraryPathJail
   end
 
   def assert_realpath_inside!(candidate)
-    real = Pathname.new(candidate).realpath
+    real = strict_realpath(candidate)
     assert_inside!(real)
     real
   end
@@ -87,6 +91,31 @@ class LibraryPathJail
     path = candidate.to_s
     return if path == root || path.start_with?(root + File::SEPARATOR)
 
+    raise ArgumentError, "path escapes library root"
+  end
+
+  # Lexical join is not enough: a first-level folder or dest file can be a
+  # symlink that FileUtils.cp / mv / open will follow out of the jail.
+  def assert_physical_inside!(candidate)
+    path = Pathname.new(candidate)
+    if path.symlink? || path.exist?
+      assert_inside!(strict_realpath(path))
+      return
+    end
+
+    parent = path.parent
+    while parent != @root && !parent.root?
+      if parent.symlink? || parent.exist?
+        assert_inside!(strict_realpath(parent))
+        return
+      end
+      parent = parent.parent
+    end
+  end
+
+  def strict_realpath(path)
+    Pathname.new(path).realpath
+  rescue Errno::ENOENT, Errno::ELOOP
     raise ArgumentError, "path escapes library root"
   end
 end
