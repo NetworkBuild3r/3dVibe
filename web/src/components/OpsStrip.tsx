@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { ApiError, api, type LibraryScanDetail, type OpsSnapshot, type ScanStatus } from "../api";
 import { useAuth } from "../auth";
 import { formatRelativeTime } from "../format";
+import { canReadLibraryOps, canScanLibraries } from "../library";
 import {
   OPS_POLL_MS,
   isActiveScan,
@@ -161,8 +162,8 @@ function OpsDetail({
 
 export function OpsStrip() {
   const { user } = useAuth();
-  const canReadOps = Boolean(user?.can_curate);
-  const canOpenLibraries = Boolean(user?.can_invite || user?.can_manage_libraries);
+  const canReadOps = canReadLibraryOps(user);
+  const canOpenLibraries = canScanLibraries(user);
   const [ops, setOps] = useState<OpsSnapshot | null>(null);
   const [scanDetail, setScanDetail] = useState<LibraryScanDetail | null>(null);
   const [loading, setLoading] = useState(canReadOps);
