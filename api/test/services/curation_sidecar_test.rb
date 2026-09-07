@@ -86,6 +86,38 @@ class CurationSidecarTest < ActiveSupport::TestCase
     ENV.delete("VIBE_CURATOR_PROVIDER")
   end
 
+  test "catalog includes cover urls only when cover_status is ready" do
+    beta = @library.vibe_models.find_by!(folder_name: "beta-two")
+    @alpha.update!(
+      cover_status: VibeModel::COVER_READY,
+      cover_url: "/covers/#{@alpha.id}.webp",
+      cover_lqip_url: "/covers/#{@alpha.id}.lqip.webp"
+    )
+    beta.update!(
+      cover_status: VibeModel::COVER_PENDING,
+      cover_url: "/covers/#{beta.id}.webp",
+      cover_lqip_url: "/covers/#{beta.id}.lqip.webp"
+    )
+
+    catalog = CurationSidecar.new(@library, endpoint: "stub").catalog
+    ready = catalog[:models].find { |row| row[:id] == @alpha.id }
+    pending = catalog[:models].find { |row| row[:id] == beta.id }
+
+    assert_equal VibeModel::COVER_READY, ready[:cover_status]
+    assert_equal "/covers/#{@alpha.id}.webp", ready[:cover_url]
+    assert_equal "/covers/#{@alpha.id}.lqip.webp", ready[:cover_lqip_url]
+    refute pending.key?(:cover_url)
+    refute pending.key?(:cover_lqip_url)
+
+    [VibeModel::COVER_MISSING, VibeModel::COVER_FAILED].each do |status|
+      beta.update!(cover_status: status, cover_url: "/covers/stale.webp", cover_lqip_url: "/covers/stale.lqip.webp")
+      row = CurationSidecar.new(@library, endpoint: "stub").catalog[:models].find { |item| item[:id] == beta.id }
+      assert_equal status, row[:cover_status]
+      refute row.key?(:cover_url), "expected #{status} to omit cover_url"
+      refute row.key?(:cover_lqip_url), "expected #{status} to omit cover_lqip_url"
+    end
+  end
+
   test "poll success clears last_error and sets last_polled_at" do
     @library.update!(last_error: "stale sidecar", last_provider: "xai", last_polled_at: 2.days.ago)
     sidecar = CurationSidecar.new(@library, endpoint: "stub", provider_hint: "stub")

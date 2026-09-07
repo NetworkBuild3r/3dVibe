@@ -107,7 +107,7 @@ class CurationSidecar
     assets = model.assets.sort_by { |asset| [asset.relative_path.to_s, asset.id] }
     mesh_count = assets.count(&:mesh?)
     archive_count = assets.count(&:archive?)
-    {
+    row = {
       id: model.id,
       folder_name: model.folder_name,
       title: model.title,
@@ -121,6 +121,15 @@ class CurationSidecar
       has_archives: archive_count.positive?,
       sample_paths: assets.first(SAMPLE_PATH_LIMIT).map { |asset| jail_relative_path(model, asset) }
     }
+    # Ready covers only: same card URLs. Sidecar prefers LQIP, else cover_url.
+    # Missing/pending/failed stay text-only (omit image keys even if leftovers exist).
+    if model.cover_status == VibeModel::COVER_READY
+      url = model.cover_url.to_s.presence
+      lqip = model.cover_lqip_url.to_s.presence
+      row[:cover_url] = url if url
+      row[:cover_lqip_url] = lqip if lqip
+    end
+    row
   end
 
   def jail_relative_path(model, asset)
