@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { useFocusTrap } from "../focusTrap";
 import type { DuplicateGroup, DuplicateMember } from "../api";
 import {
   EXTRACT_AND_MERGE_COPY,
@@ -145,6 +146,15 @@ export function DuplicateReview({
   const extractable = canExtractArchiveMembers(group);
   const [targetId, setTargetId] = useState(preferredTargetId(group));
   const [confirming, setConfirming] = useState<"merge" | "extract" | "extract-merge" | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const titleId = `dup-review-title-${group.id}`;
+
+  useFocusTrap(true, rootRef, {
+    onEscape: () => {
+      if (confirming) setConfirming(null);
+      else onClose();
+    }
+  });
 
   useEffect(() => {
     setTargetId(preferredTargetId(group));
@@ -194,9 +204,18 @@ export function DuplicateReview({
   }
 
   return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-ink-950/65 backdrop-blur-sm">
-      <button type="button" className="absolute inset-0 cursor-default" aria-label="Close review" onClick={onClose} />
-      <aside className="relative flex h-full w-full max-w-4xl flex-col border-l border-white/10 bg-ink-950 shadow-2xl">
+    <div
+      ref={rootRef}
+      tabIndex={-1}
+      className="fixed inset-0 z-40 flex justify-end bg-ink-950/65 backdrop-blur-sm"
+    >
+      <button type="button" tabIndex={-1} className="absolute inset-0 cursor-default" aria-label="Close review" onClick={onClose} />
+      <aside
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className="relative flex h-full w-full max-w-4xl flex-col border-l border-white/10 bg-ink-950 shadow-2xl"
+      >
         <div className="flex items-start justify-between gap-4 border-b border-white/5 px-5 py-4">
           <div>
             <div className="flex flex-wrap items-center gap-2">
@@ -206,7 +225,9 @@ export function DuplicateReview({
                 {members.length} {members.length === 1 ? "member" : "members"}
               </span>
             </div>
-            <h2 className="mt-2 font-display text-2xl text-white">{group.filename || "Duplicate group"}</h2>
+            <h2 id={titleId} className="mt-2 font-display text-2xl text-white">
+              {group.filename || "Duplicate group"}
+            </h2>
             <p className="mt-1 max-w-xl text-sm text-slate-400">
               Compare copies side by side. Exact is the same bytes. Geometry is the same mesh in different files. Likely
               is a weak signal — you decide. Kept copies stay in the shared catalog.
@@ -357,8 +378,15 @@ export function DuplicateReview({
 
       {confirming === "merge" && canMerge && target ? (
         <div className="absolute inset-0 z-50 grid place-items-center bg-ink-950/70 px-4">
-          <div className="w-full max-w-md rounded-2xl border border-white/10 bg-ink-900 p-5 shadow-2xl">
-            <h3 className="font-display text-xl text-white">Merge into {target.title}?</h3>
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={`dup-merge-title-${group.id}`}
+            className="w-full max-w-md rounded-2xl border border-white/10 bg-ink-900 p-5 shadow-2xl"
+          >
+            <h3 id={`dup-merge-title-${group.id}`} className="font-display text-xl text-white">
+              Merge into {target.title}?
+            </h3>
             <p className="mt-2 text-sm text-slate-400">
               Other models in this group are reparented under <span className="text-slate-200">{target.title}</span>{" "}
               inside the library path jail. Files stay on NFS at their jailed destination. Merge never silent-deletes.
@@ -454,10 +482,18 @@ function ExtractConfirmSheet({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  const titleId = `dup-extract-title-${groupId}`;
   return (
     <div className="absolute inset-0 z-50 grid place-items-center bg-ink-950/70 px-4">
-      <div className="w-full max-w-md rounded-2xl border border-white/10 bg-ink-900 p-5 shadow-2xl">
-        <h3 className="font-display text-xl text-white">{title}</h3>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className="w-full max-w-md rounded-2xl border border-white/10 bg-ink-900 p-5 shadow-2xl"
+      >
+        <h3 id={titleId} className="font-display text-xl text-white">
+          {title}
+        </h3>
         <p className="mt-2 text-sm text-slate-400">{copy}</p>
         {members.length > 0 ? (
           <ul className="mt-3 list-disc space-y-1 pl-5 font-mono text-xs text-slate-400">

@@ -39,6 +39,7 @@ module API
         return if require_owner!(library)
 
         prefix = params[:path_prefix].presence
+        prefix = LibraryPathJail.new(library.root_path).normalize_folder(prefix) if prefix
         library.scan_runs.create!(
           status: ScanRun::QUEUED,
           trigger: ScanRun::TRIGGER_API,
