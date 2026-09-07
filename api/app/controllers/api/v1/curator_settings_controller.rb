@@ -10,7 +10,7 @@ module API
       def update
         setting = CuratorSetting.instance!
         setting.update!(setting_params)
-        render json: { curator_setting: setting.as_api }
+        render json: { curator_setting: CuratorRuntime.as_api }
       end
 
       def update_xai_api_key
@@ -62,7 +62,7 @@ module API
 
         setting = CuratorSetting.instance!
         setting.update!(attribute => key)
-        render json: { curator_setting: setting.as_api }
+        render json: { curator_setting: CuratorRuntime.as_api }
       end
 
       def destroy_secret!(attribute)

@@ -61,14 +61,13 @@ class CuratorRuntime
     end
 
     def as_api
-      setting = instance
       {
-        provider: setting&.provider.presence || env_provider,
-        ollama_url: setting&.ollama_url,
-        ollama_model: setting&.ollama_model,
-        xai_api_key_status: setting&.xai_api_key_status || "missing",
-        openai_api_key_status: setting&.openai_api_key_status || "missing",
-        anthropic_api_key_status: setting&.anthropic_api_key_status || "missing"
+        provider: provider,
+        ollama_url: ollama_url,
+        ollama_model: ollama_model,
+        xai_api_key_status: secret_status(CuratorSetting::XAI),
+        openai_api_key_status: secret_status(CuratorSetting::OPENAI),
+        anthropic_api_key_status: secret_status(CuratorSetting::ANTHROPIC)
       }
     end
 
@@ -96,7 +95,19 @@ class CuratorRuntime
 
     def secret_for(provider_name)
       spec = SECRET_ENV.fetch(provider_name)
-      present(instance&.public_send(spec[:attribute])) || spec[:env].lazy.map { |name| present(ENV[name]) }.find(&:itself)
+      present(instance&.public_send(spec[:attribute])) || env_secret(spec)
+    end
+
+    def env_secret(spec)
+      spec[:env].lazy.map { |name| present(ENV[name]) }.find(&:itself)
+    end
+
+    def secret_status(provider_name)
+      spec = SECRET_ENV.fetch(provider_name)
+      return "set" if present(instance&.public_send(spec[:attribute]))
+      return "from_env" if env_secret(spec)
+
+      "missing"
     end
 
     def present(value)

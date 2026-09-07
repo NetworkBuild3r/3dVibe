@@ -131,6 +131,7 @@ module API
       def archive_merge_blocked?(group)
         return true if selected_archive_member_ids.any?
         return true if selected_member_payloads_include_archive?
+        return true if selected_archive_resident_asset_ids?(group)
         return false if explicit_on_disk_selection?
         return true if group.duplicate_group_members.where.not(archive_member_id: nil).exists?
 
@@ -139,6 +140,19 @@ module API
 
       def explicit_on_disk_selection?
         Array(params[:source_ids] || params[:model_ids]).any? || Array(params[:asset_ids]).any?
+      end
+
+      # archive_member.as_api exposes the parent zip as asset_id. Explicit
+      # asset_ids must still 422 if any selected id is that pack or the member.
+      def selected_archive_resident_asset_ids?(group)
+        ids = Array(params[:asset_ids]).map(&:to_i).reject(&:zero?)
+        return false if ids.empty?
+
+        member_ids = group.duplicate_group_members.where.not(archive_member_id: nil).pluck(:archive_member_id)
+        return true if (ids & member_ids).any?
+
+        parent_ids = ArchiveMember.where(id: member_ids).pluck(:asset_id)
+        (ids & parent_ids).any?
       end
 
       def extract_target_id
@@ -153,10 +167,12 @@ module API
       end
 
       def extract_member_ids(group)
+        allowed = group.duplicate_group_members.where.not(archive_member_id: nil).pluck(:archive_member_id)
         ids = selected_archive_member_ids
-        return ids if ids.any?
+        return allowed if ids.empty?
+        raise ArgumentError, "archive members are not in this duplicate group" if (ids - allowed).any?
 
-        group.duplicate_group_members.where.not(archive_member_id: nil).pluck(:archive_member_id)
+        ids
       end
 
       def default_extract_target_id(group)

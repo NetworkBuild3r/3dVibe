@@ -56,7 +56,7 @@ class ModelCatalogFilters
     mesh = Asset.where(kind: Asset::MESH_KINDS).select(:vibe_model_id)
     archive = Asset.joins(:archive_members).where(
       "LOWER(SUBSTRING(archive_members.internal_path FROM '\\.([^.]+)$')) IN (?)",
-      %w[stl obj 3mf png jpg jpeg webp txt md]
+      ArchiveMember::PREVIEW_EXTENSIONS
     ).select(:vibe_model_id)
     VibeModel.where(id: mesh).or(VibeModel.where(id: archive)).select(:id)
   end

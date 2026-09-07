@@ -140,4 +140,54 @@ class CuratorSettingTest < ActiveSupport::TestCase
     assert_equal "stub", CuratorRuntime.provider
     assert CuratorRuntime.known_provider?("stub")
   end
+
+  test "as_api surfaces ENV fallbacks the sidecar uses without leaking secrets" do
+    ENV["VIBE_CURATOR_PROVIDER"] = "openai"
+    ENV["VIBE_OLLAMA_URL"] = "http://env-ollama:11434"
+    ENV["VIBE_OLLAMA_MODEL"] = "env-gemma"
+    ENV["OPENAI_API_KEY"] = "sk-env-openai-must-not-leak"
+    ENV["XAI_API_KEY"] = "sk-env-xai-must-not-leak"
+    ENV["ANTHROPIC_API_KEY"] = "sk-env-anthropic-must-not-leak"
+
+    payload = CuratorRuntime.as_api
+    assert_equal "openai", payload[:provider]
+    assert_equal "http://env-ollama:11434", payload[:ollama_url]
+    assert_equal "env-gemma", payload[:ollama_model]
+    assert_equal "from_env", payload[:openai_api_key_status]
+    assert_equal "from_env", payload[:xai_api_key_status]
+    assert_equal "from_env", payload[:anthropic_api_key_status]
+    refute payload.key?(:openai_api_key)
+    refute payload.key?(:xai_api_key)
+    refute payload.key?(:anthropic_api_key)
+    dumped = payload.inspect
+    refute_includes dumped, "sk-env-openai-must-not-leak"
+    refute_includes dumped, "sk-env-xai-must-not-leak"
+    refute_includes dumped, "sk-env-anthropic-must-not-leak"
+
+    sidecar = CuratorRuntime.for_sidecar
+    assert_equal "sk-env-openai-must-not-leak", sidecar[:openai_api_key]
+    refute sidecar.key?(:xai_api_key)
+
+    CuratorSetting.create!(
+      provider: "anthropic",
+      ollama_url: "http://ui-ollama:11434",
+      ollama_model: "ui-model",
+      anthropic_api_key: "sk-ui-anthropic"
+    )
+    payload = CuratorRuntime.as_api
+    assert_equal "anthropic", payload[:provider]
+    assert_equal "http://ui-ollama:11434", payload[:ollama_url]
+    assert_equal "ui-model", payload[:ollama_model]
+    assert_equal "set", payload[:anthropic_api_key_status]
+    assert_equal "from_env", payload[:openai_api_key_status]
+    refute_includes payload.inspect, "sk-ui-anthropic"
+    refute_includes payload.inspect, "sk-env-openai-must-not-leak"
+  ensure
+    ENV.delete("VIBE_CURATOR_PROVIDER")
+    ENV.delete("VIBE_OLLAMA_URL")
+    ENV.delete("VIBE_OLLAMA_MODEL")
+    ENV.delete("XAI_API_KEY")
+    ENV.delete("OPENAI_API_KEY")
+    ENV.delete("ANTHROPIC_API_KEY")
+  end
 end
