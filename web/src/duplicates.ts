@@ -375,3 +375,55 @@ export function previewModels(
   const models = columns.map((column) => column.model || coverFromMembers(column.members, column.title));
   return models.slice(0, Math.min(Math.max(models.length, 2), limit));
 }
+
+export function duplicateLibraryFromSearch(search: string): number | null {
+  const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
+  const raw = params.get("library");
+  if (!raw) return null;
+  const id = Number(raw);
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+export function duplicatesIndexHref(libraryId?: number | "") {
+  if (libraryId === "" || libraryId == null) return "/duplicates";
+  return `/duplicates?library=${libraryId}`;
+}
+
+export function duplicateReviewHref(groupId: number, libraryId?: number | "") {
+  if (libraryId === "" || libraryId == null) return `/duplicates/${groupId}`;
+  return `/duplicates/${groupId}?library=${libraryId}`;
+}
+
+export function resolveDuplicateLibraryId(options: {
+  libraries: Array<{ id: number }>;
+  preferredId?: number | null;
+  currentId?: number | "";
+  groupLibraryId?: number | null;
+}): number | "" {
+  const ids = new Set(options.libraries.map((library) => library.id));
+  if (options.preferredId != null && ids.has(options.preferredId)) return options.preferredId;
+  if (options.groupLibraryId != null && ids.has(options.groupLibraryId)) return options.groupLibraryId;
+  if (typeof options.currentId === "number" && ids.has(options.currentId)) return options.currentId;
+  return options.libraries[0]?.id ?? "";
+}
+
+export function duplicateLibrarySearchOrder(
+  libraries: Array<{ id: number }>,
+  currentId: number | ""
+): number[] {
+  const ids = libraries.map((library) => library.id);
+  if (currentId === "" || !ids.includes(currentId)) return ids;
+  return [currentId, ...ids.filter((id) => id !== currentId)];
+}
+
+export function findGroupInLibraries(
+  payloads: Array<{ library_id: number; groups: DuplicateGroup[] }>,
+  groupId: number
+): { libraryId: number; group: DuplicateGroup } | null {
+  for (const payload of payloads) {
+    const group = payload.groups.find((row) => row.id === groupId);
+    if (!group) continue;
+    return { libraryId: group.library_id ?? payload.library_id, group };
+  }
+  return null;
+}

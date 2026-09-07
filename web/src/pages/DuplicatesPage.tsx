@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api, type DuplicateGroup, type DuplicateStatus, type ExtractedArchiveAsset, type LibraryInfo } from "../api";
 import { useAuth } from "../auth";
 import { CalmChip } from "../components/CalmChip";
@@ -14,6 +14,11 @@ import {
   EXTRACTING_COPY,
   GEOMETRY_ARCHIVE_LEGEND,
   MERGE_UNSUPPORTED_COPY,
+  duplicateLibraryFromSearch,
+  duplicateReviewHref,
+  duplicatesIndexHref,
+  duplicateLibrarySearchOrder,
+  findGroupInLibraries,
   formatWhen,
   groupHasArchive,
   groupMembers,
@@ -21,6 +26,7 @@ import {
   newestGroupTime,
   previewModels,
   readLastRun,
+  resolveDuplicateLibraryId,
   STATUS_FILTERS,
   type StatusFilter,
   writeLastRun
@@ -45,9 +51,11 @@ function GroupRowSkeleton() {
 export function DuplicatesPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
   const reviewId = id ? Number(id) : null;
   const reviewOpen = Number.isFinite(reviewId);
+  const preferredLibraryId = duplicateLibraryFromSearch(searchParams.toString());
 
   const [libraries, setLibraries] = useState<LibraryInfo[]>([]);
   const [libraryId, setLibraryId] = useState<number | "">("");
@@ -86,13 +94,21 @@ export function DuplicatesPage() {
       .then((payload) => {
         if (!mounted.current) return;
         setLibraries(payload.libraries);
-        if (payload.libraries[0]) setLibraryId(payload.libraries[0].id);
+        setLibraryId((current) =>
+          resolveDuplicateLibraryId({
+            libraries: payload.libraries,
+            preferredId: preferredLibraryId,
+            currentId: current
+          })
+        );
       })
       .catch((err) => {
         if (!mounted.current) return;
         setError(err instanceof Error ? err.message : "Failed to load libraries");
         setLoading(false);
       });
+    // preferredLibraryId is the landing URL only — do not re-bootstrap on later query edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function refresh(options: { silent?: boolean } = {}): Promise<DuplicateGroup[] | null> {
@@ -133,33 +149,57 @@ export function DuplicatesPage() {
   }, [reviewId]);
 
   useEffect(() => {
-    if (libraryId === "" || !reviewOpen || reviewId == null) {
+    if (!reviewOpen || reviewId == null) {
       setReviewGroup(null);
       setReviewError(null);
       setReviewLoading(false);
       return;
     }
+    if (libraryId === "" && libraries.length === 0) return;
+
     const fromList = groups.find((group) => group.id === reviewId);
     if (fromList) {
       setReviewGroup(fromList);
       setReviewLoading(false);
       setReviewError(null);
+      if (fromList.library_id && fromList.library_id !== libraryId) {
+        setLibraryId(fromList.library_id);
+      }
       return;
     }
+
+    const searchIds = duplicateLibrarySearchOrder(libraries, libraryId);
+    if (!searchIds.length) {
+      setReviewGroup(null);
+      setReviewError("This group is not in the library index.");
+      setReviewLoading(false);
+      return;
+    }
+
     let cancelled = false;
     setReviewLoading(true);
     setReviewError(null);
-    api
-      .duplicates(libraryId)
-      .then((payload) => {
+    Promise.all(
+      searchIds.map((id) =>
+        api.duplicates(id).catch((err) => {
+          return err instanceof Error ? err : new Error("Failed to load group");
+        })
+      )
+    )
+      .then((results) => {
         if (cancelled) return;
-        const found = payload.groups.find((group) => group.id === reviewId) || null;
-        setReviewGroup(found);
-        if (!found) setReviewError("This group is not in the library index.");
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setReviewError(err instanceof Error ? err.message : "Failed to load group");
+        const payloads = results.filter((row): row is Awaited<ReturnType<typeof api.duplicates>> => !(row instanceof Error));
+        const hit = findGroupInLibraries(payloads, reviewId);
+        if (hit) {
+          setReviewGroup(hit.group);
+          if (hit.libraryId !== libraryId) setLibraryId(hit.libraryId);
+          return;
+        }
+        setReviewGroup(null);
+        const firstError = results.find((row): row is Error => row instanceof Error);
+        setReviewError(
+          payloads.length === 0 && firstError ? firstError.message : "This group is not in the library index."
+        );
       })
       .finally(() => {
         if (!cancelled) setReviewLoading(false);
@@ -167,16 +207,24 @@ export function DuplicatesPage() {
     return () => {
       cancelled = true;
     };
-  }, [libraryId, reviewId, reviewOpen, groups]);
+  }, [libraryId, reviewId, reviewOpen, groups, libraries]);
+
+  useEffect(() => {
+    if (libraryId === "") return;
+    if (preferredLibraryId === libraryId) return;
+    const next = new URLSearchParams(searchParams);
+    next.set("library", String(libraryId));
+    setSearchParams(next, { replace: true });
+  }, [libraryId, preferredLibraryId, searchParams, setSearchParams]);
 
   useEffect(() => {
     if (!reviewOpen) return;
     function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") navigate("/duplicates");
+      if (event.key === "Escape") navigate(duplicatesIndexHref(libraryId));
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [reviewOpen, navigate]);
+  }, [reviewOpen, navigate, libraryId]);
 
   async function analyze() {
     if (libraryId === "" || !canReview || analyzing) return;
@@ -210,7 +258,7 @@ export function DuplicatesPage() {
   }
 
   function closeReview() {
-    navigate("/duplicates");
+    navigate(duplicatesIndexHref(libraryId));
   }
 
   const displayReviewGroup = useMemo(
@@ -223,7 +271,7 @@ export function DuplicatesPage() {
     if (group.status !== "open") setExtractedRows([]);
     await refresh({ silent: true });
     if (filter === "open" && group.status !== "open") {
-      navigate("/duplicates");
+      navigate(duplicatesIndexHref(libraryId));
     }
   }
 
@@ -379,7 +427,11 @@ export function DuplicatesPage() {
             <select
               className="ml-2 rounded-lg border border-white/10 bg-ink-950 px-3 py-1.5"
               value={libraryId}
-              onChange={(event) => setLibraryId(Number(event.target.value))}
+              onChange={(event) => {
+                const next = Number(event.target.value);
+                setLibraryId(next);
+                if (reviewOpen) navigate(duplicatesIndexHref(next));
+              }}
             >
               {libraries.map((library) => (
                 <option key={library.id} value={library.id}>
@@ -431,7 +483,7 @@ export function DuplicatesPage() {
                 <li key={group.id}>
                   <button
                     type="button"
-                    onClick={() => navigate(`/duplicates/${group.id}`)}
+                    onClick={() => navigate(duplicateReviewHref(group.id, libraryId))}
                     className="flex w-full flex-col rounded-2xl border border-white/10 bg-ink-900/70 p-4 text-left transition hover:border-accent-500/30"
                   >
                     <div className="flex flex-wrap items-center gap-2">
@@ -483,7 +535,7 @@ export function DuplicatesPage() {
         ) : reviewError ? (
           <div className="fixed inset-0 z-40 grid place-items-center bg-ink-950/65 px-4">
             <div className="w-full max-w-md rounded-2xl border border-white/10 bg-ink-900 p-5">
-              <InlineError message={reviewError} onRetry={() => navigate("/duplicates")} />
+              <InlineError message={reviewError} onRetry={() => navigate(duplicatesIndexHref(libraryId))} />
             </div>
           </div>
         ) : null

@@ -8,11 +8,16 @@ import {
   FILTERS,
   appliedLabel,
   applyPhase,
+  curationFetchLibraryId,
   isApplying,
   lastRunLabel,
+  pollForLibrary,
   pollFromUnknown,
   proposalConfidence,
   proposalRationale,
+  proposalsForLibrary,
+  resolveCurationLibrary,
+  resolveCurationLibraryId,
   statusPills,
   type CurationFilter,
   type StatusTone
@@ -147,6 +152,7 @@ export function CurationPage() {
   const canCurate = Boolean(user?.can_curate);
   const [proposals, setProposals] = useState<CurationProposal[]>([]);
   const [libraries, setLibraries] = useState<LibraryInfo[]>([]);
+  const [libraryId, setLibraryId] = useState<number | "">("");
   const [filter, setFilter] = useState<CurationFilter>("pending");
   const [selected, setSelected] = useState<number[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -156,16 +162,17 @@ export function CurationPage() {
   const mounted = useRef(true);
   const applyTicket = useRef(0);
 
+  const scoped = useMemo(() => proposalsForLibrary(proposals, libraryId), [proposals, libraryId]);
   const visible = useMemo(
-    () => (filter === "all" ? proposals : proposals.filter((proposal) => proposal.status === filter)),
-    [filter, proposals]
+    () => (filter === "all" ? scoped : scoped.filter((proposal) => proposal.status === filter)),
+    [filter, scoped]
   );
   const pendingOnFilter = filter === "pending";
   const pendingIds = pendingOnFilter
     ? visible.filter((proposal) => proposal.status === "pending").map((proposal) => proposal.id)
     : [];
-  const activeLibrary = libraries[0];
-  const poll = activeLibrary?.curation || user?.libraries?.[0]?.curation;
+  const activeLibrary = resolveCurationLibrary(libraries, libraryId);
+  const poll = pollForLibrary(libraries, libraryId, user?.libraries);
   const emptyCopy =
     filter === "pending"
       ? "No pending suggestions. Refresh after the sidecar is live — stub still works for CI."
@@ -188,6 +195,7 @@ export function CurationPage() {
       if (!mounted.current) return proposalPayload.proposals;
       setProposals(proposalPayload.proposals);
       setLibraries(mergeLibraryPoll(libraryPayload.libraries, proposalPayload.libraries));
+      setLibraryId((current) => resolveCurationLibraryId(libraryPayload.libraries, current));
       setSelected((current) =>
         current.filter((id) => proposalPayload.proposals.some((item) => item.id === id && item.status === "pending"))
       );
@@ -258,23 +266,27 @@ export function CurationPage() {
 
   async function fetchFromSidecar() {
     if (!canCurate || polling) return;
-    const libraryId = activeLibrary?.id;
-    if (!libraryId) {
+    const targetLibraryId = curationFetchLibraryId(libraries, libraryId);
+    if (!targetLibraryId) {
       setError("No library to curate");
       return;
     }
     setPolling(true);
     setError(null);
     try {
-      const payload = await api.fetchProposals(libraryId);
+      const payload = await api.fetchProposals(targetLibraryId);
       if (payload.curation && mounted.current) {
-        setLibraries((current) => mergeLibraryPoll(current, undefined, { libraryId, curation: payload.curation! }));
+        setLibraries((current) =>
+          mergeLibraryPoll(current, undefined, { libraryId: targetLibraryId, curation: payload.curation! })
+        );
       }
       await refresh({ silent: true });
     } catch (err) {
       const failedPoll = pollFromUnknown(err instanceof ApiError ? err.data.curation : null);
       if (failedPoll && mounted.current) {
-        setLibraries((current) => mergeLibraryPoll(current, undefined, { libraryId, curation: failedPoll }));
+        setLibraries((current) =>
+          mergeLibraryPoll(current, undefined, { libraryId: targetLibraryId, curation: failedPoll })
+        );
       }
       await refresh({ silent: true });
       if (mounted.current && !isPollFailure(err)) {
@@ -328,6 +340,25 @@ export function CurationPage() {
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
+        {libraries.length > 1 ? (
+          <label className="text-sm text-slate-300">
+            Library
+            <select
+              className="ml-2 rounded-lg border border-white/10 bg-ink-950 px-3 py-1.5"
+              value={libraryId}
+              onChange={(event) => {
+                setLibraryId(Number(event.target.value));
+                setSelected([]);
+              }}
+            >
+              {libraries.map((library) => (
+                <option key={library.id} value={library.id}>
+                  {library.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         {FILTERS.map((item) => (
           <CalmChip key={item.id} active={filter === item.id} onClick={() => setFilter(item.id)}>
             {item.label}

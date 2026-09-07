@@ -110,3 +110,50 @@ export function pollFromUnknown(value: unknown): CurationPollStatus | null {
     last_error: typeof row.last_error === "string" ? row.last_error : null
   };
 }
+
+export function resolveCurationLibraryId<T extends { id: number }>(
+  libraries: T[],
+  selectedId: number | ""
+): number | "" {
+  if (typeof selectedId === "number" && libraries.some((library) => library.id === selectedId)) {
+    return selectedId;
+  }
+  return libraries[0]?.id ?? "";
+}
+
+export function resolveCurationLibrary<T extends { id: number }>(
+  libraries: T[],
+  selectedId: number | ""
+): T | undefined {
+  const id = resolveCurationLibraryId(libraries, selectedId);
+  if (id === "") return undefined;
+  return libraries.find((library) => library.id === id);
+}
+
+export function curationFetchLibraryId<T extends { id: number }>(
+  libraries: T[],
+  selectedId: number | ""
+): number | null {
+  const id = resolveCurationLibraryId(libraries, selectedId);
+  return id === "" ? null : id;
+}
+
+export function proposalsForLibrary<T extends { library_id: number }>(
+  proposals: T[],
+  libraryId: number | "" | null
+): T[] {
+  if (libraryId === "" || libraryId == null) return [];
+  return proposals.filter((proposal) => proposal.library_id === libraryId);
+}
+
+export function pollForLibrary<T extends { id: number; curation?: CurationPollStatus }>(
+  libraries: T[],
+  libraryId: number | "" | null,
+  fallback: Array<{ id: number; curation?: CurationPollStatus }> = []
+): CurationPollStatus | undefined {
+  if (libraryId === "" || libraryId == null) return undefined;
+  return (
+    libraries.find((library) => library.id === libraryId)?.curation ||
+    fallback.find((library) => library.id === libraryId)?.curation
+  );
+}
