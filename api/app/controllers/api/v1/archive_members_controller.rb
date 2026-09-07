@@ -1,6 +1,8 @@
 module API
   module V1
     class ArchiveMembersController < ApplicationController
+      include ExtractsArchiveMembers
+
       def index
         model = accessible_models.includes(assets: :archive_members).find(params[:model_id])
         scope = ArchiveMember.joins(:asset).where(assets: { vibe_model_id: model.id })
@@ -86,7 +88,7 @@ module API
       private
 
       def perform_extract!(merge:)
-        ids = selected_archive_member_ids
+        ids = selected_archive_member_ids(include_route_id: true)
         raise ArgumentError, "select archive members to extract" if ids.empty?
 
         members = ArchiveMember.joins(asset: :vibe_model).where(id: ids).includes(asset: :vibe_model).to_a
@@ -103,42 +105,17 @@ module API
           raise ArgumentError, "archive members must share one library"
         end
 
-        extractor = ArchiveMemberExtractor.new(library, performed_by: current_user)
-        kwargs = {
+        result = run_extract!(
+          library,
+          merge: merge,
           archive_member_ids: ids,
+          source_ids: params[:source_ids] || params[:model_ids],
+          asset_ids: params[:asset_ids],
           target_id: extract_target_id,
           title: params[:title],
           folder_name: params[:folder_name]
-        }
-        result = if merge
-          extractor.extract_and_merge!(
-            **kwargs,
-            source_ids: params[:source_ids] || params[:model_ids],
-            asset_ids: params[:asset_ids]
-          )
-        else
-          extractor.extract!(**kwargs)
-        end
-
-        target = accessible_models.includes(:tags, :uploaded_by, :creator, assets: %i[archive_members uploaded_by])
-                                 .find(result.model.id)
-        render json: {
-          model: VibeModel.detail_payload(target, viewer: current_user),
-          assets: result.extracted,
-          extracted: result.extracted,
-          merge: result.merge&.as_api
-        }, status: :created
-      end
-
-      def selected_archive_member_ids
-        ids = Array(params[:archive_member_ids])
-        ids << params[:archive_member_id] if params[:archive_member_id].present?
-        ids << params[:id] if params[:id].present? && action_name != "show"
-        ids.map(&:to_i).reject(&:zero?)
-      end
-
-      def extract_target_id
-        params[:target_model_id].presence || params[:target_id].presence
+        )
+        render_extract(result)
       end
 
       def find_member

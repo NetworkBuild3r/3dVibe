@@ -74,6 +74,17 @@ class LibrariesOpsTest < ActionDispatch::IntegrationTest
     assert_equal 1, listed.first.dig("covers", "pending")
   end
 
+  test "GET /ops?library_id= matches GET /libraries/:id/ops" do
+    get "/api/v1/libraries/#{@library.id}/ops", headers: auth_header(@owner)
+    assert_response :success
+    member = response.parsed_body
+
+    get "/api/v1/ops", params: { library_id: @library.id }, headers: auth_header(@owner)
+    assert_response :success
+    assert_equal member, response.parsed_body
+    assert_equal @library.id, member.fetch("ops").fetch("library_id")
+  end
+
   test "viewer cannot read ops but can read scan" do
     viewer = create_user!(email: "look@example.test")
     Membership.create!(user: viewer, library: @library, role: Membership::VIEWER)

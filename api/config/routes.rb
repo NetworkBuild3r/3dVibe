@@ -10,7 +10,8 @@ Rails.application.routes.draw do
       resources :libraries, only: %i[index show create] do
         get :scan, on: :member, action: :show_scan
         post :scan, on: :member
-        get :ops, on: :member
+        # Thin wrapper: same JSON as GET /ops?library_id= (docs/thin-cut-audit.md slice 6).
+        get :ops, on: :member, to: "ops#show"
         post "duplicates/analyze", on: :member, to: "duplicates#analyze"
       end
 

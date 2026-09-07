@@ -38,6 +38,7 @@ class ArchiveMembersExtractTest < ActionDispatch::IntegrationTest
          headers: auth_header(@contributor),
          as: :json
     assert_response :created
+    assert_equal %w[assets extracted merge model], response.parsed_body.keys.sort
     extracted = response.parsed_body.fetch("extracted")
     assert_equal 1, extracted.size
     assert_equal true, extracted.first["mergeable"]

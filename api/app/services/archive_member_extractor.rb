@@ -5,6 +5,20 @@
 class ArchiveMemberExtractor
   Result = Struct.new(:model, :assets, :extracted, :merge, keyword_init: true)
 
+  # Shared HTTP body for POST /archive_members/extract* and the
+  # /duplicates/:id/extract* wrappers (those also attach group / review).
+  def self.as_api(result, model:, viewer: nil, group: nil, review: nil)
+    payload = {
+      model: VibeModel.detail_payload(model, viewer: viewer),
+      assets: result.extracted,
+      extracted: result.extracted,
+      merge: result.merge&.as_api
+    }
+    payload[:group] = group.as_api(viewer: viewer) if group
+    payload[:review] = review.as_api if review
+    payload
+  end
+
   def initialize(library, performed_by:)
     @library = library
     @user = performed_by

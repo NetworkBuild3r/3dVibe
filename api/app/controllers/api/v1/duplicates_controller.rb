@@ -1,6 +1,8 @@
 module API
   module V1
     class DuplicatesController < ApplicationController
+      include ExtractsArchiveMembers
+
       def index
         library = if params[:library_id].present?
           accessible_libraries.find(params[:library_id])
@@ -68,13 +70,15 @@ module API
         return if require_curator!(group.library)
         return unless open!(group)
 
-        result = ArchiveMemberExtractor.new(group.library, performed_by: current_user).extract!(
+        result = run_extract!(
+          group.library,
+          merge: false,
           archive_member_ids: extract_member_ids(group),
           target_id: extract_destination_id(group),
           title: params[:title],
           folder_name: params[:folder_name]
         )
-        render json: extract_payload(result, group: group), status: :created
+        render_extract(result, group: group)
       end
 
       def extract_and_merge
@@ -82,7 +86,9 @@ module API
         return if require_curator!(group.library)
         return unless open!(group)
 
-        result = ArchiveMemberExtractor.new(group.library, performed_by: current_user).extract_and_merge!(
+        result = run_extract!(
+          group.library,
+          merge: true,
           archive_member_ids: extract_member_ids(group),
           source_ids: params[:source_ids] || params[:model_ids],
           asset_ids: params.key?(:asset_ids) ? params[:asset_ids] : default_loose_asset_ids(group),
@@ -92,7 +98,7 @@ module API
         )
         review = record_review!(group, DuplicateReview::MERGE, extract_merge_payload(result))
         group.update!(status: DuplicateGroup::MERGED)
-        render json: extract_payload(result, group: group.reload, review: review), status: :created
+        render_extract(result, group: group.reload, review: review)
       end
 
       private
@@ -155,10 +161,6 @@ module API
         (ids & parent_ids).any?
       end
 
-      def extract_target_id
-        params[:target_model_id].presence || params[:target_id].presence
-      end
-
       def extract_destination_id(group)
         return extract_target_id if extract_target_id
         return if params[:folder_name].present? || params[:title].present?
@@ -183,20 +185,6 @@ module API
         group.duplicate_group_members.filter_map(&:asset_id)
       end
 
-      def extract_payload(result, group: nil, review: nil)
-        target = accessible_models.includes(:tags, :uploaded_by, :creator, assets: %i[archive_members uploaded_by])
-                                 .find(result.model.id)
-        payload = {
-          model: VibeModel.detail_payload(target, viewer: current_user),
-          assets: result.extracted,
-          extracted: result.extracted,
-          merge: result.merge&.as_api
-        }
-        payload[:group] = group.as_api(viewer: current_user) if group
-        payload[:review] = review.as_api if review
-        payload
-      end
-
       def extract_merge_payload(result)
         {
           "archive_member_ids" => Array(params[:archive_member_ids]),
@@ -208,12 +196,6 @@ module API
           "extracted" => result.extracted,
           "merge_id" => result.merge&.id
         }.compact
-      end
-
-      def selected_archive_member_ids
-        ids = Array(params[:archive_member_ids])
-        ids << params[:archive_member_id] if params[:archive_member_id].present?
-        ids.map(&:to_i).reject(&:zero?)
       end
 
       def selected_member_payloads_include_archive?
