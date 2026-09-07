@@ -164,6 +164,46 @@ class InvitesAndUploadsTest < ActionDispatch::IntegrationTest
     assert_equal contributor.display_name, uploaded.dig("uploaded_by", "display_name")
   end
 
+  test "viewer cannot finish a pending upload after a role downgrade" do
+    contributor = create_user!(email: "soon-viewer@example.test")
+    membership = Membership.create!(user: contributor, library: @library, role: Membership::CONTRIBUTOR)
+    payload = "solid leftover\nendsolid leftover\n"
+
+    post "/api/v1/uploads",
+         params: {
+           library_id: @library.id,
+           folder_name: "downgrade-dragon",
+           relative_path: "dragon.stl",
+           filename: "dragon.stl",
+           byte_size: payload.bytesize
+         },
+         headers: auth_header(contributor),
+         as: :json
+    assert_response :created
+    upload_id = response.parsed_body.dig("upload", "id")
+    incoming = @library.library_uploads.find(upload_id).incoming_path
+    assert File.exist?(incoming)
+
+    membership.update!(role: Membership::VIEWER)
+    refute contributor.reload.can_upload?(@library)
+
+    patch "/api/v1/uploads/#{upload_id}",
+          params: { offset: 0, chunk_b64: Base64.strict_encode64(payload) },
+          headers: auth_header(contributor),
+          as: :json
+    assert_response :forbidden
+    assert_equal LibraryUpload::PENDING, @library.library_uploads.find(upload_id).status
+    refute File.exist?(@root.join("downgrade-dragon/dragon.stl"))
+
+    post "/api/v1/uploads/#{upload_id}/complete",
+         headers: auth_header(contributor),
+         as: :json
+    assert_response :forbidden
+    assert_equal LibraryUpload::PENDING, @library.library_uploads.find(upload_id).reload.status
+    refute File.exist?(@root.join("downgrade-dragon/dragon.stl"))
+    assert File.exist?(incoming)
+  end
+
   test "direct upload rejects path traversal and leaves the library jail intact" do
     contributor = create_user!(email: "contrib@example.test")
     Membership.create!(user: contributor, library: @library, role: Membership::CONTRIBUTOR)

@@ -11,6 +11,23 @@ class CuratorSettingsTest < ActionDispatch::IntegrationTest
     Membership.create!(user: @viewer, library: @library, role: Membership::VIEWER)
   end
 
+  test "GET reports from_env when the sidecar would use ENV and never echoes the key" do
+    ENV["OPENAI_API_KEY"] = "sk-env-openai-settings-must-not-leak"
+    ENV["VIBE_OLLAMA_URL"] = "http://compose-ollama:11434"
+
+    get "/api/v1/curator_settings", headers: auth_header(@owner), as: :json
+    assert_response :success
+    body = response.parsed_body.fetch("curator_setting")
+    assert_equal "from_env", body["openai_api_key_status"]
+    assert_equal "missing", body["xai_api_key_status"]
+    assert_equal "http://compose-ollama:11434", body["ollama_url"]
+    refute body.key?("openai_api_key")
+    refute_includes response.body, "sk-env-openai-settings-must-not-leak"
+  ensure
+    ENV.delete("OPENAI_API_KEY")
+    ENV.delete("VIBE_OLLAMA_URL")
+  end
+
   test "owner can get default settings without a stored row" do
     get "/api/v1/curator_settings", headers: auth_header(@owner), as: :json
     assert_response :success

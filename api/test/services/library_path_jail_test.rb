@@ -63,4 +63,46 @@ class LibraryPathJailTest < ActiveSupport::TestCase
   ensure
     FileUtils.rm_rf(outside) if defined?(outside) && outside
   end
+
+  test "each_regular_file skips directory and file symlinks" do
+    FileUtils.mkdir_p(@root.join("pack/nested"))
+    File.write(@root.join("pack/keep.stl"), "keep")
+    File.write(@root.join("pack/nested/inner.stl"), "inner")
+    outside = Rails.root.join("tmp/jail-walk-#{SecureRandom.hex(4)}")
+    FileUtils.mkdir_p(outside)
+    File.write(outside.join("secret.stl"), "outside")
+    File.symlink(outside, @root.join("pack/escape-dir"))
+    File.symlink(outside.join("secret.stl"), @root.join("pack/escape.stl"))
+
+    seen = []
+    LibraryPathJail.each_regular_file(@root.join("pack")) do |_path, rel|
+      seen << rel
+    end
+
+    assert_includes seen, "keep.stl"
+    assert_includes seen, "nested/inner.stl"
+    refute_includes seen, "escape.stl"
+    refute(seen.any? { |rel| rel.include?("secret.stl") })
+    assert File.file?(outside.join("secret.stl"))
+  ensure
+    FileUtils.rm_rf(outside) if defined?(outside) && outside
+  end
+
+  test "remove_empty_tree does not walk or unlink through a directory symlink" do
+    FileUtils.mkdir_p(@root.join("pack"))
+    File.write(@root.join("pack/.DS_Store"), "junk")
+    outside = Rails.root.join("tmp/jail-empty-#{SecureRandom.hex(4)}")
+    FileUtils.mkdir_p(outside)
+    File.write(outside.join("secret.stl"), "outside")
+    File.symlink(outside, @root.join("pack/escape-dir"))
+
+    emptied = LibraryPathJail.remove_empty_tree!(@root.join("pack"), junk_names: %w[.DS_Store])
+
+    refute emptied
+    assert File.directory?(@root.join("pack"))
+    assert File.symlink?(@root.join("pack/escape-dir"))
+    assert File.file?(outside.join("secret.stl"))
+  ensure
+    FileUtils.rm_rf(outside) if defined?(outside) && outside
+  end
 end

@@ -96,11 +96,9 @@ class CurationApplier
     return { ok: false, error: "target_missing" } unless target_dir.directory?
 
     moved = []
-    source_dir.find do |path|
-      next unless path.file?
+    LibraryPathJail.each_regular_file(source_dir) do |path, rel|
       next if JUNK_NAMES.include?(path.basename.to_s)
 
-      rel = path.relative_path_from(source_dir).to_s
       dest = @jail.join(target.folder_name, "#{source.folder_name}/#{rel}")
       FileUtils.mkdir_p(dest.dirname)
       FileUtils.mv(path.to_s, dest.to_s)
@@ -218,21 +216,7 @@ class CurationApplier
   end
 
   def remove_empty_tree!(dir)
-    return false unless dir.directory?
-
-    dir.children.each do |child|
-      if child.directory?
-        remove_empty_tree!(child)
-      elsif JUNK_NAMES.include?(child.basename.to_s)
-        child.unlink
-      end
-    end
-    return false unless dir.empty?
-
-    dir.rmdir
-    true
-  rescue Errno::ENOTEMPTY, Errno::ENOENT
-    false
+    LibraryPathJail.remove_empty_tree!(dir, junk_names: JUNK_NAMES)
   end
 
   def record_success(result)
