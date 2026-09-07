@@ -272,6 +272,61 @@ class CurationSidecarTest < ActiveSupport::TestCase
     assert_equal "openai", @library.reload.last_provider
   end
 
+  test "unknown env provider fails the poll instead of silently stubbing" do
+    ENV["VIBE_CURATOR_PROVIDER"] = "gemini"
+    sidecar = CurationSidecar.new(@library, endpoint: "http://127.0.0.1:1", token: "secret")
+
+    error = assert_raises(CurationHttpClient::Error) { sidecar.ingest_remote! }
+    assert_match(/unknown curator provider "gemini"/, error.message)
+    assert_match(/stub\|ollama\|xai\|openai\|anthropic/, error.message)
+
+    @library.reload
+    assert_match(/gemini/, @library.last_error)
+    assert @library.last_polled_at.present?
+    assert_equal "gemini", sidecar.catalog.dig(:curator_runtime, :provider)
+    assert @library.curation_proposals.none?
+  ensure
+    ENV.delete("VIBE_CURATOR_PROVIDER")
+  end
+
+  test "stub mode still works when env provider is unknown" do
+    ENV["VIBE_CURATOR_PROVIDER"] = "gemini"
+    sidecar = CurationSidecar.new(@library, endpoint: "stub")
+    records = sidecar.ingest_remote!
+    assert records.any?
+    assert_equal "stub", @library.reload.last_provider
+    assert_nil @library.last_error
+  ensure
+    ENV.delete("VIBE_CURATOR_PROVIDER")
+  end
+
+  test "sidecar vision_skipped is recorded as last_error without dropping proposals" do
+    body = {
+      provider: "xai",
+      vision_skipped: true,
+      vision_skip_reason: "ready_covers_unusable",
+      proposals: [
+        {
+          kind: "tag",
+          summary: "From HTTP",
+          sidecar_ref: "http:tag:vision-skip",
+          payload: { tag: "remote", folder_name: "alpha-one" }
+        }
+      ]
+    }
+    @http = MiniCuratorServer.new(JSON.generate(body), provider_header: "xai")
+    port = @http.start
+
+    sidecar = CurationSidecar.new(@library, endpoint: "http://127.0.0.1:#{port}", token: "secret", provider_hint: "xai")
+    records = sidecar.ingest_remote!
+    assert_equal 1, records.size
+    assert_equal "From HTTP", records.first.summary
+    @library.reload
+    assert_equal "xai", @library.last_provider
+    assert_equal "vision skipped: ready_covers_unusable", @library.last_error
+    assert @library.last_polled_at.present?
+  end
+
   test "payload_with_hints copies optional keys without inventing" do
     payload = CurationSidecar.payload_with_hints(
       "kind" => "tag",
