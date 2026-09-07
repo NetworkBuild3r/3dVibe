@@ -679,6 +679,8 @@ HITL only. Rails never auto-approves and never silently deletes NFS files. `VIBE
       "byte_size": 1200,
       "creator": { "id": 3, "slug": "mz4250", "name": "Mz4250" },
       "cover_status": "ready",
+      "cover_url": "/covers/12.webp",
+      "cover_lqip_url": "/covers/12.lqip.webp",
       "mesh_count": 1,
       "archive_count": 1,
       "has_archives": true,
@@ -688,7 +690,9 @@ HITL only. Rails never auto-approves and never silently deletes NFS files. `VIBE
 }
 ```
 
-Existing keys stay stable. New model fields: `creator` (`{ id, slug, name }` or `null`), `cover_status` (`missing` \| `pending` \| `ready` \| `failed`), `mesh_count`, `archive_count`, `has_archives`, `sample_paths` (up to 5 jail-relative asset paths — hints only). New library fields: `creators_index` (budgeted, top 50 by model count), `provider_hint`, and request-scoped `curator_runtime` (POST body only).
+Existing keys stay stable. New model fields: `creator` (`{ id, slug, name }` or `null`), `cover_status` (`missing` \| `pending` \| `ready` \| `failed`), optional `cover_url` / `cover_lqip_url` when `cover_status=ready` (same card fields, present values only), `mesh_count`, `archive_count`, `has_archives`, `sample_paths` (up to 5 jail-relative asset paths — hints only). New library fields: `creators_index` (budgeted, top 50 by model count), `provider_hint`, and request-scoped `curator_runtime` (POST body only).
+
+**Rendering bind.** Prefer `cover_lqip_url` when present, else `cover_url`; omit both when `cover_status` is missing/pending/failed (text-only fallback).
 
 Response:
 
