@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   API_KEY_STATUSES,
   CURATOR_KEY_FIELDS,
+  CURATOR_KEY_PANELS,
   CURATOR_KEY_PROVIDERS,
+  CURATOR_KEY_STATUS_FIELDS,
   CURATOR_PROVIDERS,
   DEFAULT_OLLAMA_MODEL,
   OLLAMA_DEFAULT_HINT,
@@ -12,6 +14,10 @@ import {
   canClearStoredKey,
   canManageCuratorSettings,
   clearKeyConfirm,
+  curatorKeyEndpoint,
+  curatorKeyPanel,
+  curatorKeyPanelFor,
+  curatorKeyPutBody,
   defaultOllamaModelInput,
   isApiKeyStatus,
   isCuratorKeyProvider,
@@ -46,6 +52,43 @@ describe("curator settings providers", () => {
       xai: "xai_api_key",
       openai: "openai_api_key",
       anthropic: "anthropic_api_key"
+    });
+    expect(Object.keys(CURATOR_KEY_PANELS)).toEqual([...CURATOR_KEY_PROVIDERS]);
+  });
+
+  it("table-drives status fields, set/clear paths, and labels from one provider map", () => {
+    expect(CURATOR_KEY_PANELS).toEqual({
+      xai: { id: "xai", label: "xAI", field: "xai_api_key", statusField: "xai_api_key_status" },
+      openai: {
+        id: "openai",
+        label: "OpenAI",
+        field: "openai_api_key",
+        statusField: "openai_api_key_status"
+      },
+      anthropic: {
+        id: "anthropic",
+        label: "Anthropic",
+        field: "anthropic_api_key",
+        statusField: "anthropic_api_key_status"
+      }
+    });
+
+    for (const id of CURATOR_KEY_PROVIDERS) {
+      const panel = curatorKeyPanel(id);
+      expect(CURATOR_KEY_FIELDS[id]).toBe(panel.field);
+      expect(CURATOR_KEY_STATUS_FIELDS[id]).toBe(panel.statusField);
+      expect(curatorKeyEndpoint(id)).toBe(`/curator_settings/${panel.field}`);
+      expect(curatorKeyPutBody(id, "sk-test")).toEqual({ [panel.field]: "sk-test" });
+      expect(providerLabel(id)).toBe(panel.label);
+      expect(PROVIDER_OPTIONS.find((option) => option.id === id)?.label).toBe(panel.label);
+      expect(curatorKeyPanelFor(id)).toBe(panel);
+    }
+
+    expect(curatorKeyPanelFor("ollama")).toBeNull();
+    expect(curatorKeyPanelFor("stub")).toBeNull();
+    expect(curatorKeyEndpoint("openai")).toBe("/curator_settings/openai_api_key");
+    expect(curatorKeyPutBody("anthropic", "sk-anthropic")).toEqual({
+      anthropic_api_key: "sk-anthropic"
     });
   });
 
@@ -166,6 +209,26 @@ describe("parseCuratorSetting", () => {
     expect(keyStatusFor(setting, "openai")).toBe("missing");
     expect(keyStatusFor(setting, "anthropic")).toBe("missing");
     expect(keyStatusFor(null, "openai")).toBe("missing");
+  });
+
+  it("parses every table-driven status field and still strips raw keys", () => {
+    const rawStatuses = {
+      xai_api_key_status: "set",
+      openai_api_key_status: "from_env",
+      anthropic_api_key_status: "missing"
+    } as const;
+    const setting = parseCuratorSetting({
+      provider: "anthropic",
+      ...rawStatuses,
+      ...RAW_KEYS
+    });
+
+    for (const id of CURATOR_KEY_PROVIDERS) {
+      const statusField = CURATOR_KEY_PANELS[id].statusField;
+      expect(keyStatusFor(setting, id)).toBe(rawStatuses[statusField]);
+      expect(setting[statusField]).toBe(rawStatuses[statusField]);
+      expect(setting).not.toHaveProperty(CURATOR_KEY_PANELS[id].field);
+    }
   });
 
   it("keeps Backend #59 from_env on every provider and never treats it as missing", () => {

@@ -1,5 +1,6 @@
 import {
-  CURATOR_KEY_FIELDS,
+  curatorKeyEndpoint,
+  curatorKeyPutBody,
   parseCuratorSetting,
   type CuratorKeyProvider,
   type CuratorProvider
@@ -302,16 +303,14 @@ export const api = {
     return { curator_setting: parseCuratorSetting(body) };
   },
   setCuratorApiKey: async (provider: CuratorKeyProvider, apiKey: string) => {
-    const field = CURATOR_KEY_FIELDS[provider];
-    const body = await request<unknown>(`/curator_settings/${field}`, {
+    const body = await request<unknown>(curatorKeyEndpoint(provider), {
       method: "PUT",
-      body: JSON.stringify({ [field]: apiKey })
+      body: JSON.stringify(curatorKeyPutBody(provider, apiKey))
     });
     return { curator_setting: parseCuratorSetting(body) };
   },
   clearCuratorApiKey: async (provider: CuratorKeyProvider) => {
-    const field = CURATOR_KEY_FIELDS[provider];
-    const body = await request<unknown>(`/curator_settings/${field}`, { method: "DELETE" });
+    const body = await request<unknown>(curatorKeyEndpoint(provider), { method: "DELETE" });
     return { curator_setting: parseCuratorSetting(body) };
   },
   bulkProposals: (ids: number[], action: "approve" | "reject") =>
