@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { ModelCard } from "../api";
+import type { ModelCard } from "../types";
 import { cheapCoverUrl, coverStatusOf, coverVisual, fullCoverUrl, resolveCoverUrl } from "../covers";
 
 export function CoverMedia({

@@ -1,4 +1,4 @@
-import type { CurationPollStatus, CurationProposal } from "./api";
+import type { CurationPollStatus, CurationProposal } from "./types";
 import { formatRelativeTime } from "./format";
 
 export const FILTERS = [

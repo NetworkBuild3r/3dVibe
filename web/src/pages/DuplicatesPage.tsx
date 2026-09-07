@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { api, type DuplicateGroup, type DuplicateStatus, type ExtractedArchiveAsset } from "../api";
+import { api } from "../api";
+import type { DuplicateGroup, DuplicateStatus, ExtractedArchiveAsset } from "../types";
 import { useAuth } from "../auth";
 import { CalmChip } from "../components/CalmChip";
 import { CoverMedia } from "../components/CoverMedia";

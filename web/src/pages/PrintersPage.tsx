@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
-import { api, type Printer } from "../api";
+import { api } from "../api";
 import { useLibrary } from "../library";
+import type { Printer } from "../types";
 import { ProtocolChip } from "../components/PrintMeta";
 import { EmptyState, InlineError, ListSkeleton } from "../components/UiStates";
 import {

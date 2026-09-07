@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useFocusTrap } from "../focusTrap";
-import type { DuplicateGroup, DuplicateMember } from "../api";
+import type { DuplicateGroup, DuplicateMember } from "../types";
 import {
   EXTRACT_AND_MERGE_COPY,
   EXTRACT_COPY,

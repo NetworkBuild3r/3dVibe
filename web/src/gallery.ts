@@ -1,4 +1,4 @@
-import type { Creator, ModelCard } from "./api";
+import type { Creator, ModelCard } from "./types";
 
 export type GalleryDensity = "comfortable" | "compact";
 

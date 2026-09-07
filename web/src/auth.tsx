@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { api, setToken, type User } from "./api";
+import { api, setToken } from "./api";
+import type { User } from "./types";
 
 type RedeemFields = { email: string; password: string; display_name: string };
 

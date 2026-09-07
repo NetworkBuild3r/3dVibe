@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { api, type Creator, type ModelCard } from "../api";
+import { api } from "../api";
+import type { Creator, ModelCard } from "../types";
 import { CreatorHeader } from "../components/CreatorHeader";
 import { CreatorListItem } from "../components/CreatorListItem";
 import { CreatorPackCard } from "../components/CreatorPackCard";

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { CurationPollStatus, CurationProposal } from "./api";
+import type { CurationPollStatus, CurationProposal } from "./types";
 import {
   curationFetchLibraryId,
   pollForLibrary,

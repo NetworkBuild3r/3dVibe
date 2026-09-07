@@ -1,4 +1,4 @@
-import type { Asset, PrintJob, Printer, User } from "./api";
+import type { Asset, PrintJob, Printer, User } from "./types";
 
 export const JOB_FILTERS = [
   { id: "all", label: "All" },

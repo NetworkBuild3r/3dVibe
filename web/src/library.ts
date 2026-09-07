@@ -2,7 +2,8 @@
 // Libraries (scan console) / Dupes pickers. See docs/thin-cut-audit.md (Frontend DRY).
 // Selection persistence matches today's pages; this is not the "one implicit library" demote.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type LibraryInfo, type User } from "./api";
+import { api } from "./api";
+import type { LibraryInfo, User } from "./types";
 
 export type LibraryId = number | "";
 
