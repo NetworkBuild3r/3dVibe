@@ -156,6 +156,49 @@ class GenerateCoverJobTest < ActionDispatch::IntegrationTest
     assert_equal old_mtime.to_i, File.mtime(dest).to_i
   end
 
+  test "lqip backfill keeps a ready cover when the NFS source is gone" do
+    GenerateCoverJob.perform_now(image_payload)
+    dest = @cover_root.join("#{@model.id}.webp")
+    lqip = @cover_root.join("#{@model.id}.lqip.webp")
+    assert File.file?(dest)
+    FileUtils.rm_f(lqip)
+    @model.update!(cover_lqip_url: nil)
+    FileUtils.rm_f(@root.join("CreatorPack/model/preview.png"))
+
+    result = GenerateCoverJob.perform_now(image_payload)
+    assert_equal :ready, result
+
+    @model.reload
+    assert_equal VibeModel::COVER_READY, @model.cover_status
+    assert_equal "/covers/#{@model.id}.webp", @model.cover_url
+    assert_equal "/covers/#{@model.id}.lqip.webp", @model.cover_lqip_url
+    assert_equal false, @model.cover_placeholder
+    assert File.file?(dest)
+    assert File.file?(lqip)
+    tiny = Vips::Image.new_from_file(lqip.to_s)
+    assert tiny.width <= 32
+    assert tiny.height <= 32
+  end
+
+  test "lqip backfill failure leaves the ready cover in place" do
+    GenerateCoverJob.perform_now(image_payload)
+    dest = @cover_root.join("#{@model.id}.webp")
+    FileUtils.rm_f(@cover_root.join("#{@model.id}.lqip.webp"))
+    @model.update!(cover_lqip_url: nil)
+    File.binwrite(dest, "not-a-webp")
+    FileUtils.rm_f(@root.join("CreatorPack/model/preview.png"))
+
+    result = GenerateCoverJob.perform_now(image_payload)
+    assert_equal :lqip_skipped, result
+
+    @model.reload
+    assert_equal VibeModel::COVER_READY, @model.cover_status
+    assert_equal "/covers/#{@model.id}.webp", @model.cover_url
+    assert_nil @model.cover_lqip_url
+    assert_equal false, @model.cover_placeholder
+    refute File.file?(@cover_root.join("#{@model.id}.lqip.webp"))
+  end
+
   test "generated cover is served at the write-back url" do
     GenerateCoverJob.perform_now(image_payload)
     get "/covers/#{@model.id}.webp"

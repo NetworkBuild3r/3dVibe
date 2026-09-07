@@ -57,6 +57,20 @@ class CoverImage
     image.webpsave(path, Q: quality, strip: true)
   end
 
+  # Best-effort LQIP from an already-written cover webp. Used when the model
+  # is ready and the source image is gone or we must not re-encode from NFS.
+  def self.write_lqip_from_cover(cover_path, dest, budget)
+    require "vips"
+    return unless cover_path && File.file?(cover_path.to_s) && dest.present?
+
+    image = Vips::Image.new_from_file(cover_path.to_s)
+    write_lqip(image, dest, budget, cover_path: cover_path)
+  rescue Vips::Error => e
+    Rails.logger.warn("[CoverImage] lqip backfill failed: #{e.message}")
+  rescue *CoverGenerator::TRANSIENT_ERRNO => e
+    Rails.logger.warn("[CoverImage] lqip backfill skipped: #{e.message}")
+  end
+
   # Best-effort tiny derivative. Cover generate already succeeded; LQIP failure
   # must not flip the model to failed. Prefer shrink-on-load of the already
   # written cover webp (budgeted, never the original NFS source).
