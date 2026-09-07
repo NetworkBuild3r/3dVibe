@@ -1,8 +1,19 @@
-import { parseCuratorSetting, type CuratorProvider } from "./curatorSettings";
+import {
+  CURATOR_KEY_FIELDS,
+  parseCuratorSetting,
+  type CuratorKeyProvider,
+  type CuratorProvider
+} from "./curatorSettings";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "/api/v1";
 
-export type { CuratorProvider, CuratorSetting, XaiApiKeyStatus } from "./curatorSettings";
+export type {
+  ApiKeyStatus,
+  CuratorKeyProvider,
+  CuratorProvider,
+  CuratorSetting,
+  XaiApiKeyStatus
+} from "./curatorSettings";
 
 export type CurationPollStatus = {
   last_polled_at: string | null;
@@ -795,6 +806,19 @@ export const api = {
         ollama_model: payload.ollama_model ?? null
       })
     });
+    return { curator_setting: parseCuratorSetting(body) };
+  },
+  setCuratorApiKey: async (provider: CuratorKeyProvider, apiKey: string) => {
+    const field = CURATOR_KEY_FIELDS[provider];
+    const body = await request<unknown>(`/curator_settings/${field}`, {
+      method: "PUT",
+      body: JSON.stringify({ [field]: apiKey })
+    });
+    return { curator_setting: parseCuratorSetting(body) };
+  },
+  clearCuratorApiKey: async (provider: CuratorKeyProvider) => {
+    const field = CURATOR_KEY_FIELDS[provider];
+    const body = await request<unknown>(`/curator_settings/${field}`, { method: "DELETE" });
     return { curator_setting: parseCuratorSetting(body) };
   },
   setCuratorXaiApiKey: async (xaiApiKey: string) => {
