@@ -23,7 +23,7 @@ class ModelCatalogFilters
     end
 
     scope = scope.where(library_id: @filters[:library_id]) if @filters[:library_id].present?
-    scope = scope.where(uploaded_by_id: @filters[:uploaded_by_id]) if @filters[:uploaded_by_id].present?
+    scope = apply_uploaded_by(scope)
 
     slug = creator_slug
     if slug.present?
@@ -62,6 +62,14 @@ class ModelCatalogFilters
   end
 
   private
+
+  def apply_uploaded_by(scope)
+    id = @filters[:uploaded_by_id]
+    return scope.none if id == UploadedByParam::NONE
+    return scope.where(uploaded_by_id: id) if id.present?
+
+    scope
+  end
 
   def creator_slug
     (@filters[:creator_slug].presence || @filters[:creator].presence).to_s.strip.downcase.presence

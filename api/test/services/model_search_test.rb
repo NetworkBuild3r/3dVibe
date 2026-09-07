@@ -127,6 +127,7 @@ class ModelSearchTest < ActiveSupport::TestCase
     assert_includes doc[:filenames], "horn.stl"
     assert_includes doc[:tags], "stl"
     assert_equal @owner.display_name, doc[:uploader]
+    assert_equal @owner.id, doc[:uploaded_by_id]
     assert doc[:has_preview]
     assert_includes doc[:kinds], "stl"
     assert_equal @horn.creator&.slug, doc[:creator_slug]
@@ -162,13 +163,35 @@ class ModelSearchTest < ActiveSupport::TestCase
     assert pending.facets["cover_status"].key?(VibeModel::COVER_PENDING) || pending.models.empty?
   end
 
+  test "postgres uploaded_by filter excludes null attribution" do
+    @horn.update!(uploaded_by: @owner)
+    @box.update!(uploaded_by: nil)
+
+    mine = ModelSearch.new(library_scope, query: "", filters: { uploaded_by_id: @owner.id }).call
+    assert_includes mine.models.map(&:id), @horn.id
+    refute_includes mine.models.map(&:id), @box.id
+
+    empty = ModelSearch.new(library_scope, query: "", filters: { uploaded_by_id: 9_999_999 }).call
+    assert_empty empty.models
+
+    unmatched = ModelSearch.new(library_scope, query: "", filters: { uploaded_by_id: UploadedByParam::NONE }).call
+    assert_empty unmatched.models
+    refute_includes unmatched.models.map(&:id), @horn.id
+  end
+
   test "meilisearch requests creator tag and cover facets" do
     client = FakeMeili.new(hits: [{ "id" => @horn.id }], total: 1)
     @horn.update!(cover_status: VibeModel::COVER_READY)
     result = ModelSearch.new(
       library_scope,
       query: "horn",
-      filters: { creator_slug: @horn.creator.slug, tags: ["stl"], has_cover: true, cover_status: "ready" },
+      filters: {
+        creator_slug: @horn.creator.slug,
+        tags: ["stl"],
+        has_cover: true,
+        cover_status: "ready",
+        uploaded_by_id: @owner.id
+      },
       client: client
     ).call
     assert_equal "meilisearch", result.engine
@@ -179,6 +202,11 @@ class ModelSearchTest < ActiveSupport::TestCase
     assert_includes client.last_filter, "tags = \"stl\""
     assert_includes client.last_filter, "has_cover = true"
     assert_includes client.last_filter, "cover_status = \"ready\""
+    assert_includes client.last_filter, "uploaded_by_id = #{@owner.id}"
+
+    none_client = FakeMeili.new(hits: [], total: 0)
+    ModelSearch.new(library_scope, query: "horn", filters: { uploaded_by_id: UploadedByParam::NONE }, client: none_client).call
+    assert_includes none_client.last_filter, "uploaded_by_id = -1"
     assert result.facets.key?("cover_status")
     assert result.facets.key?("has_cover")
   end

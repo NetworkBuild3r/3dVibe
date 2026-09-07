@@ -134,6 +134,7 @@ class LibraryScanner
     model = @library.vibe_models.find_or_initialize_by(folder_name: folder_name)
     model.title = humanize(folder_name)
     model.synopsis ||= read_synopsis(dir)
+    # Audit only. Unattributed NFS walks stay null — never invent an owner.
     model.uploaded_by ||= @uploaded_by
     model.creator ||= CreatorHint.upsert!(folder_name)
     model.save!

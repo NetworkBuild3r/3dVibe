@@ -28,6 +28,7 @@ class LibraryScannerTest < ActiveSupport::TestCase
 
     assert_equal 2, @library.vibe_models.count
     cube = @library.vibe_models.find_by!(folder_name: "cube-gauge")
+    assert_nil cube.uploaded_by_id
     assert_equal "Cube Gauge", cube.title
     assert_includes cube.synopsis, "gauge cube"
     assert cube.assets.exists?(filename: "cube.stl", kind: "stl")

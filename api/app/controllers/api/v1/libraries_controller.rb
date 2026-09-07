@@ -11,6 +11,17 @@ module API
         render json: { library: serialize(library, detail: true) }
       end
 
+      def members
+        library = accessible_libraries.find(params[:id])
+        users = User.joins(:memberships)
+                    .where(memberships: { library_id: library.id })
+                    .select("users.id, users.display_name")
+                    .order("users.display_name ASC, users.id ASC")
+        render json: {
+          members: users.map { |user| { id: user.id, display_name: user.display_name } }
+        }
+      end
+
       def show_scan
         library = accessible_libraries.find(params[:id])
         render json: library.scan_status_as_api.merge(library_id: library.id)
