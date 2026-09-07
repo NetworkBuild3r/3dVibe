@@ -14,9 +14,9 @@ Investigation only. Grounded in paths in this repo as of `fec750f` (Frontend bin
 4. **Curator ceremony is the other fat stack:** two stub proposal generators, five sidecar adapters (Xai/OpenAI nearly copy-paste), six owner key routes, and a 347-line settings page.
 5. **`README.md` is 1,030 lines** of env encyclopedia + Frontend/Rendering bind contracts + SDCP wire shapes. That is operator/onboarding tax, not product.
 6. **`docker-compose.yml` duplicates ~80 env lines** on `api` and `worker`. Same keys, same defaults.
-7. **Serializers are inline and repeated.** `detail_payload` is copied in `vibe_models_controller` and `duplicates_controller`. Cover fields are restated in `VibeModel#as_card`, `DuplicateGroup`, and `DuplicateFinder`.
-8. **`IndexVibeModelJob` is off the hot path.** `SearchIndex.enqueue` goes to `BulkIndexVibeModelsJob`. The only `perform` call is a test.
-9. **Extract/merge and ops have twin HTTP doors** (`/duplicates/:id/extract*` vs `/archive_members/extract*`; `GET /ops` vs `GET /libraries/:id/ops`). Same services underneath.
+7. **Serializers are inline and repeated.** `detail_payload` is copied in **three** controllers (`vibe_models`, `duplicates`, `archive_members`). Cover fields are restated in `VibeModel#as_card`, `DuplicateGroup`, and `DuplicateFinder`.
+8. **`IndexVibeModelJob` is off the hot path.** `SearchIndex.enqueue` goes to `BulkIndexVibeModelsJob`. The only `perform` call is a test. `FetchCurationProposalsJob` is the same shape: tests + `vibe:curate` / HTTP fetch; **not** in Sidekiq cron.
+9. **Extract/merge and ops have twin HTTP doors** (`/duplicates/:id/extract*` vs `/archive_members/extract*`; `GET /ops` vs `GET /libraries/:id/ops`). Same services underneath. SPA never calls `api.libraryOps` or `api.extractArchiveMembers`.
 10. **Do not cut path jail, HITL, NFS SoT, or shared-library visibility.** Those are already the load-bearing locks. Thin around them.
 
 ---
@@ -40,8 +40,12 @@ Priority = “how much this fights the north star,” not “delete this week.�
 | Item | Pointers | Why | Risk |
 | --- | --- | --- | --- |
 | **`IndexVibeModelJob`** | `api/app/jobs/index_vibe_model_job.rb`; only `perform_now` in `api/test/jobs/jobs_test.rb`. Hot path: `SearchIndex.enqueue` → `SearchIndexBuffer` → `BulkIndexVibeModelsJob` | Dead production enqueue. README still lists it as a peer of bulk index | Low if tests switch to `SearchIndex#upsert`. Keep `RemoveVibeModelIndexJob`. |
+| **`FetchCurationProposalsJob` unscheduled** | `api/app/jobs/fetch_curation_proposals_job.rb`; `api/config/sidekiq.yml` / initializer only cron `ScheduledScanJob` | Poll is on-demand (`POST /curation_proposals/fetch`, `vibe:curate`). Job exists for tests / manual enqueue | Low to stop listing it as a background peer. Keep the HTTP fetch path. |
 | **Legacy curator key aliases** | `web/src/api.ts` `setCuratorXaiApiKey` / `clearCuratorXaiApiKey` (generic `setCuratorApiKey` already exists); `web/src/curatorSettings.ts` deprecated `XaiApiKeyStatus` | First-provider leftover after OpenAI/Anthropic | Low. SPA already uses the generic pair. |
-| **`hasTestPrintApi`** | `web/src/prints.ts`; asserted false in `web/src/prints.test.ts` | Guards a `testPrint` client method that is not on `api` | None. Delete helper + test. |
+| **Unused SPA helpers / API methods** | `api.libraryOps`, `api.extractArchiveMembers`, `api.extractAndMergeArchiveMembers`; `covers.hasReadyCover`; `prints.canManagePrinters`; `ops.scanWhen`; `prints.hasTestPrintApi` | Grep: no production call sites (only definitions / tests) | None if you keep the HTTP routes the SPA actually uses. |
+| **Unused print adapter hooks** | `PrinterAdapters::Base#poll` / `#cancel` (`printer_adapters.rb`); `PrintDispatch::UNAVAILABLE` | Bridge only calls `submit` / `simulate_progress`. Status never assigned `unavailable` | None. Keep `#submit` + jail. |
+| **`ArchiveIndexer#stream_member`** | `api/app/services/archive_indexer.rb` | Wrapper unused; HTTP uses `ArchiveMemberStreamer` | None. |
+| **`fixture_library_root`** | `api/test/test_helper.rb` — path `api/test/fixtures/files/library` does not exist; no callers | Dead test helper | None. |
 | **`vibe:print` rake** | `api/lib/tasks/vibe.rake` task `:print` | Operator ceremony for a demoted feature | Low. CI uses HTTP + job tests. |
 | **Seeded Studio mock printer + print copy in seed output** | `api/db/seeds.rb` `printers.find_or_create_by!(name: "Studio mock")` | Fine for CI; loud for a friend-library install | Keep create-if-empty for tests; stop advertising in README/quick start. |
 | **Printers page library picker** | `web/src/pages/PrintersPage.tsx` `libraryId` + `api.libraries()` | One library | Low. Default `user.libraries[0]`. |
@@ -94,11 +98,12 @@ Proposed shared modules and the call sites to merge. Prefer extract-on-next-touc
 
 | Shared module | Merge these | Notes |
 | --- | --- | --- |
-| **`VibeModel.detail_payload(model, viewer:)`** (next to existing `card_payloads` / `as_card` in `api/app/models/vibe_model.rb`) | `API::V1::VibeModelsController#detail_payload`; `API::V1::DuplicatesController#detail_payload` (byte-identical asset hash) | First, cheapest DRY. |
+| **`VibeModel.detail_payload(model, viewer:)`** (next to existing `card_payloads` / `as_card` in `api/app/models/vibe_model.rb`) | `VibeModelsController#detail_payload`; `DuplicatesController#detail_payload`; `ArchiveMembersController#detail_payload` (same asset hash + `mergeable: true`) | First, cheapest DRY. Three copies, not two. |
 | **`DuplicateMemberPresenter`** (or methods on `DuplicateGroup`) | `DuplicateGroup#serialize_loose_member` / `#serialize_archive_member` / `#serialize_asset`; `DuplicateFinder#serialize_asset` / `#serialize_archive_member` | Finder is analyze-time (no `cover_*`); group is API. Share the identity fields; add covers only in `as_api`. |
 | **`ServiceToken.authorized?(request, env_key:, header:)`** | `ApplicationController#cover_authorized?` / `#curator_authorized?` / `#geometry_authorized?` (same Bearer + `X-*-Token` + `secure_compare`) | Three copies, three env vars. Do not merge the **tokens** — only the check. |
 | **`JobBudget` (clock, `exhausted?`, `reason`)** | `ScanBudget`, `DuplicateBudget`; `GeometryBudget` is a cousin (verts/bytes) | Shared monotonic clock + “0 = unlimited”. Keep domain caps. |
-| **`CurationStub` one implementation** | `api/app/services/curation_stub_proposals.rb` (~107 lines); `curator/stub_proposals.rb` (~119 lines) | Same refs (`stub:tag:…`, `*-curated`, `*-shelf`, `stub:organize:fixture`). Rails in-process stub is the CI default (`VIBE_CURATOR_URL=stub`). Sidecar stub is profile `curator`. Extract a tiny shared file **or** make Rails HTTP to sidecar in all non-test envs and keep one stub. |
+| **`CurationStub` one implementation** | `api/app/services/curation_stub_proposals.rb` (~107 lines); `curator/stub_proposals.rb` (~119 lines); **third variant** in `api/db/seeds.rb` (`stub:tag-calibration`, `stub:organize-kits`, `stub:merge-review`) | Same refs (`stub:tag:…`, `*-curated`, `*-shelf`, `stub:organize:fixture`). Rails in-process stub is the CI default (`VIBE_CURATOR_URL=stub`). Sidecar stub is profile `curator`. Seeds are demo rows, not the contract. Extract a tiny shared file **or** make Rails HTTP to sidecar in all non-test envs and keep one stub. |
+| **One curator settings JSON** | `CuratorSettingsController#show` → `CuratorRuntime.as_api`; `#update` / key PUT → `CuratorSetting#as_api` | Overlapping fields, two builders | Low. Show should stay “effective” (DB + ENV); update can return the same shape. |
 | **`ArchiveMemberExtractor` response helper** | `DuplicatesController#extract_payload`; `ArchiveMembersController` extract JSON | Same `{ model, assets, extracted, merge }`. |
 | **`Writeback` token + stringify** | `CoverWriteback` / `GeometryWriteback` constructors | Small. Optional. |
 | **Test: `create_library!(owner:, contributor:, viewer:)`** | Every `api/test/integration/*` repeats `Library.create!` + three `Membership.create!` | `api/test/test_helper.rb` already has `create_owner!`, `create_user!`, `auth_header`, mesh writers. Add the pile helper; do not rewrite all tests in one PR. |
@@ -110,8 +115,11 @@ Proposed shared modules and the call sites to merge. Prefer extract-on-next-touc
 | **`web/src/types.ts` (or `api/types.ts`)** | Types currently living in `web/src/api.ts` (1,077 lines: ~520 types + client) | Domain modules (`prints.ts`, `gallery.ts`, `covers.ts`, `curatorSettings.ts`, `duplicates.ts`, `ops.ts`, `archives.ts`, `creators.ts`) already exist and re-import types from `api.ts`. Split types first; keep `api` as the `request()` + methods object. |
 | **`useLibrary()`** | `ScanButton`, `LibrariesPage`, `PrintersPage`, `InvitesPage`, `UploadPage`, `OpsStrip`, `DuplicatesPage` each fetch `/libraries` and pick `[0]` | One hook: `{ library, scan, canScan }`. |
 | **Creator chrome** | `CreatorHeader.tsx`, `CreatorListItem.tsx`, `CreatorPackCard.tsx` | All: `CoverMosaic` + `modelCountOf` + `modelCountLabel`. Keep three layouts; extract `<CreatorIdentity covers size />`. |
-| **Status tone** | `LibrariesPage` `statusTone` / `formatWhen`; `prints.ts` `jobStatusClass`; curation/duplicates chips | Optional `format.ts` already has `formatBytes` / `formatRelativeTime`. Add `formatWhen` + scan/job tone maps there. |
-| **Drop unused print API aliases** | `setCuratorXaiApiKey`; `hasTestPrintApi` | See P1 cuts. |
+| **Status tone / time** | `LibrariesPage` `statusTone` / `formatWhen`; `duplicates.ts` `formatWhen`; `prints.ts` `jobStatusClass`; curation chips | `format.ts` already has `formatBytes` / `formatRelativeTime`. Add `formatWhen` + scan/job tone maps there. |
+| **`useRefresh` (optional)** | Page-local `refresh({ silent })` + poll in `PrintsPage`, `LibrariesPage`, `OpsStrip`, `CurationPage`, `DuplicatesPage` | One hook after `useLibrary()`. Do not invent a data-fetch framework. |
+| **Drop unused print / ops aliases** | `setCuratorXaiApiKey`; `hasTestPrintApi`; `libraryOps`; unused cover/print helpers above | See P1 cuts. |
+| **Preview error copy** | `archives.viewerStatusCopy` / `isPreviewUnavailable`; `meshViewer.meshViewerStatusCopy` / `isMeshBudgetError` | Three paths to “can’t preview”. One mapper. |
+| **Rename `meshViewer.ts`** | Collides with `MeshViewer.tsx` | Policy file → `meshPreviewPolicy.ts`. Do **not** collapse the worker. |
 
 ### Curator / compose
 
@@ -224,8 +232,11 @@ Small slices. Each slice should leave CI green (`api` / `web` / `curator` jobs i
 ### 10. Optional delete (only with a red-then-green test)
 
 - `IndexVibeModelJob` + README mention, after asserting `SearchIndex.enqueue` never enqueues it (already true in `search_index_test.rb` / `model_search_test.rb`).
-- `hasTestPrintApi`.
+- Unused SPA exports/methods listed in P1 (`hasTestPrintApi`, `libraryOps`, `hasReadyCover`, `canManagePrinters`, `scanWhen`, xAI key aliases).
+- `PrinterAdapters::Base#poll` / `#cancel` docs-only methods; `PrintDispatch::UNAVAILABLE`; `ArchiveIndexer#stream_member`; `fixture_library_root`.
 - `setCuratorXaiApiKey` aliases once settings tests only use the generic pair.
+
+Curation is a **pillar** and is only in the avatar menu today — when demoting Prints from the rail, consider giving `/curation` that slot (contributors), not another owner settings link.
 
 ---
 
@@ -255,12 +266,17 @@ Small slices. Each slice should leave CI green (`api` / `web` / `curator` jobs i
 | `/prints`, `/printers` | Demote (owner tools) |
 | `/libraries` | Demote to scan/settings |
 
+### Print size (keep, demote chrome)
+
+~1.2k production LOC (`printer_adapters/sdcp/*`, `print_jobs_controller`, `printer.rb`, `print_dispatch.rb`, `printer_bridge.rb`) plus two SPA pages and `prints.ts`. That is a side door with a main-entrance UI. Do not delete the mock path; it is the CI proof of the jail.
+
 ### What this audit did not do
 
 - No production refactors.
 - Did not treat `IndexVibeModelJob` as proven-dead enough to delete here (tests still call `perform_now`).
-- Did not run a runtime unused-export sweep beyond grep (e.g. every `web/src` export).
+- Unused-export list is grep-based (SPA + jobs). Not a runtime coverage report.
 - Did not claim federation code exists — **none found** (no ActivityPub, no remote follows). The leftover is **multi-library + shelves naming**, not a federated protocol.
+- CI does not run compose, Redis, Meili, or the live curator container — those gaps are integration, not leftover jobs.
 
 ---
 
