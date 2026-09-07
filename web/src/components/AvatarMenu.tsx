@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth";
+import { canManageCuratorSettings } from "../curatorSettings";
 import { IconChevron } from "./Icons";
 
 export function AvatarMenu() {
@@ -55,7 +56,7 @@ export function AvatarMenu() {
           <Link to="/curation" role="menuitem" className="block px-3 py-2 text-sm text-slate-200 hover:bg-white/5" onClick={() => setOpen(false)}>
             Curation
           </Link>
-          {user.can_invite ? (
+          {canManageCuratorSettings(user) ? (
             <Link to="/settings/curator" role="menuitem" className="block px-3 py-2 text-sm text-slate-200 hover:bg-white/5" onClick={() => setOpen(false)}>
               Curator
             </Link>

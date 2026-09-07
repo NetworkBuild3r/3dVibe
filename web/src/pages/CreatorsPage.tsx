@@ -14,7 +14,8 @@ import {
   emptyCreatorsIndexCopy,
   filterCreators,
   isMissingCreatorError,
-  missingCreatorCopy
+  missingCreatorCopy,
+  nextCreatorHasMore
 } from "../creators";
 
 export function CreatorsPage() {
@@ -102,10 +103,14 @@ export function CreatorsPage() {
       setMosaics((current) => ({ ...current, [page.creator.slug]: page.models.slice(0, 4) }));
       const next = page.next_cursor ? String(page.next_cursor) : null;
       cursorRef.current = next;
-      hasMoreRef.current = Boolean(next);
-      setHasMore(Boolean(next));
+      const more = nextCreatorHasMore({ ok: true, hasMore: Boolean(next) });
+      hasMoreRef.current = more;
+      setHasMore(more);
     } catch (err) {
       if (ticket !== requestRef.current) return;
+      const more = nextCreatorHasMore({ ok: false });
+      hasMoreRef.current = more;
+      setHasMore(more);
       if (isMissingCreatorError(err)) {
         setMissing(true);
         setActive(null);

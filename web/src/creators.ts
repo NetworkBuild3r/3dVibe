@@ -54,6 +54,11 @@ export function isMissingCreatorError(err: unknown): boolean {
   return message === "not_found" || /not_found|\b404\b/.test(message);
 }
 
+/** Sentinel / loadModels must stop after a failed page until Retry resets. */
+export function nextCreatorHasMore(outcome: { ok: true; hasMore: boolean } | { ok: false }): boolean {
+  return outcome.ok ? outcome.hasMore : false;
+}
+
 export function emptyCreatorsIndexCopy(query: string): {
   copy: string;
   ctaTo?: string;

@@ -11,7 +11,8 @@ import {
   missingCreatorCopy,
   modelCountLabel,
   modelCountOf,
-  mosaicSlots
+  mosaicSlots,
+  nextCreatorHasMore
 } from "./creators";
 
 const creators: Creator[] = [
@@ -68,5 +69,11 @@ describe("creator pack homes", () => {
     expect(isMissingCreatorError(new Error("not_found"))).toBe(true);
     expect(isMissingCreatorError(new Error("Request failed (404)"))).toBe(true);
     expect(isMissingCreatorError(new Error("Could not load creator"))).toBe(false);
+  });
+
+  it("halts infinite-scroll paging after a failed pack-home page", () => {
+    expect(nextCreatorHasMore({ ok: true, hasMore: true })).toBe(true);
+    expect(nextCreatorHasMore({ ok: true, hasMore: false })).toBe(false);
+    expect(nextCreatorHasMore({ ok: false })).toBe(false);
   });
 });
