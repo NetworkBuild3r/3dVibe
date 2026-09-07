@@ -21,10 +21,6 @@ export function coverVisual(model: CoverFields): CoverVisual {
   return "placeholder";
 }
 
-export function hasReadyCover(model: CoverFields) {
-  return coverVisual(model) === "image";
-}
-
 export function resolveCoverUrl(url: string): string {
   if (/^https?:\/\//i.test(url) || url.startsWith("blob:") || url.startsWith("data:")) return url;
   return url;

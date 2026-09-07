@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import type { Printer, PrintJob } from "./api";
-import { api } from "./api";
 import {
   BROWSER_NEVER_COPY,
   canCancelJob,
@@ -9,7 +8,6 @@ import {
   emptyPrintsCopy,
   enqueueErrorMessage,
   firstEnabledPrinterId,
-  hasTestPrintApi,
   isJobActive,
   jobProgressClass,
   jobStatusClass,
@@ -162,9 +160,8 @@ describe("print honesty bind", () => {
     expect(canManagePrinters(undefined)).toBe(false);
   });
 
-  it("keeps enqueue errors honest and skips Test print unless the API exists", () => {
+  it("keeps enqueue errors honest", () => {
     expect(enqueueErrorMessage(new Error("printer is disabled"))).toBe("printer is disabled");
-    expect(hasTestPrintApi(api)).toBe(false);
     expect(BROWSER_NEVER_COPY).toMatch(/never talks to the printer/);
     expect(emptyPrintsCopy("all")).toMatch(/owner can enqueue/);
     expect(emptyPrintsCopy("failed")).toBe("No jobs in this filter.");

@@ -11,8 +11,7 @@ export type {
   ApiKeyStatus,
   CuratorKeyProvider,
   CuratorProvider,
-  CuratorSetting,
-  XaiApiKeyStatus
+  CuratorSetting
 } from "./curatorSettings";
 
 export type CurationPollStatus = {
@@ -587,7 +586,6 @@ export const api = {
   libraries: () => request<{ libraries: LibraryInfo[] }>("/libraries"),
   library: (id: number | string) => request<{ library: LibraryInfo }>(`/libraries/${id}`),
   libraryScan: (id: number | string) => request<LibraryScanDetail>(`/libraries/${id}/scan`),
-  libraryOps: (id: number | string) => request<{ ops: OpsSnapshot }>(`/libraries/${id}/ops`),
   ops: (libraryId?: number | string) => {
     const suffix = libraryId != null ? `?library_id=${encodeURIComponent(String(libraryId))}` : "";
     return request<{ meili?: MeiliHealth; libraries?: OpsSnapshot[]; ops?: OpsSnapshot }>(`/ops${suffix}`);
@@ -686,16 +684,6 @@ export const api = {
       `/duplicates/${id}/merge`,
       { method: "POST", body: JSON.stringify(payload) }
     ),
-  extractArchiveMembers: (payload: ArchiveExtractRequest) =>
-    request<ArchiveExtractPayload>("/archive_members/extract", {
-      method: "POST",
-      body: JSON.stringify(payload)
-    }),
-  extractAndMergeArchiveMembers: (payload: ArchiveExtractRequest) =>
-    request<ArchiveExtractPayload>("/archive_members/extract_and_merge", {
-      method: "POST",
-      body: JSON.stringify(payload)
-    }),
   extractDuplicate: (id: number, payload: ArchiveExtractRequest = {}) =>
     request<ArchiveExtractPayload>(`/duplicates/${id}/extract`, {
       method: "POST",
@@ -819,17 +807,6 @@ export const api = {
   clearCuratorApiKey: async (provider: CuratorKeyProvider) => {
     const field = CURATOR_KEY_FIELDS[provider];
     const body = await request<unknown>(`/curator_settings/${field}`, { method: "DELETE" });
-    return { curator_setting: parseCuratorSetting(body) };
-  },
-  setCuratorXaiApiKey: async (xaiApiKey: string) => {
-    const body = await request<unknown>("/curator_settings/xai_api_key", {
-      method: "PUT",
-      body: JSON.stringify({ xai_api_key: xaiApiKey })
-    });
-    return { curator_setting: parseCuratorSetting(body) };
-  },
-  clearCuratorXaiApiKey: async () => {
-    const body = await request<unknown>("/curator_settings/xai_api_key", { method: "DELETE" });
     return { curator_setting: parseCuratorSetting(body) };
   },
   bulkProposals: (ids: number[], action: "approve" | "reject") =>
