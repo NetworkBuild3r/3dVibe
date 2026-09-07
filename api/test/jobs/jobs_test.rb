@@ -125,7 +125,7 @@ class JobsTest < ActiveJob::TestCase
     model = library.vibe_models.create!(folder_name: "x", title: "X")
 
     assert_nothing_raised do
-      IndexVibeModelJob.perform_now(model.id)
+      SearchIndex.new.upsert(model)
       BulkIndexVibeModelsJob.perform_now([model.id])
       RemoveVibeModelIndexJob.perform_now(model.id)
       ReindexSearchJob.perform_now(library.id)

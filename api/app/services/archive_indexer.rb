@@ -38,12 +38,6 @@ class ArchiveIndexer
     end
   end
 
-  def stream_member(internal_path, max_bytes: self.class.stream_bytes)
-    tmp = extract_member(internal_path, max_bytes: max_bytes)
-    yield tmp
-    tmp
-  end
-
   # Stream one member into a Tempfile (fingerprint / derived preview).
   # HTTP open/preview uses ArchiveMemberStreamer#each — no whole-member buffer.
   # Pass archive_path when the caller already path-jailed the parent archive.

@@ -211,10 +211,6 @@ export function hasSettingsPayload(settings: Record<string, unknown>) {
   return Object.keys(settings).length > 0;
 }
 
-export function hasTestPrintApi(client: { testPrint?: unknown }) {
-  return typeof client.testPrint === "function";
-}
-
 export function canManagePrinters(user?: Pick<User, "can_manage_printers"> | null) {
   return Boolean(user?.can_manage_printers);
 }

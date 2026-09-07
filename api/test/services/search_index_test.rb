@@ -41,7 +41,7 @@ class SearchIndexTest < ActiveSupport::TestCase
       SearchIndex.enqueue_ids([@alpha.id, @bravo.id, @bravo])
     end
     assert_equal [@alpha.id, @bravo.id].sort, SearchIndexBuffer.pending_ids.sort
-    assert_no_enqueued_jobs only: IndexVibeModelJob
+    assert_equal ["BulkIndexVibeModelsJob"], enqueued_jobs.map { |job| job[:job].name }.uniq
   ensure
     ENV.delete("MEILI_URL")
   end

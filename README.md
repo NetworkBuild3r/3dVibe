@@ -75,7 +75,7 @@ Background jobs:
 
 - `IncrementalScanJob` — incremental NFS walk (or one folder prefix after an upload/curation apply); honors `VIBE_SCAN_*` budgets, runs on the isolated `VIBE_SCAN_QUEUE` capsule, and re-enqueues when budgeted
 - `ScheduledScanJob` — sidekiq-cron entry that queues a scan for every library (default every 6 hours); same isolated scan queue
-- `BulkIndexVibeModelsJob` / `IndexVibeModelJob` / `RemoveVibeModelIndexJob` / `ReindexSearchJob` — keep Meilisearch in sync after scan upserts, upload, destroy, curation apply, cover write-back, and creator assign. `SearchIndex.enqueue` debounces unique `model_id`s (default 2s) and flushes a bulk upsert so a cover/scan burst cannot enqueue one `IndexVibeModelJob` per card
+- `BulkIndexVibeModelsJob` / `RemoveVibeModelIndexJob` / `ReindexSearchJob` — keep Meilisearch in sync after scan upserts, upload, destroy, curation apply, cover write-back, and creator assign. `SearchIndex.enqueue` debounces unique `model_id`s (default 2s) and flushes a bulk upsert so a cover/scan burst cannot enqueue one search job per card
 - `DerivePreviewJob` — copies hot image members out of an archive into a preview cache (mesh rasterization is still a stub)
 - `FetchCurationProposalsJob` — polls the curator sidecar (or in-process stub), upserts pending `CurationProposal` rows by stable `sidecar_ref`, and writes per-library `last_polled_at` / `last_provider` / `last_error`
 - `ApplyCurationProposalJob` — applies an approved rename/move/merge (tags apply in-request)

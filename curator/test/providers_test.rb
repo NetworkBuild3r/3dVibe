@@ -175,6 +175,30 @@ class ProvidersTest < Minitest::Test
     assert_equal "openai_not_configured", error.code
   end
 
+  def test_xai_and_openai_share_openai_compat_and_read_vibe_aliases
+    assert_instance_of VibeCurator::Providers::OpenAICompat, VibeCurator::Providers.build("xai")
+    assert_instance_of VibeCurator::Providers::OpenAICompat, VibeCurator::Providers.build("openai")
+    refute_kind_of VibeCurator::Providers::OpenAICompat, VibeCurator::Providers.build("anthropic")
+    refute_kind_of VibeCurator::Providers::OpenAICompat, VibeCurator::Providers.build("ollama")
+
+    seen = nil
+    transport = fake_openai_transport(llm_payload) do |uri, request|
+      seen = [uri.to_s, request["Authorization"], JSON.parse(request.body)]
+    end
+    env = env_hash(
+      "VIBE_CURATOR_PROVIDER" => "openai",
+      "VIBE_OPENAI_API_KEY" => "vibe-openai-key",
+      "VIBE_OPENAI_BASE_URL" => "https://compat.example/v1",
+      "VIBE_OPENAI_MODEL" => "gpt-alias"
+    )
+    result = VibeCurator::Service.proposals(payload: sample_catalog, env: env, transport: transport)
+
+    assert_equal "openai", result["provider"]
+    assert_equal "https://compat.example/v1/chat/completions", seen[0]
+    assert_equal "Bearer vibe-openai-key", seen[1]
+    assert_equal "gpt-alias", seen[2]["model"]
+  end
+
   def test_anthropic_sends_messages_api_and_parses_content_blocks
     seen = nil
     transport = fake_anthropic_transport(llm_payload) do |uri, request|

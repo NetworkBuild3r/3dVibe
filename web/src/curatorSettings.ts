@@ -10,9 +10,6 @@ export const API_KEY_STATUSES = ["set", "from_env", "missing"] as const;
 
 export type ApiKeyStatus = (typeof API_KEY_STATUSES)[number];
 
-/** @deprecated Use ApiKeyStatus */
-export type XaiApiKeyStatus = ApiKeyStatus;
-
 export type KeyStatusTone = "accent" | "slate" | "amber";
 
 export const DEFAULT_OLLAMA_MODEL = "gemma4";
