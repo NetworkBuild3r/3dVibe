@@ -1,7 +1,7 @@
-# Drains pending covers in paced batches. Ready-without-LQIP is backfilled
-# on the next CoverEnqueue (scan) so a failed tiny derivative cannot loop.
-# Scan marks pending; this job is the only steady-state GenerateCoverJob
-# pump once CoverPacer defers the rest of a NAS-scale enqueue storm.
+# Drains pending covers and ready-without-LQIP in paced batches.
+# LQIP backfill does not flip ready → pending or failed (CoverGenerator
+# writes from the existing webp). Scan still marks pending; this job is
+# the steady-state GenerateCoverJob pump once CoverPacer defers overflow.
 class CoverBacklogJob < ApplicationJob
   queue_as :covers
 

@@ -104,7 +104,67 @@ class CoverPacerTest < ActiveJob::TestCase
     assert enqueued_jobs.any? { |job| job["job_class"] == "GenerateCoverJob" }
   end
 
+  test "backlog drain admits ready-without-LQIP without flipping to pending" do
+    model = mark_ready_without_lqip(create_cover_model("needs-lqip-drain", named: true))
+    CoverPacer.reset!
+    ActiveJob::Base.queue_adapter.enqueued_jobs.clear
+
+    assert CoverPacer.leftover?
+    assert_nil model.cover_lqip_url
+
+    CoverBacklogJob.perform_now
+    generate = enqueued_jobs.select { |job| job["job_class"] == "GenerateCoverJob" }
+    assert_equal 1, generate.size
+    assert_equal model.id, generate.first["arguments"].first["model_id"]
+    model.reload
+    assert_equal VibeModel::COVER_READY, model.cover_status
+    assert_nil model.cover_lqip_url
+    refute_equal VibeModel::COVER_PENDING, model.cover_status
+    refute_equal VibeModel::COVER_FAILED, model.cover_status
+  end
+
+  test "backlog drain prefers pending named covers over ready-without-LQIP" do
+    pending = create_cover_model("pending-hero", named: true)
+    ready = mark_ready_without_lqip(create_cover_model("ready-no-lqip", named: true))
+    CoverEnqueue.call(pending)
+    CoverPacer.reset!
+    ActiveJob::Base.queue_adapter.enqueued_jobs.clear
+    ENV["VIBE_COVER_BATCH"] = "1"
+    ENV["VIBE_COVER_QUEUE_MAX"] = "1"
+
+    CoverBacklogJob.perform_now
+    generate = enqueued_jobs.select { |job| job["job_class"] == "GenerateCoverJob" }
+    assert_equal 1, generate.size
+    assert_equal pending.id, generate.first["arguments"].first["model_id"]
+    assert_equal VibeModel::COVER_READY, ready.reload.cover_status
+    assert CoverPacer.leftover?
+  end
+
+  test "ready without LQIP and without cover_asset_id is not leftover" do
+    model = create_cover_model("orphan-ready", named: true)
+    model.update!(
+      cover_status: VibeModel::COVER_READY,
+      cover_url: "/covers/#{model.id}.webp",
+      cover_lqip_url: nil,
+      cover_asset_id: nil,
+      cover_placeholder: false
+    )
+    refute CoverPacer.leftover?
+  end
+
   private
+
+  def mark_ready_without_lqip(model)
+    CoverEnqueue.call(model)
+    CoverWriteback.apply!(
+      "model_id" => model.id,
+      "status" => "ready",
+      "cover_url" => "/covers/#{model.id}.webp",
+      "cover_placeholder" => false,
+      "cache_key" => model.reload.cover_cache_key
+    )
+    model.reload
+  end
 
   def create_cover_model(folder, named:, mesh_only: false)
     dir = @root.join(folder)

@@ -474,9 +474,9 @@ On scan, when a cover-candidate asset appears (image named cover/preview/thumb/h
 }
 ```
 
-`jailed_path` is jail-relative from the library root. Resolve it with `LibraryPathJail#resolve_jailed` (never load the whole file or archive into RAM). Cache key is `asset_id + mtime + content_hash` (`cover_cache_key` on the model). The same key is not re-enqueued while `pending` or `ready` with both `cover_url` and `cover_lqip_url`. A `ready` cover missing LQIP is backfilled without flipping to `pending`.
+`jailed_path` is jail-relative from the library root. Resolve it with `LibraryPathJail#resolve_jailed` (never load the whole file or archive into RAM). Cache key is `asset_id + mtime + content_hash` (`cover_cache_key` on the model). The same key is not re-enqueued while `pending` or `ready` with both `cover_url` and `cover_lqip_url`. A `ready` cover missing LQIP is backfilled from the existing webp without flipping to `pending` or `failed`.
 
-**Pacing.** `CoverPacer` admits at most `VIBE_COVER_BATCH` jobs per `VIBE_COVER_PACE_SECONDS` window and never more than `VIBE_COVER_QUEUE_MAX` `GenerateCoverJob` rows on `:covers`. Overflow stays `pending` (gallery shimmer) and `CoverBacklogJob` drains it. Drain priority: named cover/preview/thumb/hero, then other images, then mesh/archive, then recency. The default Sidekiq capsule weights `:covers` below `default` / `print` (scan already lives on `VIBE_SCAN_QUEUE`) so an enqueue storm cannot starve the API.
+**Pacing.** `CoverPacer` admits at most `VIBE_COVER_BATCH` jobs per `VIBE_COVER_PACE_SECONDS` window and never more than `VIBE_COVER_QUEUE_MAX` `GenerateCoverJob` rows on `:covers`. Overflow stays `pending` (gallery shimmer) and `CoverBacklogJob` drains it — including `ready` covers that are missing `cover_lqip_url` (LQIP backfill, still `ready`). Drain priority: named cover/preview/thumb/hero, then other images, then mesh/archive, then ready-without-LQIP, then recency. The default Sidekiq capsule weights `:covers` below `default` / `print` (scan already lives on `VIBE_SCAN_QUEUE`) so an enqueue storm cannot starve the API.
 
 Model card / index fields:
 
