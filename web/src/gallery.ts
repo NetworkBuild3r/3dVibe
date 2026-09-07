@@ -1,12 +1,14 @@
-import type { Creator, ModelCard } from "./types";
+import type { Creator, LibraryMember, ModelCard } from "./types";
 
 export type GalleryDensity = "comfortable" | "compact";
+export type UploaderSegment = "everyone" | "mine" | "friend";
 
 export type GalleryFilters = {
   q: string;
   creator: string;
   tag: string;
   hasCover: boolean;
+  uploadedBy: string;
 };
 
 export type CatalogFacets = {
@@ -23,6 +25,7 @@ export type CatalogQuery = {
   tag?: string;
   has_cover?: boolean;
   cover_status?: string;
+  uploaded_by?: string;
 };
 
 export type FacetCreator = { slug: string; name: string; count: number };
@@ -37,12 +40,15 @@ export function readGalleryFilters(params: URLSearchParams): GalleryFilters {
     q: params.get("q") || "",
     creator: params.get("creator") || "",
     tag: params.get("tag") || "",
-    hasCover: params.get("cover") === "1"
+    hasCover: params.get("cover") === "1",
+    uploadedBy: params.get("uploaded_by") || ""
   };
 }
 
-export function hasChipFilters(filters: Pick<GalleryFilters, "creator" | "tag" | "hasCover">): boolean {
-  return Boolean(filters.tag || filters.creator || filters.hasCover);
+export function hasChipFilters(
+  filters: Pick<GalleryFilters, "creator" | "tag" | "hasCover" | "uploadedBy">
+): boolean {
+  return Boolean(filters.tag || filters.creator || filters.hasCover || filters.uploadedBy);
 }
 
 export function hasActiveFilters(filters: GalleryFilters): boolean {
@@ -50,8 +56,30 @@ export function hasActiveFilters(filters: GalleryFilters): boolean {
 }
 
 /** All / Clear filters / Clear All must drop search `q` as well as chips. */
-export function galleryFilterClearParams(): Record<"q" | "tag" | "creator" | "cover", null> {
-  return { q: null, tag: null, creator: null, cover: null };
+export function galleryFilterClearParams(): Record<"q" | "tag" | "creator" | "cover" | "uploaded_by", null> {
+  return { q: null, tag: null, creator: null, cover: null, uploaded_by: null };
+}
+
+export function uploaderSegment(filters: Pick<GalleryFilters, "uploadedBy">): UploaderSegment {
+  const value = filters.uploadedBy.trim();
+  if (!value) return "everyone";
+  if (value.toLowerCase() === "me") return "mine";
+  return "friend";
+}
+
+export function friendDisplayName(
+  uploadedBy: string,
+  members: Pick<LibraryMember, "id" | "display_name">[] = []
+): string {
+  if (!/^\d+$/.test(uploadedBy.trim())) return "";
+  const id = Number(uploadedBy);
+  return members.find((member) => member.id === id)?.display_name || "";
+}
+
+export function truncateUploaderLabel(name: string, max = 18): string {
+  const trimmed = name.trim();
+  if (trimmed.length <= max) return trimmed;
+  return `${trimmed.slice(0, Math.max(1, max - 1)).trimEnd()}…`;
 }
 
 export function allChipActive(filters: GalleryFilters): boolean {
@@ -79,6 +107,7 @@ export function catalogQuery(filters: GalleryFilters): CatalogQuery {
   if (filters.creator) query.creator_slug = filters.creator;
   if (filters.tag) query.tag = filters.tag;
   if (filters.hasCover) query.has_cover = true;
+  if (filters.uploadedBy) query.uploaded_by = filters.uploadedBy;
   return query;
 }
 
@@ -89,6 +118,7 @@ export function applyCatalogParams(params: URLSearchParams, query: CatalogQuery)
   if (query.has_cover === true) params.set("has_cover", "true");
   if (query.has_cover === false) params.set("has_cover", "false");
   if (query.cover_status) params.set("cover_status", query.cover_status);
+  if (query.uploaded_by) params.set("uploaded_by", query.uploaded_by);
   return params;
 }
 
@@ -155,11 +185,29 @@ export function engineStatus(engine: string, fallback: boolean, capped: boolean)
   return capped ? `${label} · count is a floor` : label;
 }
 
-export function emptyLibraryCopy(filters: GalleryFilters): {
+export function emptyLibraryCopy(
+  filters: GalleryFilters,
+  options: { members?: Pick<LibraryMember, "id" | "display_name">[] } = {}
+): {
   copy: string;
   clearFilters: boolean;
 } {
-  if (filters.hasCover && !filters.q.trim() && !filters.tag && !filters.creator) {
+  const chipsOnly = !filters.q.trim() && !filters.tag && !filters.creator;
+  const segment = uploaderSegment(filters);
+
+  if (segment === "mine" && chipsOnly && !filters.hasCover) {
+    return {
+      copy: "Nothing you’ve uploaded yet. NFS scans without an uploader stay under Everyone.",
+      clearFilters: true
+    };
+  }
+  if (segment === "friend" && chipsOnly && !filters.hasCover) {
+    const name = friendDisplayName(filters.uploadedBy, options.members);
+    if (name) {
+      return { copy: `No uploads from ${name} yet.`, clearFilters: true };
+    }
+  }
+  if (filters.hasCover && chipsOnly && !filters.uploadedBy) {
     return {
       copy: "No ready covers yet. Unscanned or pending models stay on the checker until Rendering writes back.",
       clearFilters: true
