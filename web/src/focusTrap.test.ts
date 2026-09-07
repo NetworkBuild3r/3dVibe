@@ -28,6 +28,19 @@ describe("overlay focus trap", () => {
     expect(isEscapeKey({ key: "Escape" })).toBe(true);
   });
 
+  it("traps an open avatar menu the same way — Tab wraps, Escape closes, restore opener", () => {
+    expect(tabFocusWrap({ key: "Tab", shiftKey: false }, 5, 4)).toBe("first");
+    expect(tabFocusWrap({ key: "Tab", shiftKey: true }, 5, 0)).toBe("last");
+    expect(isEscapeKey({ key: "Escape" })).toBe(true);
+    const opener = { id: "avatar" };
+    const inside = { id: "menuitem" };
+    const outside = { id: "search" };
+    const trap = { contains: (node: object | null) => node === inside };
+    expect(shouldRestoreFocus(opener, trap, inside)).toBe(true);
+    expect(shouldRestoreFocus(opener, trap, opener)).toBe(true);
+    expect(shouldRestoreFocus(opener, trap, outside)).toBe(false);
+  });
+
   it("uses the nested confirm dialog as the trap, not the drawer behind it", () => {
     const sheet = { id: "confirm" };
     const drawer = { id: "drawer" };
