@@ -2,6 +2,8 @@ require "test_helper"
 require "fileutils"
 
 class LibrariesScanTest < ActionDispatch::IntegrationTest
+  include ActiveJob::TestHelper
+
   def setup
     @root = Rails.root.join("tmp/api-scan-#{SecureRandom.hex(4)}")
     FileUtils.mkdir_p(@root.join("horn"))
@@ -100,6 +102,16 @@ class LibrariesScanTest < ActionDispatch::IntegrationTest
     assert_nil body.dig("scan", "resume")
   ensure
     FileUtils.rm_rf(empty_root) if defined?(empty_root) && empty_root
+  end
+
+  test "scan rejects a path_prefix that escapes the library jail" do
+    post "/api/v1/libraries/#{@library.id}/scan",
+         params: { path_prefix: "../etc" },
+         headers: auth_header(@owner),
+         as: :json
+    assert_response :unprocessable_entity
+    refute @library.scan_runs.where(path_prefix: "../etc").exists?
+    assert_no_enqueued_jobs only: IncrementalScanJob
   end
 
   test "contributor and viewer can read scan status but cannot trigger" do

@@ -232,6 +232,104 @@ class InvitesAndUploadsTest < ActionDispatch::IntegrationTest
     assert contributor.reload.can_upload?(@library)
   end
 
+  test "redeeming as an existing user without a password does not steal the session" do
+    victim = create_user!(email: "victim@example.test", password: "victim-secret")
+    Membership.create!(user: victim, library: @library, role: Membership::VIEWER)
+
+    post "/api/v1/invites",
+         params: { library_id: @library.id, email: victim.email, role: Membership::CONTRIBUTOR },
+         headers: auth_header(@owner),
+         as: :json
+    assert_response :created
+    token = response.parsed_body.dig("invite", "token")
+
+    post "/api/v1/invites/#{token}/redeem",
+         params: { email: victim.email, display_name: "Not the victim" },
+         as: :json
+    assert_response :unauthorized
+    assert_equal "invalid_credentials", response.parsed_body["error"]
+    refute response.parsed_body["token"]
+    assert_equal 0, victim.access_tokens.where("expires_at > ?", Time.current).count
+    assert_equal Membership::VIEWER, victim.memberships.find_by!(library: @library).role
+
+    post "/api/v1/invites/#{token}/redeem",
+         params: { email: victim.email, password: "wrong-password" },
+         as: :json
+    assert_response :unauthorized
+    refute response.parsed_body["token"]
+
+    post "/api/v1/invites/#{token}/redeem",
+         params: { email: victim.email, password: "victim-secret" },
+         as: :json
+    assert_response :success
+    assert response.parsed_body["token"].present?
+  end
+
+  test "open invite cannot take over an existing account by omitting the password" do
+    victim = create_user!(email: "open-victim@example.test", password: "keep-me-safe")
+
+    post "/api/v1/invites",
+         params: { library_id: @library.id, role: Membership::CONTRIBUTOR },
+         headers: auth_header(@owner),
+         as: :json
+    token = response.parsed_body.dig("invite", "token")
+
+    post "/api/v1/invites/#{token}/redeem",
+         params: { email: victim.email },
+         as: :json
+    assert_response :unauthorized
+    refute response.parsed_body["token"]
+    refute victim.member_of?(@library)
+    assert victim.authenticate("keep-me-safe")
+  end
+
+  test "direct upload refuses to write through a dest symlink outside the jail" do
+    contributor = create_user!(email: "symlink-up@example.test")
+    Membership.create!(user: contributor, library: @library, role: Membership::CONTRIBUTOR)
+    FileUtils.mkdir_p(@root.join("safe-folder"))
+    outside = Rails.root.join("tmp/upload-escape-#{SecureRandom.hex(4)}.stl")
+    File.write(outside, "original-outside")
+    File.symlink(outside, @root.join("safe-folder/escape.stl"))
+    source = @root.join("source-payload.stl")
+    File.write(source, "solid planted\nendsolid planted\n")
+
+    post "/api/v1/uploads/direct",
+         params: {
+           library_id: @library.id,
+           folder_name: "safe-folder",
+           relative_path: "escape.stl",
+           file: Rack::Test::UploadedFile.new(source.to_s, "model/stl", false, original_filename: "escape.stl")
+         },
+         headers: auth_header(contributor)
+    assert_response :unprocessable_entity
+    assert_equal "original-outside", File.read(outside)
+  ensure
+    FileUtils.rm_f(outside) if defined?(outside) && outside
+  end
+
+  test "direct upload refuses a first-level folder that is a symlink out of the jail" do
+    contributor = create_user!(email: "folder-link@example.test")
+    Membership.create!(user: contributor, library: @library, role: Membership::CONTRIBUTOR)
+    outside_dir = Rails.root.join("tmp/upload-folder-escape-#{SecureRandom.hex(4)}")
+    FileUtils.mkdir_p(outside_dir)
+    File.symlink(outside_dir, @root.join("escape-folder"))
+    source = @root.join("source-folder.stl")
+    File.write(source, "solid planted\nendsolid planted\n")
+
+    post "/api/v1/uploads/direct",
+         params: {
+           library_id: @library.id,
+           folder_name: "escape-folder",
+           relative_path: "pwned.stl",
+           file: Rack::Test::UploadedFile.new(source.to_s, "model/stl", false, original_filename: "pwned.stl")
+         },
+         headers: auth_header(contributor)
+    assert_response :unprocessable_entity
+    refute File.exist?(outside_dir.join("pwned.stl"))
+  ensure
+    FileUtils.rm_rf(outside_dir) if defined?(outside_dir) && outside_dir
+  end
+
   test "owner lists invites" do
     @library.invites.create!(invited_by: @owner, email: "one@example.test", role: Membership::CONTRIBUTOR)
     get "/api/v1/invites", headers: auth_header(@owner)

@@ -116,10 +116,17 @@ module API
         if upload.byte_offset + chunk.bytesize > upload.byte_size
           -1
         else
-          File.open(upload.incoming_path, "ab") { |io| io.write(chunk) }
+          incoming = upload.incoming_path
+          jail = LibraryPathJail.new(upload.library.root_path)
+          flags = File::WRONLY | File::APPEND | File::CREAT
+          flags |= File::NOFOLLOW if defined?(File::NOFOLLOW)
+          File.open(incoming, flags) { |io| io.write(chunk) }
+          jail.assert_realpath_inside!(incoming)
           upload.update!(byte_offset: upload.byte_offset + chunk.bytesize)
           chunk.bytesize
         end
+      rescue Errno::ELOOP
+        raise ArgumentError, "path escapes library root"
       end
 
       def read_chunk
