@@ -49,6 +49,24 @@ export function hasActiveFilters(filters: GalleryFilters): boolean {
   return Boolean(filters.q.trim() || hasChipFilters(filters));
 }
 
+/** All / Clear filters / Clear All must drop search `q` as well as chips. */
+export function galleryFilterClearParams(): Record<"q" | "tag" | "creator" | "cover", null> {
+  return { q: null, tag: null, creator: null, cover: null };
+}
+
+export function allChipActive(filters: GalleryFilters): boolean {
+  return !hasActiveFilters(filters);
+}
+
+export function searchPillLabel(filters: Pick<GalleryFilters, "q">): string {
+  return filters.q.trim();
+}
+
+/** Sentinel / loadMore must stop after a failed page until the user hits Retry. */
+export function nextGalleryHasMore(outcome: { ok: true; hasMore: boolean } | { ok: false }): boolean {
+  return outcome.ok ? outcome.hasMore : false;
+}
+
 /** Text `q` uses /search (offset). Unfiltered + chip-only stay on /models (cursor). */
 export function usesSearchEndpoint(filters: GalleryFilters): boolean {
   return Boolean(filters.q.trim());

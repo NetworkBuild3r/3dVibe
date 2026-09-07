@@ -12,8 +12,10 @@ import {
   catalogQuery,
   emptyLibraryCopy,
   engineStatus,
+  galleryFilterClearParams,
   hasActiveFilters,
   headerCountLabel,
+  nextGalleryHasMore,
   readDensity,
   readGalleryFilters,
   usesSearchEndpoint,
@@ -66,7 +68,7 @@ export function GalleryPage() {
   );
 
   const clearFilters = useCallback(() => {
-    patchParams({ tag: null, creator: null, cover: null });
+    patchParams(galleryFilterClearParams());
   }, [patchParams]);
 
   const applyDensity = useCallback((next: GalleryDensity) => {
@@ -101,8 +103,9 @@ export function GalleryPage() {
         setFacets(page.facets);
         setFacetsReady(true);
         offsetRef.current = page.next_offset ?? offsetRef.current + page.models.length;
-        hasMoreRef.current = page.next_offset != null;
-        setHasMore(page.next_offset != null);
+        const more = nextGalleryHasMore({ ok: true, hasMore: page.next_offset != null });
+        hasMoreRef.current = more;
+        setHasMore(more);
         setEstimatedTotal(page.estimated_total);
         setCapped(Boolean(page.capped));
         const label = engineStatus(page.engine, page.fallback, Boolean(page.capped));
@@ -143,8 +146,9 @@ export function GalleryPage() {
         });
         const next = page.next_cursor ? String(page.next_cursor) : null;
         cursorRef.current = next;
-        hasMoreRef.current = Boolean(next);
-        setHasMore(Boolean(next));
+        const more = nextGalleryHasMore({ ok: true, hasMore: Boolean(next) });
+        hasMoreRef.current = more;
+        setHasMore(more);
         if (facetPage) {
           setFacets(facetPage.facets);
           setFacetsReady(true);
@@ -162,6 +166,9 @@ export function GalleryPage() {
       }
     } catch (err) {
       if (ticket !== requestRef.current) return;
+      const more = nextGalleryHasMore({ ok: false });
+      hasMoreRef.current = more;
+      setHasMore(more);
       setLoadError(err instanceof Error ? err.message : "Could not load models");
       setStatus("");
     } finally {

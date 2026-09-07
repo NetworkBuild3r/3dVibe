@@ -1,9 +1,11 @@
 import type { Creator, ModelCard } from "../api";
 import {
+  allChipActive,
   creatorDisplayName,
   facetCreators,
   facetTags,
-  hasChipFilters,
+  hasActiveFilters,
+  searchPillLabel,
   type CatalogFacets,
   type GalleryDensity,
   type GalleryFilters
@@ -42,7 +44,8 @@ export function GalleryFilterBar({
   const creatorOptions = facetCreators(facets, creators, models);
   const tagOptions = facetTags(facets);
   const selectedCreatorName = creatorDisplayName(filters.creator, creators, models);
-  const chipsActive = hasChipFilters(filters);
+  const filtersActive = hasActiveFilters(filters);
+  const queryLabel = searchPillLabel(filters);
 
   return (
     <div className="gallery-filter-bar">
@@ -51,7 +54,7 @@ export function GalleryFilterBar({
           <ChipRowSkeleton />
         ) : (
           <>
-            <CalmChip active={!chipsActive} onClick={onClear}>
+            <CalmChip active={allChipActive(filters)} onClick={onClear}>
               All
             </CalmChip>
             <ChipDropdown
@@ -103,8 +106,9 @@ export function GalleryFilterBar({
         {engine ? <span className="ml-auto text-xs text-slate-500">{engine}</span> : null}
       </div>
 
-      {chipsActive ? (
+      {filtersActive ? (
         <div className="mt-2 flex flex-wrap items-center gap-2">
+          {queryLabel ? <FilterPill label={queryLabel} onRemove={() => onPatch({ q: null })} /> : null}
           {filters.creator && selectedCreatorName ? (
             <FilterPill label={selectedCreatorName} onRemove={() => onPatch({ creator: null })} />
           ) : null}

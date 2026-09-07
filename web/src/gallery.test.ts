@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Creator, ModelCard } from "./api";
 import {
+  allChipActive,
   applyCatalogParams,
   catalogQuery,
   columnCount,
@@ -9,10 +10,13 @@ import {
   engineStatus,
   facetCreators,
   facetTags,
+  galleryFilterClearParams,
   hasActiveFilters,
   headerCountLabel,
+  nextGalleryHasMore,
   readDensity,
   readGalleryFilters,
+  searchPillLabel,
   usesSearchEndpoint
 } from "./gallery";
 
@@ -108,6 +112,24 @@ describe("facets and empty states", () => {
       clearFilters: true
     });
     expect(emptyLibraryCopy({ q: "", creator: "", tag: "", hasCover: true }).copy).toMatch(/ready covers/);
+  });
+
+  it("treats search q as an active filter for All / Clear", () => {
+    const searchOnly = readGalleryFilters(new URLSearchParams("q=hero"));
+    const chipsOnly = readGalleryFilters(new URLSearchParams("tag=stl"));
+    const idle = readGalleryFilters(new URLSearchParams());
+    expect(allChipActive(searchOnly)).toBe(false);
+    expect(allChipActive(chipsOnly)).toBe(false);
+    expect(allChipActive(idle)).toBe(true);
+    expect(searchPillLabel(searchOnly)).toBe("hero");
+    expect(searchPillLabel({ q: "  " })).toBe("");
+    expect(galleryFilterClearParams()).toEqual({ q: null, tag: null, creator: null, cover: null });
+  });
+
+  it("halts infinite-scroll paging after a failed page", () => {
+    expect(nextGalleryHasMore({ ok: true, hasMore: true })).toBe(true);
+    expect(nextGalleryHasMore({ ok: true, hasMore: false })).toBe(false);
+    expect(nextGalleryHasMore({ ok: false })).toBe(false);
   });
 
   it("defaults density to comfortable", () => {
