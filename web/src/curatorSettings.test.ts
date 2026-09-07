@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  API_KEY_STATUSES,
   CURATOR_KEY_FIELDS,
   CURATOR_KEY_PROVIDERS,
   CURATOR_PROVIDERS,
@@ -8,12 +9,17 @@ import {
   PROVIDER_OPTIONS,
   SETTINGS_FOOTER,
   STUB_HELPER,
+  canClearStoredKey,
   canManageCuratorSettings,
   clearKeyConfirm,
   defaultOllamaModelInput,
+  isApiKeyStatus,
   isCuratorKeyProvider,
   isCuratorProvider,
+  keyStatusChipClass,
   keyStatusFor,
+  keyStatusLabel,
+  keyStatusTone,
   parseCuratorSetting,
   providerLabel,
   providerPatchBody
@@ -160,6 +166,59 @@ describe("parseCuratorSetting", () => {
     expect(keyStatusFor(setting, "openai")).toBe("missing");
     expect(keyStatusFor(setting, "anthropic")).toBe("missing");
     expect(keyStatusFor(null, "openai")).toBe("missing");
+  });
+
+  it("keeps Backend #59 from_env on every provider and never treats it as missing", () => {
+    const setting = parseCuratorSetting({
+      curator_setting: {
+        provider: "openai",
+        xai_api_key_status: "from_env",
+        openai_api_key_status: "from_env",
+        anthropic_api_key_status: "from_env",
+        ...RAW_KEYS
+      }
+    });
+    const serialized = JSON.stringify(setting);
+
+    expect(setting.xai_api_key_status).toBe("from_env");
+    expect(setting.openai_api_key_status).toBe("from_env");
+    expect(setting.anthropic_api_key_status).toBe("from_env");
+    expect(keyStatusFor(setting, "xai")).toBe("from_env");
+    expect(keyStatusFor(setting, "openai")).toBe("from_env");
+    expect(keyStatusFor(setting, "anthropic")).toBe("from_env");
+    expect(serialized).not.toContain("sk-");
+    expect(setting).not.toHaveProperty("openai_api_key");
+  });
+
+  it("rejects unknown statuses as missing", () => {
+    expect(parseCuratorSetting({ xai_api_key_status: "wat" }).xai_api_key_status).toBe("missing");
+    expect(parseCuratorSetting({ openai_api_key_status: "" }).openai_api_key_status).toBe("missing");
+    expect(parseCuratorSetting({ anthropic_api_key_status: 1 }).anthropic_api_key_status).toBe(
+      "missing"
+    );
+    expect(isApiKeyStatus("from_env")).toBe(true);
+    expect(isApiKeyStatus("set")).toBe(true);
+    expect(isApiKeyStatus("missing")).toBe(true);
+    expect(isApiKeyStatus("env")).toBe(false);
+  });
+});
+
+describe("key status display", () => {
+  it("labels set / from_env / missing without echoing secrets", () => {
+    expect(API_KEY_STATUSES).toEqual(["set", "from_env", "missing"]);
+    expect(keyStatusLabel("set")).toBe("Key set");
+    expect(keyStatusLabel("from_env")).toBe("From env");
+    expect(keyStatusLabel("missing")).toBe("Missing");
+    expect(keyStatusTone("set")).toBe("accent");
+    expect(keyStatusTone("from_env")).toBe("slate");
+    expect(keyStatusTone("missing")).toBe("amber");
+    expect(keyStatusChipClass("from_env")).toContain("text-slate-300");
+    expect(keyStatusChipClass("from_env")).not.toContain("amber");
+    expect(keyStatusChipClass("missing")).toContain("amber");
+    expect(keyStatusChipClass("set")).toContain("accent");
+    expect(canClearStoredKey("set")).toBe(true);
+    expect(canClearStoredKey("from_env")).toBe(false);
+    expect(canClearStoredKey("missing")).toBe(false);
   });
 });
 

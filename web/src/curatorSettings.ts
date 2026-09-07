@@ -6,10 +6,14 @@ export const CURATOR_KEY_PROVIDERS = ["xai", "openai", "anthropic"] as const;
 
 export type CuratorKeyProvider = (typeof CURATOR_KEY_PROVIDERS)[number];
 
-export type ApiKeyStatus = "set" | "missing";
+export const API_KEY_STATUSES = ["set", "from_env", "missing"] as const;
+
+export type ApiKeyStatus = (typeof API_KEY_STATUSES)[number];
 
 /** @deprecated Use ApiKeyStatus */
 export type XaiApiKeyStatus = ApiKeyStatus;
+
+export type KeyStatusTone = "accent" | "slate" | "amber";
 
 export const DEFAULT_OLLAMA_MODEL = "gemma4";
 
@@ -76,9 +80,40 @@ export function clearKeyConfirm(provider: CuratorKeyProvider) {
   return `Remove stored ${providerLabel(provider)} key? Next poll falls back to env/stub.`;
 }
 
+export function isApiKeyStatus(value: unknown): value is ApiKeyStatus {
+  return typeof value === "string" && (API_KEY_STATUSES as readonly string[]).includes(value);
+}
+
 export function keyStatusFor(setting: CuratorSetting | null, provider: CuratorKeyProvider): ApiKeyStatus {
   if (!setting) return "missing";
   return setting[CURATOR_KEY_STATUS_FIELDS[provider]];
+}
+
+export function keyStatusLabel(status: ApiKeyStatus) {
+  if (status === "set") return "Key set";
+  if (status === "from_env") return "From env";
+  return "Missing";
+}
+
+export function keyStatusTone(status: ApiKeyStatus): KeyStatusTone {
+  if (status === "set") return "accent";
+  if (status === "from_env") return "slate";
+  return "amber";
+}
+
+const KEY_STATUS_CHIP_CLASS: Record<KeyStatusTone, string> = {
+  accent: "border-accent-500/40 text-accent-300",
+  slate: "border-white/10 text-slate-300",
+  amber: "border-amber-400/30 text-amber-200"
+};
+
+export function keyStatusChipClass(status: ApiKeyStatus) {
+  return KEY_STATUS_CHIP_CLASS[keyStatusTone(status)];
+}
+
+/** Only a persisted sidecar key can be cleared. ENV fallbacks stay until a stored key is saved. */
+export function canClearStoredKey(status: ApiKeyStatus) {
+  return status === "set";
 }
 
 export function defaultOllamaModelInput(setting: Pick<CuratorSetting, "provider" | "ollama_model">) {
@@ -93,7 +128,7 @@ function asOptionalText(value: unknown) {
 }
 
 function asKeyStatus(value: unknown): ApiKeyStatus {
-  return value === "set" ? "set" : "missing";
+  return isApiKeyStatus(value) ? value : "missing";
 }
 
 function settingRecord(raw: unknown): Record<string, unknown> {
