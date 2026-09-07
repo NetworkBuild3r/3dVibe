@@ -40,6 +40,7 @@ import {
   shouldShowAssetPicker
 } from "../prints";
 import { canToggleModelLike } from "../likes";
+import { canStartModelAction, nextModelActionTicket, shouldApplyModelAction } from "../modelActions";
 
 type Viewer =
   | { kind: "idle" }
@@ -75,12 +76,24 @@ export function ModelPage() {
   const [error, setError] = useState<string | null>(null);
   const [shelfError, setShelfError] = useState<string | null>(null);
   const [likeBusy, setLikeBusy] = useState(false);
+  const [shelfBusy, setShelfBusy] = useState(false);
+  const [organizeBusy, setOrganizeBusy] = useState(false);
   const likeBusyRef = useRef(false);
+  const shelfBusyRef = useRef(false);
+  const organizeBusyRef = useRef(false);
+  const shelfTicket = useRef(0);
+  const organizeTicket = useRef(0);
 
   useEffect(() => {
     setViewer({ kind: "idle" });
     likeBusyRef.current = false;
     setLikeBusy(false);
+    shelfBusyRef.current = false;
+    setShelfBusy(false);
+    organizeBusyRef.current = false;
+    setOrganizeBusy(false);
+    shelfTicket.current = nextModelActionTicket(shelfTicket.current);
+    organizeTicket.current = nextModelActionTicket(organizeTicket.current);
   }, [id]);
 
   useEffect(() => {
@@ -184,26 +197,48 @@ export function ModelPage() {
   }
 
   async function bookmarkTo(folderId: number) {
-    if (!model) return;
+    if (!model || !canStartModelAction(shelfBusyRef.current)) return;
+    const ticket = nextModelActionTicket(shelfTicket.current);
+    shelfTicket.current = ticket;
+    shelfBusyRef.current = true;
+    setShelfBusy(true);
     setShelfError(null);
     try {
       const payload = await api.addBookmark(folderId, model.id);
+      if (!shouldApplyModelAction(ticket, shelfTicket.current)) return;
       setModel({ ...model, ...payload.model });
     } catch (err) {
+      if (!shouldApplyModelAction(ticket, shelfTicket.current)) return;
       setShelfError(err instanceof Error ? err.message : "Could not save to shelf");
+    } finally {
+      if (shouldApplyModelAction(ticket, shelfTicket.current)) {
+        shelfBusyRef.current = false;
+        setShelfBusy(false);
+      }
     }
   }
 
   async function splitMerge() {
-    if (!model || !activeMerge) return;
+    if (!model || !activeMerge || !canStartModelAction(organizeBusyRef.current)) return;
+    const ticket = nextModelActionTicket(organizeTicket.current);
+    organizeTicket.current = ticket;
+    organizeBusyRef.current = true;
+    setOrganizeBusy(true);
     setOrganizeStatus("Splitting…");
     try {
       await api.splitModel(model.id, activeMerge.id);
       const payload = await api.model(model.id);
+      if (!shouldApplyModelAction(ticket, organizeTicket.current)) return;
       setModel(payload.model);
       setOrganizeStatus("Split complete — source folders are first-level again.");
     } catch (err) {
+      if (!shouldApplyModelAction(ticket, organizeTicket.current)) return;
       setOrganizeStatus(err instanceof Error ? err.message : "Split failed");
+    } finally {
+      if (shouldApplyModelAction(ticket, organizeTicket.current)) {
+        organizeBusyRef.current = false;
+        setOrganizeBusy(false);
+      }
     }
   }
 
@@ -212,7 +247,11 @@ export function ModelPage() {
   }
 
   async function mergeAssets() {
-    if (!model || selectedAssets.length < 1) return;
+    if (!model || selectedAssets.length < 1 || !canStartModelAction(organizeBusyRef.current)) return;
+    const ticket = nextModelActionTicket(organizeTicket.current);
+    organizeTicket.current = ticket;
+    organizeBusyRef.current = true;
+    setOrganizeBusy(true);
     setOrganizeStatus("Merging files…");
     try {
       const payload = await api.mergeModels({
@@ -220,10 +259,17 @@ export function ModelPage() {
         asset_ids: selectedAssets,
         title: mergeTitle || `${model.title} selection`
       });
+      if (!shouldApplyModelAction(ticket, organizeTicket.current)) return;
       setOrganizeStatus(`Moved into ${payload.model.title}`);
       setSelectedAssets([]);
     } catch (err) {
+      if (!shouldApplyModelAction(ticket, organizeTicket.current)) return;
       setOrganizeStatus(err instanceof Error ? err.message : "Merge failed");
+    } finally {
+      if (shouldApplyModelAction(ticket, organizeTicket.current)) {
+        organizeBusyRef.current = false;
+        setOrganizeBusy(false);
+      }
     }
   }
 
@@ -388,10 +434,16 @@ export function ModelPage() {
           <SaveToShelf
             folders={folders}
             folderIds={model.bookmark_folder_ids}
+            disabled={shelfBusy}
             onSave={(folderId) => void bookmarkTo(folderId)}
           />
           {activeMerge && user?.can_merge ? (
-            <button type="button" className="text-sm text-amber-200" onClick={() => void splitMerge()}>
+            <button
+              type="button"
+              className="text-sm text-amber-200 disabled:opacity-60"
+              disabled={organizeBusy}
+              onClick={() => void splitMerge()}
+            >
               Split last merge
             </button>
           ) : null}
@@ -503,7 +555,12 @@ export function ModelPage() {
                 placeholder="New model title"
                 className="rounded-lg border border-white/10 bg-ink-950 px-3 py-1.5 text-sm"
               />
-              <button type="button" className="text-sm text-accent-300" onClick={() => void mergeAssets()}>
+              <button
+                type="button"
+                className="text-sm text-accent-300 disabled:opacity-60"
+                disabled={organizeBusy}
+                onClick={() => void mergeAssets()}
+              >
                 Merge selected into one model
               </button>
             </div>
