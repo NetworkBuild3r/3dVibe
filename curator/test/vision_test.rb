@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "base64"
+require "stringio"
 require_relative "test_helper"
 
 class VisionTest < Minitest::Test
@@ -94,6 +95,8 @@ class VisionTest < Minitest::Test
 
       assert_equal "xai", result["provider"]
       assert_equal 1, result["proposals"].size
+      refute result.key?("vision_skipped")
+      refute result.key?("vision_skip_reason")
       user = seen["messages"][1]
       assert user["content"].is_a?(Array)
       assert_equal 2, user["content"].size
@@ -198,8 +201,56 @@ class VisionTest < Minitest::Test
       "XAI_API_KEY" => "xai-test-key",
       "VIBE_COVER_BASE_URL" => "http://api.test"
     )
-    VibeCurator::Service.proposals(payload: catalog, env: env, transport: transport, fetch: fetch)
+    result = VibeCurator::Service.proposals(payload: catalog, env: env, transport: transport, fetch: fetch)
     assert seen["messages"][1]["content"].is_a?(String)
+    assert_equal true, result["vision_skipped"]
+    assert_equal "ready_covers_unusable", result["vision_skip_reason"]
+  end
+
+  def test_all_ready_covers_failing_is_not_a_silent_text_only_poll
+    previous = $stderr
+    logs = StringIO.new
+    seen = nil
+    fetch = lambda { |_url, _env| nil }
+    transport = fake_openai_transport(llm_payload) do |_uri, request|
+      seen = JSON.parse(request.body)
+    end
+    catalog = catalog_with_ready_cover
+    catalog["models"][1]["cover_status"] = "ready"
+    catalog["models"][1]["cover_url"] = "/covers/13.webp"
+    env = env_hash(
+      "VIBE_CURATOR_PROVIDER" => "openai",
+      "OPENAI_API_KEY" => "openai-test-key",
+      "VIBE_COVER_BASE_URL" => "http://api.test"
+    )
+
+    $stderr = logs
+    result = VibeCurator::Service.proposals(payload: catalog, env: env, transport: transport, fetch: fetch)
+    $stderr = previous
+
+    assert seen["messages"][1]["content"].is_a?(String)
+    refute JSON.parse(seen["messages"][1]["content"]).key?("cover_image")
+    assert_equal true, result["vision_skipped"]
+    assert_equal "ready_covers_unusable", result["vision_skip_reason"]
+    assert_equal "openai", result["provider"]
+    refute_empty result["proposals"]
+    assert_includes logs.string, "ready_covers_unusable"
+    assert_includes logs.string, "[vision] skipped ready covers"
+  ensure
+    $stderr = previous if previous
+  end
+
+  def test_missing_cover_is_normal_text_only_without_vision_skipped
+    seen = nil
+    transport = fake_openai_transport(llm_payload) do |_uri, request|
+      seen = JSON.parse(request.body)
+    end
+    env = env_hash("VIBE_CURATOR_PROVIDER" => "xai", "XAI_API_KEY" => "xai-test-key")
+    result = VibeCurator::Service.proposals(payload: sample_catalog, env: env, transport: transport)
+
+    assert seen["messages"][1]["content"].is_a?(String)
+    refute result.key?("vision_skipped")
+    refute result.key?("vision_skip_reason")
   end
 
   def test_lqip_miss_uses_same_model_cover_url
@@ -449,6 +500,7 @@ class VisionTest < Minitest::Test
         fetch: fetch
       )
       assert_equal "stub", result["provider"]
+      refute result.key?("vision_skipped")
       assert_equal 0, reads
       kinds = result["proposals"].map { |item| item["kind"] }
       assert_includes kinds, "tag"

@@ -68,6 +68,7 @@ class CuratorSettingTest < ActiveSupport::TestCase
     ENV["ANTHROPIC_API_KEY"] = "env-anthropic-key"
 
     assert_equal "stub", CuratorRuntime.provider
+    assert CuratorRuntime.known_provider?
     runtime = CuratorRuntime.for_sidecar
     assert_equal "stub", runtime[:provider]
     refute runtime.key?(:xai_api_key)
@@ -121,5 +122,22 @@ class CuratorSettingTest < ActiveSupport::TestCase
     ENV.delete("XAI_API_KEY")
     ENV.delete("OPENAI_API_KEY")
     ENV.delete("ANTHROPIC_API_KEY")
+  end
+
+  test "unknown env provider is not silently stubbed" do
+    ENV["VIBE_CURATOR_PROVIDER"] = "gemini"
+    assert_equal "gemini", CuratorRuntime.provider
+    refute CuratorRuntime.known_provider?
+    assert_equal "gemini", CuratorRuntime.for_sidecar[:provider]
+    assert_match(/gemini/, CuratorRuntime.unknown_provider_message)
+    refute_equal "stub", CuratorRuntime.env_provider
+  ensure
+    ENV.delete("VIBE_CURATOR_PROVIDER")
+  end
+
+  test "blank env provider still falls back to stub" do
+    ENV.delete("VIBE_CURATOR_PROVIDER")
+    assert_equal "stub", CuratorRuntime.provider
+    assert CuratorRuntime.known_provider?("stub")
   end
 end

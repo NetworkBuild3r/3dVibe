@@ -210,6 +210,31 @@ class ProvidersTest < Minitest::Test
     assert_equal "anthropic_not_configured", error.code
   end
 
+  def test_unknown_env_provider_does_not_silently_stub
+    error = assert_raises(VibeCurator::Error) do
+      VibeCurator::Service.proposals(
+        payload: sample_catalog,
+        env: env_hash("VIBE_CURATOR_PROVIDER" => "gemini")
+      )
+    end
+    assert_equal 503, error.status
+    assert_equal "unknown_provider", error.code
+    assert_match(/gemini/, error.message)
+    refute_includes error.message, 'provider "stub"'
+  end
+
+  def test_unknown_runtime_provider_does_not_silently_stub
+    error = assert_raises(VibeCurator::Error) do
+      VibeCurator::Service.proposals(
+        payload: sample_catalog.merge("curator_runtime" => { "provider" => "grok" }),
+        env: env_hash("VIBE_CURATOR_PROVIDER" => "ollama")
+      )
+    end
+    assert_equal 503, error.status
+    assert_equal "unknown_provider", error.code
+    assert_match(/grok/, error.message)
+  end
+
   def test_curator_runtime_supplies_openai_and_anthropic_keys
     openai_seen = nil
     anthropic_seen = nil
