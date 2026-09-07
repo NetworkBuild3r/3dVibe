@@ -15,6 +15,7 @@ import { BookmarksPage } from "./pages/BookmarksPage";
 import { CreatorsPage } from "./pages/CreatorsPage";
 import { DuplicatesPage } from "./pages/DuplicatesPage";
 import { CuratorSettingsPage } from "./pages/CuratorSettingsPage";
+import { canManageCuratorSettings } from "./curatorSettings";
 
 function Guard({ children }: { children: React.ReactNode }) {
   const { user, ready } = useAuth();
@@ -28,6 +29,12 @@ function Guard({ children }: { children: React.ReactNode }) {
 function OwnerGuard({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   if (!user?.can_invite) return <Navigate to="/" replace />;
+  return <>{children}</>;
+}
+
+function CuratorSettingsGuard({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
+  if (!canManageCuratorSettings(user)) return <Navigate to="/" replace />;
   return <>{children}</>;
 }
 
@@ -60,17 +67,17 @@ export default function App() {
         <Route
           path="/settings/curator"
           element={
-            <OwnerGuard>
+            <CuratorSettingsGuard>
               <CuratorSettingsPage />
-            </OwnerGuard>
+            </CuratorSettingsGuard>
           }
         />
         <Route
           path="/settings"
           element={
-            <OwnerGuard>
+            <CuratorSettingsGuard>
               <Navigate to="/settings/curator" replace />
-            </OwnerGuard>
+            </CuratorSettingsGuard>
           }
         />
         <Route path="/prints" element={<PrintsPage />} />

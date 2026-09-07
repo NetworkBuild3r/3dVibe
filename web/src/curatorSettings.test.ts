@@ -189,11 +189,13 @@ describe("providerPatchBody", () => {
 });
 
 describe("canManageCuratorSettings", () => {
-  it("keeps the owner-only gate", () => {
+  it("is the shared gate for /settings/curator, Configure, and the Curator menu", () => {
     expect(canManageCuratorSettings({ role: "owner" })).toBe(true);
     expect(canManageCuratorSettings({ can_invite: true })).toBe(true);
-    expect(canManageCuratorSettings({ can_manage_libraries: true })).toBe(true);
-    expect(canManageCuratorSettings({ role: "viewer", can_invite: false })).toBe(false);
+    expect(canManageCuratorSettings({ can_invite: false, can_manage_libraries: true })).toBe(true);
+    expect(canManageCuratorSettings({ role: "viewer", can_invite: false, can_manage_libraries: false })).toBe(
+      false
+    );
     expect(canManageCuratorSettings(null)).toBe(false);
   });
 });

@@ -1,5 +1,6 @@
 import { DragEvent, useEffect, useMemo, useState } from "react";
 import { api, uploadFileResumable, type LibraryInfo } from "../api";
+import { fileStatusLabel, summarizeUploadBatch } from "../upload";
 
 type QueuedFile = {
   key: string;
@@ -139,9 +140,13 @@ export function UploadPage() {
     setBusy(true);
     setError(null);
     setStatus("Uploading into the shared library…");
+    const settled: QueuedFile[] = [];
     try {
       for (const item of files) {
-        if (item.status === "done") continue;
+        if (item.status === "done") {
+          settled.push({ ...item, status: "done", progress: 1 });
+          continue;
+        }
         setFiles((current) =>
           current.map((row) => (row.key === item.key ? { ...row, status: "uploading", progress: 0 } : row))
         );
@@ -157,17 +162,19 @@ export function UploadPage() {
               );
             }
           });
-          setFiles((current) =>
-            current.map((row) => (row.key === item.key ? { ...row, status: "done", progress: 1 } : row))
-          );
+          const done = { ...item, status: "done" as const, progress: 1, error: undefined };
+          settled.push(done);
+          setFiles((current) => current.map((row) => (row.key === item.key ? done : row)));
         } catch (err) {
           const message = err instanceof Error ? err.message : "upload failed";
-          setFiles((current) =>
-            current.map((row) => (row.key === item.key ? { ...row, status: "error", error: message } : row))
-          );
+          const failed = { ...item, status: "error" as const, error: message };
+          settled.push(failed);
+          setFiles((current) => current.map((row) => (row.key === item.key ? failed : row)));
         }
       }
-      setStatus("Upload finished. A scan is queued so the new files show up for everyone.");
+      const outcome = summarizeUploadBatch(settled);
+      setStatus(outcome.status);
+      setError(outcome.error);
     } finally {
       setBusy(false);
     }
@@ -253,7 +260,13 @@ export function UploadPage() {
             <li key={item.key} className="px-4 py-3 text-sm">
               <div className="flex items-center justify-between gap-3">
                 <span className="truncate text-slate-100">{item.relativePath}</span>
-                <span className="text-xs uppercase tracking-wide text-slate-500">{item.status}</span>
+                <span
+                  className={`text-xs uppercase tracking-wide ${
+                    item.status === "error" ? "text-rose-300" : "text-slate-500"
+                  }`}
+                >
+                  {fileStatusLabel(item.status)}
+                </span>
               </div>
               <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
                 <div className="h-full bg-accent-500" style={{ width: `${Math.round(item.progress * 100)}%` }} />
@@ -265,7 +278,9 @@ export function UploadPage() {
       ) : null}
 
       {error ? <p className="text-sm text-rose-300">{error}</p> : null}
-      {status ? <p className="text-sm text-slate-400">{status}</p> : null}
+      {status ? (
+        <p className={`text-sm ${error ? "text-rose-200" : "text-slate-400"}`}>{status}</p>
+      ) : null}
 
       <button
         type="button"
