@@ -321,14 +321,14 @@ class LibraryScanner
     if @path_prefix
       folder = LibraryPathJail.new(root).normalize_folder(@path_prefix)
       target = root.join(folder)
-      return target.directory? ? [folder] : []
+      return jailed_model_folder?(root, target) ? [folder] : []
     end
 
     names = []
     Dir.each_child(root.to_s) do |name|
       next if hidden_name?(name)
 
-      names << name if File.directory?(File.join(root.to_s, name))
+      names << name if jailed_model_folder?(root, File.join(root.to_s, name))
     end
     names.sort
   rescue *NFS_STAT_ERRORS => e
@@ -337,6 +337,18 @@ class LibraryScanner
 
   def hidden_name?(name)
     name.start_with?(".") || SKIP_NAMES.include?(name)
+  end
+
+  # First-level folders that are symlinks (or whose realpath leaves the
+  # library) are not models. Scanning them would index and later upload
+  # through the jail.
+  def jailed_model_folder?(root, path)
+    return false unless File.directory?(path.to_s)
+
+    LibraryPathJail.new(root).assert_realpath_inside!(path)
+    true
+  rescue ArgumentError, Errno::ENOENT, Errno::ELOOP
+    false
   end
 
   def detect_kind(path)

@@ -47,4 +47,20 @@ class LibraryPathJailTest < ActiveSupport::TestCase
     assert_raises(ArgumentError) { @jail.normalize_model_folder("kits/dragon") }
     assert_raises(ArgumentError) { @jail.normalize_model_folder("../etc") }
   end
+
+  test "join and folder_path refuse symlinks that escape the root" do
+    FileUtils.mkdir_p(@root.join("safe-folder"))
+    outside = Rails.root.join("tmp/jail-escape-#{SecureRandom.hex(4)}")
+    FileUtils.mkdir_p(outside)
+    File.write(outside.join("secret.stl"), "outside")
+    File.symlink(outside.join("secret.stl"), @root.join("safe-folder/escape.stl"))
+    File.symlink(outside, @root.join("escape-folder"))
+
+    assert_raises(ArgumentError) { @jail.join("safe-folder", "escape.stl") }
+    assert_raises(ArgumentError) { @jail.folder_path("escape-folder") }
+    assert_raises(ArgumentError) { @jail.join("escape-folder", "pwned.stl") }
+    assert_equal "outside", File.read(outside.join("secret.stl"))
+  ensure
+    FileUtils.rm_rf(outside) if defined?(outside) && outside
+  end
 end
