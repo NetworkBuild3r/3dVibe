@@ -50,8 +50,26 @@ module CuratorTestHelper
     ]
   }.freeze
 
+  FIXTURE_COVER = File.expand_path("fixtures/cover.png", __dir__).freeze
+
   def sample_catalog
     JSON.parse(JSON.generate(SAMPLE_CATALOG))
+  end
+
+  def catalog_with_ready_cover(filename: "12.lqip.webp", include_full: true)
+    catalog = sample_catalog
+    alpha = catalog["models"].find { |row| row["id"] == 12 }
+    alpha["cover_status"] = "ready"
+    alpha["cover_lqip_url"] = "/covers/#{filename}" if filename
+    alpha["cover_url"] = "/covers/12.webp" if include_full
+    catalog
+  end
+
+  def cover_root_env(root, overrides = {})
+    FileUtils.mkdir_p(root)
+    FileUtils.cp(FIXTURE_COVER, File.join(root, "12.lqip.webp"))
+    FileUtils.cp(FIXTURE_COVER, File.join(root, "12.webp")) unless File.file?(File.join(root, "12.webp"))
+    env_hash({ "VIBE_COVER_ROOT" => root }.merge(overrides))
   end
 
   def env_hash(overrides = {})

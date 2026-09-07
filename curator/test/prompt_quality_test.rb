@@ -15,6 +15,8 @@ class PromptQualityTest < Minitest::Test
     assert_includes text, "creators_index"
     assert_includes text, "sample_paths"
     assert_includes text, "has_archives"
+    assert_includes text, "Cover image"
+    assert_includes text, "cover_lqip_url"
     assert_includes text, "folder_name"
     assert_includes text, "At most 8 proposals"
     assert_includes text, "at most 3 per kind"

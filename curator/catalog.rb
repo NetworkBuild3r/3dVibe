@@ -68,7 +68,8 @@ module VibeCurator
       folder = data["folder_name"].to_s
       sample = Array(data["sample_paths"]).map { |path| jail_hint(path, root) }.compact.first(5)
       archive_count = int_or_nil(data["archive_count"])
-      {
+      status = normalize_cover(data["cover_status"])
+      row = {
         "id" => data["id"],
         "folder_name" => folder,
         "title" => data["title"].to_s,
@@ -76,12 +77,21 @@ module VibeCurator
         "asset_count" => int_or_nil(data["asset_count"]),
         "byte_size" => int_or_nil(data["byte_size"]),
         "creator" => normalize_creator(data["creator"]),
-        "cover_status" => normalize_cover(data["cover_status"]),
+        "cover_status" => status,
         "mesh_count" => int_or_nil(data["mesh_count"]),
         "archive_count" => archive_count,
         "has_archives" => truthy?(data["has_archives"]) || archive_count.to_i.positive?,
         "sample_paths" => sample
       }
+      # Ready covers only — same card URLs Rails #42 sends. Live vision
+      # prefers LQIP, else cover. Missing/pending/failed stay text-only.
+      if status == "ready"
+        url = normalize_cover_url(data["cover_url"])
+        lqip = normalize_cover_url(data["cover_lqip_url"])
+        row["cover_url"] = url if url
+        row["cover_lqip_url"] = lqip if lqip
+      end
+      row
     end
 
     def enrich_from_disk(model, root)
@@ -140,6 +150,17 @@ module VibeCurator
     def normalize_cover(value)
       name = value.to_s.strip.downcase
       COVER_STATUSES.include?(name) ? name : nil
+    end
+
+    # Card URLs only. Reject NFS / mesh paths so vision cannot slurp a raw file.
+    def normalize_cover_url(value)
+      text = value.to_s.strip
+      return if text.empty?
+      return text if text.start_with?("data:image/")
+      return text if text.match?(/\Ahttps?:\/\//i)
+      return text if text.match?(%r{\A/covers/[0-9]+(?:\.lqip)?\.webp\z})
+
+      nil
     end
 
     def jail_hint(path, root)
