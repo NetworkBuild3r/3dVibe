@@ -17,6 +17,9 @@ module VibeCurator
   DEFAULT_INFER_TIMEOUT = 60
   DEFAULT_MAX_PER_KIND = 3
   DEFAULT_KIND_PRIORITY = %w[merge organize tag rename move].freeze
+  DEFAULT_VISION_MAX_BYTES = 250_000
+  DEFAULT_VISION_MAX_PX = 512
+  DEFAULT_VISION_TIMEOUT = 3
   # Shape injected by Rails CuratorRuntime.for_sidecar (PR #23). GET /proposals
   # must not carry these on the query string.
   RUNTIME_FIELDS = %w[provider ollama_url ollama_model xai_api_key].freeze
@@ -131,6 +134,19 @@ module VibeCurator
 
     def library_root(env: ENV)
       env.fetch("LIBRARY_ROOT", "/library")
+    end
+
+    # Live vision only. Stub never loads covers. Caps match Rails cover budgets.
+    def vision_max_bytes(env: ENV)
+      clamp_int(env["VIBE_CURATOR_VISION_MAX_BYTES"], default: DEFAULT_VISION_MAX_BYTES, min: 256, max: 2_000_000)
+    end
+
+    def vision_max_px(env: ENV)
+      clamp_int(env["VIBE_CURATOR_VISION_MAX_PX"], default: DEFAULT_VISION_MAX_PX, min: 16, max: 2048)
+    end
+
+    def vision_timeout(env: ENV)
+      clamp_int(env["VIBE_CURATOR_VISION_TIMEOUT"], default: DEFAULT_VISION_TIMEOUT, min: 1, max: 30)
     end
 
     def token(env: ENV)

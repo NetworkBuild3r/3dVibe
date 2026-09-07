@@ -34,11 +34,11 @@ module VibeCurator
       }
     end
 
-    def proposals(payload:, query: {}, env: ENV, transport: nil)
+    def proposals(payload:, query: {}, env: ENV, transport: nil, fetch: nil)
       catalog = Catalog.normalize(payload, query: query, env: env)
       provider_name, env = Config.resolve(catalog, env: env)
       catalog = Config.scrub_catalog(catalog)
-      provider = Providers.build(provider_name, env: env, transport: transport)
+      provider = Providers.build(provider_name, env: env, transport: transport, fetch: fetch)
       raw = provider.propose(catalog)
       items = ProposalBatch.normalize(
         raw,

@@ -5,15 +5,16 @@ require_relative "chat_client"
 require_relative "config"
 require_relative "prompt"
 require_relative "stub_proposals"
+require_relative "vision"
 
 module VibeCurator
   module Providers
     module_function
 
-    def build(name, env: ENV, transport: nil)
+    def build(name, env: ENV, transport: nil, fetch: nil)
       case name.to_s
-      when "ollama" then Ollama.new(env: env, transport: transport)
-      when "xai" then Xai.new(env: env, transport: transport)
+      when "ollama" then Ollama.new(env: env, transport: transport, fetch: fetch)
+      when "xai" then Xai.new(env: env, transport: transport, fetch: fetch)
       else Stub.new
       end
     end
@@ -32,8 +33,9 @@ module VibeCurator
       def propose(catalog)
         ranked = Catalog.rank_for_inference(catalog["models"], limit: Config.catalog_limit(env: @env))
         prompt_catalog = catalog.merge("models" => ranked)
+        cover = Vision.attach(prompt_catalog, env: @env, fetch: @fetch)
         content = client.complete(
-          model: model,
+          model: model_for(cover),
           messages: [
             {
               "role" => "system",
@@ -44,7 +46,7 @@ module VibeCurator
                 min_confidence: Config.min_confidence(env: @env)
               )
             },
-            { "role" => "user", "content" => Prompt.user_prompt(prompt_catalog) }
+            Prompt.user_chat_message(prompt_catalog, cover: cover, native_images: native_images?)
           ],
           extra: extra_body
         )
@@ -58,12 +60,21 @@ module VibeCurator
       def extra_body
         {}
       end
+
+      def model_for(_cover)
+        model
+      end
+
+      def native_images?
+        false
+      end
     end
 
     class Ollama < ChatProvider
-      def initialize(env: ENV, transport: nil)
+      def initialize(env: ENV, transport: nil, fetch: nil)
         @env = env
         @transport = transport
+        @fetch = fetch
       end
 
       def name
@@ -90,6 +101,18 @@ module VibeCurator
         native? ? { "stream" => false, "format" => "json" } : { "temperature" => 0.2 }
       end
 
+      def model_for(cover)
+        if cover && (vision = Config.present(@env["VIBE_OLLAMA_VISION_MODEL"]))
+          vision
+        else
+          model
+        end
+      end
+
+      def native_images?
+        native?
+      end
+
       def native?
         api = @env["VIBE_OLLAMA_API"].to_s.strip.downcase
         return false if api == "openai"
@@ -106,9 +129,10 @@ module VibeCurator
     end
 
     class Xai < ChatProvider
-      def initialize(env: ENV, transport: nil)
+      def initialize(env: ENV, transport: nil, fetch: nil)
         @env = env
         @transport = transport
+        @fetch = fetch
       end
 
       def name

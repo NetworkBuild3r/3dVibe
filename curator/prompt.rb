@@ -26,17 +26,28 @@ module VibeCurator
 
         Catalog fields you MUST use (already on each model / library):
         creators_index, folder_name, title, tags, creator, cover_status,
-        mesh_count, archive_count, has_archives, sample_paths.
+        cover_url / cover_lqip_url (ready covers only), mesh_count,
+        archive_count, has_archives, sample_paths.
         sample_paths are jail-relative hints only — never invent new files.
+        Never ask for raw mesh / archive bytes. Covers are the only image.
+
+        Cover image (at most one, attached when cover_status=ready):
+        - Prefer what you see over guessing from filenames.
+        - Use the image for subject tags and cleaner titles/renames.
+        - cover_image in the user JSON names the model the picture belongs to.
+        - If no image is attached, stay text-only. Do not invent what a cover shows.
+        - Optional rationale may mention what you saw. Never invent a score.
 
         Kind heuristics (prefer high-signal, skip spam):
         - tag: only when tags[] is empty or missing a specific subject token.
-          Prefer tokens from folder_name, title, creator.slug/name, creators_index,
-          and sample_paths. Never propose format-only tags (stl, obj, 3mf, zip,
-          7z, rar, mesh, archive, file, model). Do not repeat tags the model has.
+          Prefer tokens from the cover image (when attached), folder_name, title,
+          creator.slug/name, creators_index, and sample_paths. Never propose
+          format-only tags (stl, obj, 3mf, zip, 7z, rar, mesh, archive, file,
+          model). Do not repeat tags the model has.
         - rename: only when folder_name is noisy or pack-styled ("Creator - Title")
-          and a cleaner first-level name is obvious from title/creator.
-          Destination is one first-level segment. Reject ../, .hidden, kits/nested.
+          and a cleaner first-level name is obvious from the cover, title, or
+          creator. Destination is one first-level segment. Reject ../, .hidden,
+          kits/nested.
         - move: file-level only when a sample_path belongs under another existing
           first-level folder. relative_path must be a catalog sample_path (or a
           jail-relative path under that folder). Never invent paths.
@@ -64,10 +75,10 @@ module VibeCurator
       TEXT
     end
 
-    def user_prompt(catalog)
+    def user_prompt(catalog, cover: nil)
       data = catalog.is_a?(Hash) ? catalog.transform_keys(&:to_s) : {}
       models = Array(data["models"])
-      {
+      payload = {
         "library_id" => data["library_id"],
         "library_name" => data["library_name"],
         "library_root" => data["library_root"],
@@ -75,7 +86,28 @@ module VibeCurator
         "model_count" => models.size,
         "signals" => Catalog.signals(data),
         "models" => models
-      }.to_json
+      }
+      payload["cover_image"] = cover.pointer if cover
+      payload.to_json
+    end
+
+    # Live chat user turn. Text catalog always; one image part when cover loaded.
+    # OpenAI / xAI use content parts. Native Ollama uses content + images[].
+    def user_chat_message(catalog, cover: nil, native_images: false)
+      text = user_prompt(catalog, cover: cover)
+      return { "role" => "user", "content" => text } unless cover
+
+      if native_images
+        { "role" => "user", "content" => text, "images" => [cover.base64] }
+      else
+        {
+          "role" => "user",
+          "content" => [
+            { "type" => "text", "text" => text },
+            { "type" => "image_url", "image_url" => { "url" => cover.data_url } }
+          ]
+        }
+      end
     end
   end
 end
