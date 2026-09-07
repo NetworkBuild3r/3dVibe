@@ -47,7 +47,17 @@ class CuratorRuntime
 
     def env_provider
       value = ENV["VIBE_CURATOR_PROVIDER"].to_s.strip.downcase
-      PROVIDERS.include?(value) ? value : CuratorSetting::STUB
+      return CuratorSetting::STUB if value.empty?
+
+      value
+    end
+
+    def known_provider?(name = provider)
+      PROVIDERS.include?(name.to_s)
+    end
+
+    def unknown_provider_message(name = provider)
+      "unknown curator provider #{name.inspect}; expected #{PROVIDERS.join('|')}"
     end
 
     def as_api

@@ -177,6 +177,10 @@ module VibeCurator
       name
     end
 
+    def known_provider?(name)
+      PROVIDERS.include?(name.to_s)
+    end
+
     def present(value)
       text = value.to_s.strip
       text.empty? ? nil : text

@@ -28,7 +28,8 @@ class CurationHttpClient
     parsed = parse_json(response.body)
     CurationSidecar::FetchResult.new(
       drafts: drafts_from(parsed),
-      provider: extract_provider(response, parsed)
+      provider: extract_provider(response, parsed),
+      vision_skip_reason: extract_vision_skip(parsed)
     )
   rescue Timeout::Error, Errno::ECONNREFUSED, Errno::EHOSTUNREACH, SocketError => e
     raise Error, "curator unreachable: #{e.message}"
@@ -90,6 +91,16 @@ class CurationHttpClient
     header = response["X-Curator-Provider"].presence || response["X-Provider"].presence
     body = parsed.is_a?(Hash) ? (parsed["provider"].presence || parsed["provider_hint"].presence) : nil
     header || body
+  end
+
+  def extract_vision_skip(parsed)
+    return unless parsed.is_a?(Hash)
+
+    reason = parsed["vision_skip_reason"].to_s.strip.presence
+    return reason if reason
+    return "ready_covers_unusable" if parsed["vision_skipped"] == true
+
+    nil
   end
 
   def draft_from(item)

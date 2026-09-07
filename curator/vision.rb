@@ -8,12 +8,15 @@ require_relative "config"
 module VibeCurator
   # Load at most one ready-cover image for the live chat message.
   # Prefer LQIP, then the same model's cover_url, then the next ready model.
-  # Missing / over-budget / failed fetch on every candidate → nil
-  # (text-only fallback). Stub never calls this. No mesh bytes.
+  # Missing / over-budget / failed fetch on every candidate → text-only
+  # plus attach_result.skip_reason (never looks like a cover-less catalog).
+  # Stub never calls this. No mesh bytes.
   module Vision
     COVER_FILENAME = /\A[0-9]+(?:\.lqip)?\.webp\z/
     COVER_PATH = %r{\A/covers/[0-9]+(?:\.lqip)?\.webp\z}
     HTTP_URL = /\Ahttps?:\/\//i
+
+    READY_COVERS_UNUSABLE = "ready_covers_unusable"
 
     Attachment = Struct.new(:bytes, :mime, :model_id, :folder_name, :source, keyword_init: true) do
       def data_url
@@ -33,17 +36,38 @@ module VibeCurator
       end
     end
 
+    # Live attach outcome. skip_reason is set only when the catalog had
+    # ready-cover candidates and every one failed (not a normal text-only poll).
+    AttachResult = Struct.new(:attachment, :skip_reason, :candidate_count, keyword_init: true) do
+      def skipped?
+        attachment.nil? && !skip_reason.nil?
+      end
+    end
+
     module_function
 
     def attach(catalog, env: ENV, fetch: nil)
-      cover_candidates(catalog).each do |pick|
+      attach_result(catalog, env: env, fetch: fetch).attachment
+    end
+
+    def attach_result(catalog, env: ENV, fetch: nil)
+      candidates = cover_candidates(catalog)
+      return AttachResult.new(attachment: nil, candidate_count: 0) if candidates.empty?
+
+      candidates.each do |pick|
         attachment = attach_pick(pick, env: env, fetch: fetch)
-        return attachment if attachment
+        return AttachResult.new(attachment: attachment, candidate_count: candidates.size) if attachment
       rescue StandardError
         # One bad URL must not hide a later usable ready cover.
         next
       end
-      nil
+
+      warn("[vision] skipped ready covers: #{READY_COVERS_UNUSABLE} candidates=#{candidates.size}")
+      AttachResult.new(
+        attachment: nil,
+        skip_reason: READY_COVERS_UNUSABLE,
+        candidate_count: candidates.size
+      )
     end
 
     # Ready covers in catalog order (already ranked by the caller).

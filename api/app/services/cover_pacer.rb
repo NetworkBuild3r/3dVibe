@@ -94,10 +94,7 @@ class CoverPacer
     end
 
     def leftover?
-      scope = backlog_scope
-      already = queued_model_ids.to_a
-      scope = scope.where.not(id: already) if already.any?
-      scope.exists?
+      drainable_scope.exists?
     end
 
     def reset!
@@ -161,10 +158,7 @@ class CoverPacer
     end
 
     def pick_backlog(limit)
-      already = queued_model_ids.to_a
-      scope = backlog_scope
-      scope = scope.where.not(id: already) if already.any?
-      scope
+      drainable_scope
         .joins("LEFT JOIN assets ON assets.id = vibe_models.cover_asset_id")
         .select("vibe_models.*")
         .order(Arel.sql(PRIORITY_SQL), updated_at: :desc, id: :desc)
@@ -173,7 +167,18 @@ class CoverPacer
     end
 
     def backlog_scope
-      VibeModel.where(cover_status: VibeModel::COVER_PENDING)
+      pending = VibeModel.where(cover_status: VibeModel::COVER_PENDING)
+      ready_missing_lqip = VibeModel.where(cover_status: VibeModel::COVER_READY)
+        .where("cover_lqip_url IS NULL OR cover_lqip_url = ''")
+        .where("cover_url IS NOT NULL AND cover_url <> ''")
+        .where.not(cover_asset_id: nil)
+      pending.or(ready_missing_lqip)
+    end
+
+    def drainable_scope
+      already = queued_model_ids.to_a
+      scope = backlog_scope
+      already.any? ? scope.where.not(id: already) : scope
     end
 
     def generate_entries

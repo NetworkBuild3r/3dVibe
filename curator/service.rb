@@ -47,10 +47,16 @@ module VibeCurator
         budget: Config.batch_size(env: env),
         env: env
       )
-      {
+      payload = {
         "provider" => provider.name,
         "proposals" => items
       }
+      skip_reason = provider.respond_to?(:vision_skip_reason) ? provider.vision_skip_reason : nil
+      if skip_reason
+        payload["vision_skipped"] = true
+        payload["vision_skip_reason"] = skip_reason
+      end
+      payload
     end
 
     def authorized?(headers, env: ENV)

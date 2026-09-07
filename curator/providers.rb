@@ -13,11 +13,17 @@ module VibeCurator
 
     def build(name, env: ENV, transport: nil, fetch: nil)
       case name.to_s
+      when "stub" then Stub.new
       when "ollama" then Ollama.new(env: env, transport: transport, fetch: fetch)
       when "xai" then Xai.new(env: env, transport: transport, fetch: fetch)
       when "openai" then Openai.new(env: env, transport: transport, fetch: fetch)
       when "anthropic" then Anthropic.new(env: env, transport: transport, fetch: fetch)
-      else Stub.new
+      else
+        raise Error.new(
+          "unknown curator provider #{name.inspect}; expected stub|ollama|xai|openai|anthropic",
+          status: 503,
+          code: "unknown_provider"
+        )
       end
     end
 
@@ -32,10 +38,15 @@ module VibeCurator
     end
 
     class ChatProvider
+      attr_reader :vision_skip_reason
+
       def propose(catalog)
+        @vision_skip_reason = nil
         ranked = Catalog.rank_for_inference(catalog["models"], limit: Config.catalog_limit(env: @env))
         prompt_catalog = catalog.merge("models" => ranked)
-        cover = Vision.attach(prompt_catalog, env: @env, fetch: @fetch)
+        vision = Vision.attach_result(prompt_catalog, env: @env, fetch: @fetch)
+        @vision_skip_reason = vision.skip_reason
+        cover = vision.attachment
         content = client.complete(
           model: model_for(cover),
           messages: chat_messages(prompt_catalog, cover),

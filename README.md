@@ -474,9 +474,9 @@ On scan, when a cover-candidate asset appears (image named cover/preview/thumb/h
 }
 ```
 
-`jailed_path` is jail-relative from the library root. Resolve it with `LibraryPathJail#resolve_jailed` (never load the whole file or archive into RAM). Cache key is `asset_id + mtime + content_hash` (`cover_cache_key` on the model). The same key is not re-enqueued while `pending` or `ready` with both `cover_url` and `cover_lqip_url`. A `ready` cover missing LQIP is backfilled without flipping to `pending`.
+`jailed_path` is jail-relative from the library root. Resolve it with `LibraryPathJail#resolve_jailed` (never load the whole file or archive into RAM). Cache key is `asset_id + mtime + content_hash` (`cover_cache_key` on the model). The same key is not re-enqueued while `pending` or `ready` with both `cover_url` and `cover_lqip_url`. A `ready` cover missing LQIP is backfilled from the existing webp without flipping to `pending` or `failed`.
 
-**Pacing.** `CoverPacer` admits at most `VIBE_COVER_BATCH` jobs per `VIBE_COVER_PACE_SECONDS` window and never more than `VIBE_COVER_QUEUE_MAX` `GenerateCoverJob` rows on `:covers`. Overflow stays `pending` (gallery shimmer) and `CoverBacklogJob` drains it. Drain priority: named cover/preview/thumb/hero, then other images, then mesh/archive, then recency. The default Sidekiq capsule weights `:covers` below `default` / `print` (scan already lives on `VIBE_SCAN_QUEUE`) so an enqueue storm cannot starve the API.
+**Pacing.** `CoverPacer` admits at most `VIBE_COVER_BATCH` jobs per `VIBE_COVER_PACE_SECONDS` window and never more than `VIBE_COVER_QUEUE_MAX` `GenerateCoverJob` rows on `:covers`. Overflow stays `pending` (gallery shimmer) and `CoverBacklogJob` drains it — including `ready` covers that are missing `cover_lqip_url` (LQIP backfill, still `ready`). Drain priority: named cover/preview/thumb/hero, then other images, then mesh/archive, then ready-without-LQIP, then recency. The default Sidekiq capsule weights `:covers` below `default` / `print` (scan already lives on `VIBE_SCAN_QUEUE`) so an enqueue storm cannot starve the API.
 
 Model card / index fields:
 
@@ -741,6 +741,8 @@ Response:
 
 `sidecar_ref` must be **stable** for the same suggestion. Rails upserts pending rows by `(library_id, sidecar_ref)` (unique when present). Reviewed rows are never clobbered. Live providers that rotate refs will create duplicates.
 
+When the catalog had `cover_status=ready` candidates but **every** cover failed to load (LQIP, `cover_url`, then later models), the sidecar still returns 200 + proposals but adds `vision_skipped: true` and `vision_skip_reason: "ready_covers_unusable"`. That is not a normal text-only poll (missing/pending/failed covers omit those keys). Rails stores the skip as `curation.last_error` (`vision skipped: ready_covers_unusable`) so HITL/ops is not lied to; the poll is still a success. Unknown `VIBE_CURATOR_PROVIDER` / `curator_runtime.provider` values are a 503 `unknown_provider` — they do **not** silently stub.
+
 Optional: return `provider` in the body and/or `X-Curator-Provider` so Rails can persist `libraries.last_provider`. When absent, Rails stores the effective provider from `curator_runtime` / owner UI / `VIBE_CURATOR_PROVIDER` / `stub`.
 
 `GET /proposals?library_id=&library_root=&provider_hint=` is a fallback when POST is not implemented. **Do not** put `curator_runtime` or provider keys on the query string.
@@ -775,7 +777,7 @@ Rails injects the resolved hash as `curator_runtime` on `POST /proposals` only. 
 | --- | --- |
 | `last_polled_at` | Last poll attempt (success or failure) |
 | `last_provider` | Sidecar `provider` / `X-Curator-Provider`, else the effective UI/ENV provider used on that poll, else `stub` |
-| `last_error` | Last failure message; **cleared on the next success** |
+| `last_error` | Last failure message; **cleared on the next success**. Live polls that found `cover_status=ready` but could not load any cover also store `vision skipped: ready_covers_unusable` here (HTTP still 200). |
 
 Exposed as `curation: { last_polled_at, last_provider, last_error }` on:
 

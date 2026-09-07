@@ -23,7 +23,7 @@
 # Rails only polls + HITL apply. Inference adapters live in Rendering.
 class CurationSidecar
   ProposalDraft = Struct.new(:kind, :summary, :payload, :sidecar_ref, keyword_init: true)
-  FetchResult = Struct.new(:drafts, :provider, keyword_init: true)
+  FetchResult = Struct.new(:drafts, :provider, :vision_skip_reason, keyword_init: true)
   SAMPLE_PATH_LIMIT = 5
   CREATORS_INDEX_LIMIT = 50
   OPTIONAL_HINT_KEYS = %w[rationale reason explanation confidence].freeze
@@ -80,7 +80,7 @@ class CurationSidecar
   def ingest_remote!
     result = fetch_result
     records = ingest!(result.drafts)
-    record_poll_success!(result.provider)
+    record_poll_success!(result.provider, vision_skip_reason: result.vision_skip_reason)
     records
   rescue CurationHttpClient::Error => e
     record_poll_error!(e)
@@ -99,6 +99,9 @@ class CurationSidecar
     end
     if @endpoint.blank?
       raise CurationHttpClient::Error, "VIBE_CURATOR_URL is blank"
+    end
+    unless CuratorRuntime.known_provider?
+      raise CurationHttpClient::Error, CuratorRuntime.unknown_provider_message
     end
 
     remote = (@client || CurationHttpClient.new(endpoint: @endpoint, token: @token)).fetch_proposals(catalog)
@@ -183,8 +186,9 @@ class CurationSidecar
     end
   end
 
-  def record_poll_success!(provider)
-    @library.record_curation_poll!(provider: resolved_provider(provider), error: nil)
+  def record_poll_success!(provider, vision_skip_reason: nil)
+    note = vision_skip_reason.present? ? "vision skipped: #{vision_skip_reason}" : nil
+    @library.record_curation_poll!(provider: resolved_provider(provider), error: note)
   end
 
   def record_poll_error!(error)
