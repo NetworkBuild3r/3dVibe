@@ -54,6 +54,12 @@ class CoverGenerator
       return :fresh
     end
 
+    # Ready cover already on disk: only backfill LQIP. Re-encoding from NFS
+    # must not flip a working cover to failed when the source is gone.
+    if ready_cover_on_disk?(model, key)
+      return backfill_lqip!(model, key)
+    end
+
     source = resolve_source!(model)
     CoverImage.encode(source, dest_path(model.id), budget, lqip_dest: lqip_path(model.id), lqip_budget: lqip_budget)
     writeback_ready!(model, key)
@@ -96,12 +102,22 @@ class CoverGenerator
   end
 
   def skip_fresh?(model, key)
+    ready_cover_on_disk?(model, key) &&
+      model.cover_lqip_url.present? &&
+      File.file?(lqip_path(model.id))
+  end
+
+  def ready_cover_on_disk?(model, key)
     model.cover_status == VibeModel::COVER_READY &&
       model.cover_cache_key.to_s == key &&
       model.cover_url.present? &&
-      model.cover_lqip_url.present? &&
-      File.file?(dest_path(model.id)) &&
-      File.file?(lqip_path(model.id))
+      File.file?(dest_path(model.id))
+  end
+
+  def backfill_lqip!(model, key)
+    CoverImage.write_lqip_from_cover(dest_path(model.id), lqip_path(model.id), lqip_budget)
+    writeback_ready!(model, key)
+    File.file?(lqip_path(model.id)) ? :ready : :lqip_skipped
   end
 
   def assert_library!(model)
