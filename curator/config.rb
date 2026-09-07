@@ -3,14 +3,16 @@
 # Sidecar settings. Rails still chooses the process with VIBE_CURATOR_URL
 # (stub | http://curator:8088). Adapter resolution is request-scoped:
 #
-#   curator_runtime (Rails #23 POST /proposals) field → process ENV →
+#   curator_runtime (Rails POST /proposals) field → process ENV →
 #   catalog provider_hint → stub
 #
 # Incomplete runtime falls back field-by-field. Process ENV is never mutated.
 # Stub never requires a key; secrets are dropped from the request-scoped env.
+# Rails sends only the decrypted key for the active provider (xai / openai /
+# anthropic). Compose/CI stay on stub. Owner UI default is ollama + gemma4.
 module VibeCurator
   KINDS = %w[tag rename move merge organize].freeze
-  PROVIDERS = %w[stub ollama xai].freeze
+  PROVIDERS = %w[stub ollama xai openai anthropic].freeze
   DEFAULT_BATCH_SIZE = 8
   MAX_BATCH_SIZE = 50
   DEFAULT_CATALOG_LIMIT = 80
@@ -22,8 +24,16 @@ module VibeCurator
   DEFAULT_VISION_TIMEOUT = 3
   # Shape injected by Rails CuratorRuntime.for_sidecar (PR #23). GET /proposals
   # must not carry these on the query string.
-  RUNTIME_FIELDS = %w[provider ollama_url ollama_model xai_api_key].freeze
-  SECRET_ENV_KEYS = %w[XAI_API_KEY VIBE_XAI_API_KEY VIBE_OLLAMA_API_KEY].freeze
+  RUNTIME_FIELDS = %w[
+    provider ollama_url ollama_model
+    xai_api_key openai_api_key anthropic_api_key
+  ].freeze
+  SECRET_ENV_KEYS = %w[
+    XAI_API_KEY VIBE_XAI_API_KEY
+    OPENAI_API_KEY VIBE_OPENAI_API_KEY
+    ANTHROPIC_API_KEY VIBE_ANTHROPIC_API_KEY
+    VIBE_OLLAMA_API_KEY
+  ].freeze
 
   module Config
     module_function
@@ -65,6 +75,12 @@ module VibeCurator
       end
       if (key = present(runtime["xai_api_key"]))
         merged["XAI_API_KEY"] = key
+      end
+      if (key = present(runtime["openai_api_key"]))
+        merged["OPENAI_API_KEY"] = key
+      end
+      if (key = present(runtime["anthropic_api_key"]))
+        merged["ANTHROPIC_API_KEY"] = key
       end
       merged
     end
