@@ -218,13 +218,13 @@ export function DuplicatesPage() {
   }, [libraryId, preferredLibraryId, searchParams, setSearchParams]);
 
   useEffect(() => {
-    if (!reviewOpen) return;
+    if (!reviewOpen || reviewGroup) return;
     function onKey(event: KeyboardEvent) {
       if (event.key === "Escape") navigate(duplicatesIndexHref(libraryId));
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [reviewOpen, navigate, libraryId]);
+  }, [reviewOpen, reviewGroup, navigate, libraryId]);
 
   async function analyze() {
     if (libraryId === "" || !canReview || analyzing) return;

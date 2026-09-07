@@ -2,6 +2,7 @@ import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { ModelCard as ModelCardType } from "../api";
 import { columnCount, gridMetrics, type GalleryDensity } from "../gallery";
+import { gridMetricObserveTargets, readGridMetrics } from "../virtualizedGrid";
 
 export function VirtualizedCardGrid({
   models,
@@ -20,12 +21,13 @@ export function VirtualizedCardGrid({
     const node = parentRef.current;
     if (!node) return;
     const sync = () => {
-      setWidth(node.clientWidth);
-      setScrollMargin(node.offsetTop);
+      const next = readGridMetrics(node);
+      setWidth((current) => (current === next.width ? current : next.width));
+      setScrollMargin((current) => (current === next.scrollMargin ? current : next.scrollMargin));
     };
     sync();
     const observer = new ResizeObserver(sync);
-    observer.observe(node);
+    for (const target of gridMetricObserveTargets(node)) observer.observe(target);
     return () => observer.disconnect();
   }, [density, models.length]);
 
