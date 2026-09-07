@@ -62,6 +62,7 @@ class APIV1Test < ActionDispatch::IntegrationTest
     get "/api/v1/models/#{model.id}", headers: headers
     assert_response :success
     assert response.parsed_body.dig("model", "assets").any? { |asset| asset["archive"] }
+    assert response.parsed_body.dig("model", "assets").all? { |asset| asset["mergeable"] == true }
 
     get "/api/v1/models/#{model.id}/archive_members", headers: headers
     assert_response :success
