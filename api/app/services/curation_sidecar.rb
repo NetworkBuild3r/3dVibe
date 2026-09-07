@@ -11,10 +11,12 @@
 #   VIBE_CURATOR_TOKEN      shared bearer token (optional in stub mode)
 #   VIBE_CURATOR_TIMEOUT    seconds (default 8)
 #   VIBE_CURATOR_STUB       when `1`/`true`, use in-process stub if URL is blank
-#   VIBE_CURATOR_PROVIDER   optional hint (ollama|xai|stub|…) sent as catalog
-#                           `provider_hint`. Does not replace VIBE_CURATOR_URL.
-#   Owner UI CuratorSetting overrides provider / Ollama URL+model / xAI key
-#   when set. POST /proposals also gets request-scoped `curator_runtime`.
+#   VIBE_CURATOR_PROVIDER   optional hint (stub|ollama|xai|openai|anthropic)
+#                           sent as catalog `provider_hint`. Does not replace
+#                           VIBE_CURATOR_URL. Compose/CI stay `stub`.
+#   Owner UI CuratorSetting overrides provider / Ollama URL+model / provider
+#   keys when set. POST /proposals also gets request-scoped `curator_runtime`
+#   with only the decrypted key needed for the active provider.
 #
 # Live providers must return a stable `sidecar_ref` per suggestion so upsert
 # is idempotent. Pending rows update; reviewed rows are never clobbered.

@@ -1,4 +1,5 @@
-# Active Record encryption for CuratorSetting#xai_api_key (and future secrets).
+# Active Record encryption for CuratorSetting secrets
+# (xai_api_key, openai_api_key, anthropic_api_key).
 #
 # Resolution:
 #   1. VIBE_ACTIVE_RECORD_ENCRYPTION_PRIMARY_KEY

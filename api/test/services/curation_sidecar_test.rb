@@ -64,6 +64,8 @@ class CurationSidecarTest < ActiveSupport::TestCase
     assert_equal "ollama", catalog[:provider_hint]
     assert_equal "ollama", catalog.dig(:curator_runtime, :provider)
     refute catalog[:curator_runtime].key?(:xai_api_key)
+    refute catalog[:curator_runtime].key?(:openai_api_key)
+    refute catalog[:curator_runtime].key?(:anthropic_api_key)
     assert catalog[:models].all? { |row| row.key?(:id) && row.key?(:folder_name) && row.key?(:title) }
     assert catalog[:models].all? { |row| row.key?(:tags) && row.key?(:asset_count) && row.key?(:byte_size) }
 
@@ -174,6 +176,8 @@ class CurationSidecarTest < ActiveSupport::TestCase
     assert_nil @library.last_error
     assert_equal "stub", @http.last_catalog.dig("curator_runtime", "provider")
     refute @http.last_catalog["curator_runtime"].key?("xai_api_key")
+    refute @http.last_catalog["curator_runtime"].key?("openai_api_key")
+    refute @http.last_catalog["curator_runtime"].key?("anthropic_api_key")
   end
 
   test "HTTP catalog includes decrypted curator_runtime from owner settings" do
@@ -182,7 +186,9 @@ class CurationSidecarTest < ActiveSupport::TestCase
       provider: "xai",
       ollama_url: "http://ollama.ui:11434",
       ollama_model: "llama-ui",
-      xai_api_key: "xai-ui-test-key"
+      xai_api_key: "xai-ui-test-key",
+      openai_api_key: "openai-ui-test-key",
+      anthropic_api_key: "anthropic-ui-test-key"
     )
     body = {
       proposals: [
@@ -208,11 +214,47 @@ class CurationSidecarTest < ActiveSupport::TestCase
     assert_equal "http://ollama.ui:11434", runtime["ollama_url"]
     assert_equal "llama-ui", runtime["ollama_model"]
     assert_equal "xai-ui-test-key", runtime["xai_api_key"]
+    refute runtime.key?("openai_api_key")
+    refute runtime.key?("anthropic_api_key")
     assert_equal "xai", @library.reload.last_provider
     refute_includes logs.string, "xai-ui-test-key"
+    refute_includes logs.string, "openai-ui-test-key"
+    refute_includes logs.string, "anthropic-ui-test-key"
     refute_includes @http.last_auth, "xai-ui-test-key"
   ensure
     Rails.logger = old_logger
+  end
+
+  test "HTTP catalog injects only the openai key when that provider is active" do
+    CuratorSetting.create!(
+      provider: "openai",
+      ollama_model: "gemma4",
+      openai_api_key: "openai-ui-test-key",
+      xai_api_key: "xai-should-omit",
+      anthropic_api_key: "anthropic-should-omit"
+    )
+    body = {
+      proposals: [
+        {
+          kind: "tag",
+          summary: "From HTTP",
+          sidecar_ref: "http:tag:openai-runtime",
+          payload: { tag: "remote", folder_name: "alpha-one" }
+        }
+      ]
+    }
+    @http = MiniCuratorServer.new(JSON.generate(body), provider_header: nil)
+    port = @http.start
+
+    sidecar = CurationSidecar.new(@library, endpoint: "http://127.0.0.1:#{port}", token: "secret")
+    sidecar.ingest_remote!
+    runtime = @http.last_catalog.fetch("curator_runtime")
+    assert_equal "openai", runtime["provider"]
+    assert_equal "gemma4", runtime["ollama_model"]
+    assert_equal "openai-ui-test-key", runtime["openai_api_key"]
+    refute runtime.key?("xai_api_key")
+    refute runtime.key?("anthropic_api_key")
+    assert_equal "openai", @library.reload.last_provider
   end
 
   test "payload_with_hints copies optional keys without inventing" do

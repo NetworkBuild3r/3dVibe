@@ -63,6 +63,10 @@ Invite.find_or_create_by!(library: library, email: "friend@3dvibe.local") do |in
   invite.expires_at = 30.days.from_now
 end
 
+# Development / production only. Test `db:prepare` also loads seeds; keep
+# the singleton absent so compose/CI stay on env stub until an owner PATCHes.
+CuratorSetting.ensure_defaults! unless Rails.env.test?
+
 if MeilisearchClient.configured?
   reindexed = SearchIndex.new.reindex_all!(library.vibe_models)
   puts "Search index: #{reindexed.inspect} via #{MeilisearchClient.url}"
