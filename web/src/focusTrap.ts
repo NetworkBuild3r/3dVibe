@@ -36,13 +36,42 @@ export function focusableIn(root: ParentNode): HTMLElement[] {
   });
 }
 
+const MODAL_DIALOG_SELECTOR = '[role="dialog"][aria-modal="true"]';
+
+/** Confirm sheets nest inside the drawer — Tab must use the topmost modal, not the drawer. */
+export function innermostModal<T>(root: { querySelectorAll: (selector: string) => ArrayLike<T> }): T | null {
+  const dialogs = root.querySelectorAll(MODAL_DIALOG_SELECTOR);
+  if (dialogs.length === 0) return null;
+  return dialogs[dialogs.length - 1] ?? null;
+}
+
+export function trapScope(root: HTMLElement): HTMLElement {
+  return (innermostModal(root) as HTMLElement | null) ?? root;
+}
+
+/** Restore to the opener unless click-away already moved it to another control. */
+export function shouldRestoreFocus(
+  restore: object | null,
+  trap: { contains: (node: never) => boolean } | null,
+  active: { nodeName?: string } | object | null
+): boolean {
+  if (!restore) return false;
+  if (!active) return true;
+  if (typeof active === "object" && "nodeName" in active && active.nodeName === "BODY") return true;
+  if (active === restore) return true;
+  if (!trap) return true;
+  return trap.contains(active as never);
+}
+
 export function useFocusTrap(
   active: boolean,
   rootRef: RefObject<HTMLElement | null>,
-  options: { onEscape?: () => void } = {}
+  options: { onEscape?: () => void; layer?: string | number | null } = {}
 ) {
   const onEscapeRef = useRef(options.onEscape);
   onEscapeRef.current = options.onEscape;
+  const layer = options.layer ?? null;
+  const layerRestoreRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (!active) return;
@@ -53,15 +82,17 @@ export function useFocusTrap(
     const restore = prior instanceof HTMLElement ? prior : null;
 
     const focusInitial = () => {
-      const items = focusableIn(root);
+      const scope = trapScope(root);
+      const items = focusableIn(scope);
       if (items[0]) items[0].focus();
-      else root.focus();
+      else scope.focus();
     };
     const frame = window.requestAnimationFrame(focusInitial);
 
     function onKeyDown(event: KeyboardEvent) {
-      const trap = rootRef.current;
-      if (!trap) return;
+      const host = rootRef.current;
+      if (!host) return;
+      const trap = trapScope(host);
       if (isEscapeKey(event)) {
         event.preventDefault();
         event.stopPropagation();
@@ -91,7 +122,35 @@ export function useFocusTrap(
     return () => {
       window.cancelAnimationFrame(frame);
       document.removeEventListener("keydown", onKeyDown);
-      restore?.focus();
+      const activeEl = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      if (shouldRestoreFocus(restore, rootRef.current, activeEl)) restore?.focus();
     };
   }, [active, rootRef]);
+
+  useEffect(() => {
+    if (!active) {
+      layerRestoreRef.current = null;
+      return;
+    }
+    const root = rootRef.current;
+    if (!root) return;
+
+    if (layer != null && layer !== "") {
+      const prior = document.activeElement;
+      if (prior instanceof HTMLElement && !layerRestoreRef.current) {
+        layerRestoreRef.current = prior;
+      }
+      const frame = window.requestAnimationFrame(() => {
+        const scope = trapScope(root);
+        const items = focusableIn(scope);
+        if (items[0]) items[0].focus();
+        else scope.focus();
+      });
+      return () => window.cancelAnimationFrame(frame);
+    }
+
+    const restore = layerRestoreRef.current;
+    layerRestoreRef.current = null;
+    restore?.focus();
+  }, [active, layer, rootRef]);
 }

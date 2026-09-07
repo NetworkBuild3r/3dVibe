@@ -427,3 +427,23 @@ export function findGroupInLibraries(
   }
   return null;
 }
+
+export type ReviewOverlayKind = "loading" | "review" | "error" | null;
+
+/** Loading and error shells are the same modal as the review drawer — trap, not Escape-only. */
+export function reviewOverlayKind(state: {
+  open: boolean;
+  loading: boolean;
+  hasGroup: boolean;
+  error: string | null;
+}): ReviewOverlayKind {
+  if (!state.open) return null;
+  if (state.loading && !state.hasGroup) return "loading";
+  if (state.hasGroup) return "review";
+  if (state.error) return "error";
+  return null;
+}
+
+export function reviewOverlayIsModal(kind: ReviewOverlayKind): boolean {
+  return kind === "loading" || kind === "review" || kind === "error";
+}
