@@ -7,7 +7,8 @@ require_relative "config"
 
 module VibeCurator
   # Load at most one ready-cover image for the live chat message.
-  # Prefer LQIP, else cover_url. Missing / over-budget / failed fetch → nil
+  # Prefer LQIP, then the same model's cover_url, then the next ready model.
+  # Missing / over-budget / failed fetch on every candidate → nil
   # (text-only fallback). Stub never calls this. No mesh bytes.
   module Vision
     COVER_FILENAME = /\A[0-9]+(?:\.lqip)?\.webp\z/
@@ -35,9 +36,38 @@ module VibeCurator
     module_function
 
     def attach(catalog, env: ENV, fetch: nil)
-      pick = pick_cover(catalog)
-      return unless pick
+      cover_candidates(catalog).each do |pick|
+        attachment = attach_pick(pick, env: env, fetch: fetch)
+        return attachment if attachment
+      rescue StandardError
+        # One bad URL must not hide a later usable ready cover.
+        next
+      end
+      nil
+    end
 
+    # Ready covers in catalog order (already ranked by the caller).
+    # Prefer LQIP, then the same model's cover_url, then the next ready model.
+    def cover_candidates(catalog)
+      models = catalog.is_a?(Hash) ? Array(catalog["models"]) : Array(catalog)
+      models.flat_map do |model|
+        data = model.is_a?(Hash) ? model.transform_keys(&:to_s) : {}
+        next [] unless data["cover_status"].to_s == "ready"
+
+        lqip = Config.present(data["cover_lqip_url"])
+        cover = Config.present(data["cover_url"])
+        picks = []
+        picks << cover_pick(data, lqip, "cover_lqip_url") if lqip
+        picks << cover_pick(data, cover, "cover_url") if cover && cover != lqip
+        picks
+      end
+    end
+
+    def pick_cover(catalog)
+      cover_candidates(catalog).first
+    end
+
+    def attach_pick(pick, env: ENV, fetch: nil)
       bytes = load_bytes(pick[:url], env: env, fetch: fetch)
       return unless bytes
       return if bytes.bytesize > Config.vision_max_bytes(env: env)
@@ -56,30 +86,15 @@ module VibeCurator
         folder_name: pick[:folder_name],
         source: pick[:source]
       )
-    rescue StandardError
-      nil
     end
 
-    # First ready cover among catalog models (already ranked by the caller).
-    def pick_cover(catalog)
-      models = catalog.is_a?(Hash) ? Array(catalog["models"]) : Array(catalog)
-      models.each do |model|
-        data = model.is_a?(Hash) ? model.transform_keys(&:to_s) : {}
-        next unless data["cover_status"].to_s == "ready"
-
-        lqip = Config.present(data["cover_lqip_url"])
-        cover = Config.present(data["cover_url"])
-        url = lqip || cover
-        next unless url
-
-        return {
-          url: url,
-          source: lqip ? "cover_lqip_url" : "cover_url",
-          model_id: data["id"],
-          folder_name: data["folder_name"]
-        }
-      end
-      nil
+    def cover_pick(data, url, source)
+      {
+        url: url,
+        source: source,
+        model_id: data["id"],
+        folder_name: data["folder_name"]
+      }
     end
 
     def load_bytes(url, env: ENV, fetch: nil)
