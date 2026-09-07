@@ -175,7 +175,12 @@ class ModelSearch
     clauses = []
     ModelCatalogFilters.tag_values(@filters[:tags]).each { |name| clauses << "tags = #{meili_quote(name)}" }
     clauses << "library_id = #{@filters[:library_id].to_i}" if @filters[:library_id].present?
-    clauses << "uploaded_by_id = #{@filters[:uploaded_by_id].to_i}" if @filters[:uploaded_by_id].present?
+    uploaded_by_id = @filters[:uploaded_by_id]
+    if uploaded_by_id == UploadedByParam::NONE
+      clauses << "uploaded_by_id = -1"
+    elsif uploaded_by_id.present?
+      clauses << "uploaded_by_id = #{uploaded_by_id.to_i}"
+    end
     slug = (@filters[:creator_slug].presence || @filters[:creator].presence).to_s.strip.downcase
     clauses << "creator_slug = #{meili_quote(slug)}" if slug.present?
     status = @filters[:cover_status].to_s.strip.downcase

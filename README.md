@@ -7,7 +7,7 @@
 Storage is the owner's NFS mount. There is one library pile.
 
 - Every signed-in user sees every model. There is no per-user hidden folder and no "don't share" toggle.
-- Authorship (`uploaded_by`) is stored for audit only. It is never used to hide files.
+- Authorship (`uploaded_by`) is stored for audit only. It is never used to hide files. The optional gallery `uploaded_by` chip filters the shared pile; it is not an ACL.
 - Policy: if you do not want it shared, do not upload.
 
 ## Roles
@@ -565,13 +565,14 @@ All endpoints except `POST /api/v1/session`, invite preview/redeem, and `GET /up
 - `POST /api/v1/session` `{ email, password }`
 - `GET /api/v1/me` (each `user.libraries[]` includes `curation: { last_polled_at, last_provider, last_error }`)
 - `GET /api/v1/libraries` · `GET /api/v1/libraries/:id` (every library includes `curation` poll state and latest `scan`; owner detail also includes `scan_settings` and `cursors`)
+- `GET /api/v1/libraries/:id/members` `{ members: [{ id, display_name }] }` — current **memberships** for the Friend picker (owner / contributor / viewer). Not Creators. Same read access as the library. Unknown library → **404**.
 - `GET /api/v1/libraries/:id/scan` current + last `ScanRun` (`status`, `phase`, `path_prefix`, `budgets`, counts, errors, started/finished, `resume` summary). Same read access as the library (viewers included)
 - `POST /api/v1/libraries/:id/scan` `{ path_prefix? }` owner-only; `202` + latest scan status
 - `GET /api/v1/libraries/:id/ops` read-only ops snapshot (owner/contributor). See **Calm ops chips**
 - `GET /api/v1/ops` · `GET /api/v1/ops?library_id=` same snapshot for every library the caller can curate (or one library)
 - `GET /api/v1/creators` (`id`, `slug`, `name`, `source`, `model_count`)
 - `GET /api/v1/creators/:id` or `GET /api/v1/creators/:slug` (paginated models; `cursor` / `limit` like the catalog)
-- `GET /api/v1/models?cursor=&limit=&creator_slug=&creator=&tag=&tags[]=&cover_status=&has_cover=` (cursor pagination on `updated_at,id`; no owner ACL filter; includes `liked`, `like_count`, `bookmark_folder_ids`, nullable `creator: { id, slug, name }`, `cover_status`, `cover_url`, `cover_lqip_url`, `cover_placeholder`). Chip filters are optional and keep the unfiltered gallery when omitted. `has_cover=true` is `cover_status=ready`. `limit` max 60. Text `q` is **not** a catalog param — use `GET /search`.
+- `GET /api/v1/models?cursor=&limit=&creator_slug=&creator=&tag=&tags[]=&cover_status=&has_cover=&uploaded_by=` (cursor pagination on `updated_at,id`; no owner ACL filter; includes `liked`, `like_count`, `bookmark_folder_ids`, nullable `creator: { id, slug, name }`, nullable `uploaded_by: { id, display_name }`, `cover_status`, `cover_url`, `cover_lqip_url`, `cover_placeholder`). Chip filters are optional and keep the unfiltered gallery when omitted. `has_cover=true` is `cover_status=ready`. `uploaded_by=me` is the signed-in user; `uploaded_by=<user_id>` is that membership user. Omit/blank = All (includes NFS rows with null `uploaded_by_id`). Me/Friend never invent owners — null attribution is excluded. Unknown / invalid `uploaded_by` → empty list, not All. `limit` max 60. Text `q` is **not** a catalog param — use `GET /search`.
 - `GET /api/v1/models/:id`
 - `POST /api/v1/models/:id/like` · `DELETE /api/v1/models/:id/like`
 - `POST /api/v1/models/merge` `{ library_id, source_ids?|asset_ids?, target_id?|title? }` (owner/contributor)
@@ -593,7 +594,7 @@ All endpoints except `POST /api/v1/session`, invite preview/redeem, and `GET /up
 - `GET /api/v1/archive_members/:id/content` (stream-one member, 64 KiB chunks, `Accept-Ranges: bytes`; `Range` → 206; `?download=1` for attachment; abortable)
 - `GET /api/v1/assets/:id/content` (lazy mesh / file stream)
 - `GET /api/v1/archive_members/:id/preview` (derived thumb or inline image stream; mesh returns `use_content`)
-- `GET /api/v1/search?q=&creator_slug=&creator=&tag=&tags[]=&cover_status=&has_cover=&has_preview=&library_id=&uploaded_by_id=&offset=&limit=` (Meilisearch when configured; Postgres `ILIKE` fallback). Facets: `tags`, `creator_slug`, `cover_status`, `has_cover`, `has_preview`. `has_cover=true` matches the gallery "Has cover" chip (`cover_status=ready`). `creator` is an alias for `creator_slug`. Offset pagination (`offset` / `limit`, max 60) — not the gallery model-id `cursor`. Response adds `capped` when the fallback hit `VIBE_SEARCH_FALLBACK_CAP`.
+- `GET /api/v1/search?q=&creator_slug=&creator=&tag=&tags[]=&cover_status=&has_cover=&has_preview=&library_id=&uploaded_by=&uploaded_by_id=&offset=&limit=` (Meilisearch when configured; Postgres `ILIKE` fallback). Facets: `tags`, `creator_slug`, `cover_status`, `has_cover`, `has_preview`. `has_cover=true` matches the gallery "Has cover" chip (`cover_status=ready`). `creator` is an alias for `creator_slug`. `uploaded_by=me` \| `uploaded_by=<user_id>` matches `GET /models` (Meili `uploaded_by_id` filter when indexed; same Postgres path on fallback). `uploaded_by_id=` remains a numeric alias. Offset pagination (`offset` / `limit`, max 60) — not the gallery model-id `cursor`. Response adds `capped` when the fallback hit `VIBE_SEARCH_FALLBACK_CAP`.
 - `GET /covers/:id.webp` generated cover bytes (libvips webp under `VIBE_COVER_ROOT`)
 - `GET /covers/:id.lqip.webp` tiny LQIP / small-thumb webp for cheap card chrome
 - `POST /api/v1/covers/writeback` `{ model_id, status: "ready"|"failed", cover_url?, cover_lqip_url?, cover_placeholder?, asset_id?, cache_key? }` (`GenerateCoverJob` uses `CoverWriteback.apply!` in-process; `X-Cover-Token: $VIBE_COVER_TOKEN` or a curator Bearer token)
@@ -632,6 +633,8 @@ All endpoints except `POST /api/v1/session`, invite preview/redeem, and `GET /up
 | `tag` / `tags[]` | AND tag names | same + facet `tags` |
 | `cover_status` | `missing` \| `pending` \| `ready` \| `failed` | same + facet `cover_status` |
 | `has_cover` | `true` = ready cover (gallery "Has cover" chip) | same + facet `has_cover` |
+| `uploaded_by` | `me` \| `<user_id>` (omit/blank = All) | same; Meili filters `uploaded_by_id` |
+| `uploaded_by_id` | numeric alias for `uploaded_by` | same |
 | `cursor` | model id cursor (`updated_at,id`) | not used (do not send a gallery cursor here) |
 | `offset` | not used | Meili / fallback page offset |
 | `limit` | page size, max 60 | page size, max 60 |
@@ -649,6 +652,7 @@ Cover-first Library at `/`. Slim rail + top search stay in the chrome. Sticky ch
 | `?creator=` | `creator_slug=` on `/search` (when `q` is set) or `/models` (chips only) |
 | `?tag=` | `tag=` |
 | `?cover=1` | `has_cover=true` (ready cover only). Do **not** `models.filter(hasReadyCover)` |
+| `?uploaded_by=me` \| `?uploaded_by=<user_id>` | same param on `/models` (chips only) or `/search` (when `q` is set). Omit = All. Friend ids come from `GET /libraries/:id/members`, not Creators. |
 
 Facets (`tags`, `creator_slug`, `cover_status`, `has_cover`) drive the Creators / Tags dropdowns. Active pills show the creator **name**, never a raw slug. Null `creator` on a card is omitted (never “Unknown creator”). Failed covers may show a “Cover failed” checker line.
 

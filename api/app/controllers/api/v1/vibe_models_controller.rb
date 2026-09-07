@@ -8,7 +8,8 @@ module API
           tags: gallery_tags,
           creator_slug: params[:creator_slug].presence || params[:creator],
           cover_status: params[:cover_status],
-          has_cover: params[:has_cover]
+          has_cover: params[:has_cover],
+          uploaded_by_id: UploadedByParam.from_params(params, current_user: current_user)
         )
         limit = [[params.fetch(:limit, 24).to_i, 1].max, 60].min
 

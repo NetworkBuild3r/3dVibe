@@ -8,7 +8,7 @@ module API
           filters: {
             tags: search_tags,
             library_id: params[:library_id],
-            uploaded_by_id: params[:uploaded_by_id],
+            uploaded_by_id: UploadedByParam.from_params(params, current_user: current_user),
             has_preview: params[:has_preview],
             creator_slug: params[:creator_slug].presence || params[:creator],
             cover_status: params[:cover_status],
