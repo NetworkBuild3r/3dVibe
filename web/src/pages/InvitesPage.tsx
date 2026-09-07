@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
-import { api, type Invite, type LibraryInfo } from "../api";
+import { api, type Invite } from "../api";
+import { useLibrary } from "../library";
 
 function inviteUrl(invite: Invite) {
   const path = invite.redeem_path || `/invite/${invite.token || ""}`;
@@ -7,9 +8,8 @@ function inviteUrl(invite: Invite) {
 }
 
 export function InvitesPage() {
-  const [libraries, setLibraries] = useState<LibraryInfo[]>([]);
+  const { libraries, libraryId, setLibraryId, applyLibraries } = useLibrary({ autoLoad: false });
   const [invites, setInvites] = useState<Invite[]>([]);
-  const [libraryId, setLibraryId] = useState<number | "">("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("contributor");
   const [expiresInDays, setExpiresInDays] = useState("14");
@@ -19,9 +19,8 @@ export function InvitesPage() {
 
   async function refresh() {
     const [libraryPayload, invitePayload] = await Promise.all([api.libraries(), api.invites()]);
-    setLibraries(libraryPayload.libraries);
+    applyLibraries(libraryPayload.libraries);
     setInvites(invitePayload.invites);
-    if (libraryId === "" && libraryPayload.libraries[0]) setLibraryId(libraryPayload.libraries[0].id);
   }
 
   useEffect(() => {
