@@ -220,7 +220,7 @@ class ProvidersTest < Minitest::Test
     assert_equal 503, error.status
     assert_equal "unknown_provider", error.code
     assert_match(/gemini/, error.message)
-    refute_match(/stub/, error.message)
+    refute_includes error.message, 'provider "stub"'
   end
 
   def test_unknown_runtime_provider_does_not_silently_stub

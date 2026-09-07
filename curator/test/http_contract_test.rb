@@ -107,7 +107,7 @@ class HTTPContractTest < Minitest::Test
     assert_equal 503, result[:status]
     assert_equal "unknown_provider", result[:body]["error"]
     assert_match(/gemini/, result[:body]["message"])
-    refute_equal "stub", result[:body]["provider"]
+    refute result[:body].key?("proposals")
   end
 
   def test_xai_misconfig_is_503
