@@ -173,14 +173,17 @@ class VisionTest < Minitest::Test
 
   def test_over_budget_bytes_are_skipped
     Dir.mktmpdir do |root|
+      FileUtils.mkdir_p(root)
+      File.binwrite(File.join(root, "12.lqip.webp"), File.binread(FIXTURE_COVER) + ("\x00" * 2000))
       seen = nil
       transport = fake_openai_transport(llm_payload) do |_uri, request|
         seen = JSON.parse(request.body)
       end
-      env = cover_root_env(root,
+      env = env_hash(
         "VIBE_CURATOR_PROVIDER" => "xai",
         "XAI_API_KEY" => "xai-test-key",
-        "VIBE_CURATOR_VISION_MAX_BYTES" => "16"
+        "VIBE_COVER_ROOT" => root,
+        "VIBE_CURATOR_VISION_MAX_BYTES" => "256"
       )
       VibeCurator::Service.proposals(payload: catalog_with_ready_cover, env: env, transport: transport)
       assert seen["messages"][1]["content"].is_a?(String)

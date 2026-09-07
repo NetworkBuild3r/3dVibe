@@ -7,7 +7,7 @@ module VibeCurator
   module Prompt
     module_function
 
-    def system_prompt(budget:, max_per_kind: Config::DEFAULT_MAX_PER_KIND, kind_priority: Config::DEFAULT_KIND_PRIORITY, min_confidence: 0.0)
+    def system_prompt(budget:, max_per_kind: DEFAULT_MAX_PER_KIND, kind_priority: DEFAULT_KIND_PRIORITY, min_confidence: 0.0)
       priority = Array(kind_priority).join(", ")
       confidence_line =
         if min_confidence.to_f.positive?
