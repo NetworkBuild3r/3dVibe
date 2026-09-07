@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   api,
@@ -39,6 +39,7 @@ import {
   printerOptionLabel,
   shouldShowAssetPicker
 } from "../prints";
+import { canToggleModelLike } from "../likes";
 
 type Viewer =
   | { kind: "idle" }
@@ -73,9 +74,13 @@ export function ModelPage() {
   const [organizeStatus, setOrganizeStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [shelfError, setShelfError] = useState<string | null>(null);
+  const [likeBusy, setLikeBusy] = useState(false);
+  const likeBusyRef = useRef(false);
 
   useEffect(() => {
     setViewer({ kind: "idle" });
+    likeBusyRef.current = false;
+    setLikeBusy(false);
   }, [id]);
 
   useEffect(() => {
@@ -163,13 +168,18 @@ export function ModelPage() {
   const activeMerge = model?.merges?.find((merge) => !merge.split_at);
 
   async function toggleLike() {
-    if (!model) return;
+    if (!model || !canToggleModelLike(likeBusyRef.current)) return;
+    likeBusyRef.current = true;
+    setLikeBusy(true);
     setShelfError(null);
     try {
       const payload = model.liked ? await api.unlikeModel(model.id) : await api.likeModel(model.id);
       setModel(payload.model);
     } catch (err) {
       setShelfError(err instanceof Error ? err.message : "Could not update like");
+    } finally {
+      likeBusyRef.current = false;
+      setLikeBusy(false);
     }
   }
 
@@ -369,7 +379,8 @@ export function ModelPage() {
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <button
             type="button"
-            className={`rounded-full px-3 py-1 text-sm ${model.liked ? "bg-rose-500/15 text-rose-300" : "bg-white/5 text-slate-300"}`}
+            className={`rounded-full px-3 py-1 text-sm disabled:opacity-60 ${model.liked ? "bg-rose-500/15 text-rose-300" : "bg-white/5 text-slate-300"}`}
+            disabled={likeBusy}
             onClick={() => void toggleLike()}
           >
             {model.liked ? "Liked" : "Like"} · {model.like_count || 0}

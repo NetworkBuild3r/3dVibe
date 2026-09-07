@@ -1,11 +1,12 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { api, type BookmarkFolder, type ModelCard } from "../api";
+import { emptyShelfCopy, isLikesShelf, nextShelfTicket, shouldApplyShelfLoad, type ShelfId } from "../bookmarks";
 import { ModelCard as ModelCardView } from "../components/ModelCard";
 import { CardGridSkeleton, EmptyState, InlineError, SidebarSkeleton } from "../components/UiStates";
 
 export function BookmarksPage() {
   const [folders, setFolders] = useState<BookmarkFolder[]>([]);
-  const [selectedId, setSelectedId] = useState<number | "likes">("likes");
+  const [selectedId, setSelectedId] = useState<ShelfId>("likes");
   const [models, setModels] = useState<ModelCard[]>([]);
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -14,20 +15,26 @@ export function BookmarksPage() {
   const [renamingId, setRenamingId] = useState<number | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [busy, setBusy] = useState(false);
+  const requestRef = useRef(0);
 
   async function refreshFolders() {
     const payload = await api.bookmarkFolders();
     setFolders(payload.bookmark_folders);
   }
 
-  async function refreshModels(id: number | "likes") {
-    if (id === "likes") {
+  async function fetchShelfModels(id: ShelfId) {
+    if (isLikesShelf(id)) {
       const payload = await api.likes();
-      setModels(payload.models);
-      return;
+      return payload.models;
     }
     const payload = await api.bookmarkFolder(id);
-    setModels(payload.bookmark_folder.models || []);
+    return payload.bookmark_folder.models || [];
+  }
+
+  async function refreshModels(id: ShelfId, ticket: number) {
+    const next = await fetchShelfModels(id);
+    if (!shouldApplyShelfLoad(ticket, requestRef.current)) return;
+    setModels(next);
   }
 
   async function loadFolders() {
@@ -42,16 +49,21 @@ export function BookmarksPage() {
     }
   }
 
-  async function loadModels(id: number | "likes") {
+  async function loadModels(id: ShelfId) {
+    const ticket = nextShelfTicket(requestRef.current);
+    requestRef.current = ticket;
     setError(null);
     setModelsLoading(true);
     try {
-      await refreshModels(id);
+      await refreshModels(id, ticket);
     } catch (err) {
+      if (!shouldApplyShelfLoad(ticket, requestRef.current)) return;
       setError(err instanceof Error ? err.message : "Failed to load");
       setModels([]);
     } finally {
-      setModelsLoading(false);
+      if (shouldApplyShelfLoad(ticket, requestRef.current)) {
+        setModelsLoading(false);
+      }
     }
   }
 
@@ -134,25 +146,31 @@ export function BookmarksPage() {
   }
 
   async function removeBookmark(modelId: number) {
+    const shelf = selectedId;
+    const ticket = requestRef.current;
     setBusy(true);
     setError(null);
     try {
-      if (selectedId === "likes") {
+      if (isLikesShelf(shelf)) {
         await api.unlikeModel(modelId);
       } else {
-        await api.removeBookmark(selectedId, modelId);
+        await api.removeBookmark(shelf, modelId);
       }
-      await refreshModels(selectedId);
+      if (shouldApplyShelfLoad(ticket, requestRef.current)) {
+        await refreshModels(shelf, ticket);
+      }
       await refreshFolders();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not remove");
+      if (shouldApplyShelfLoad(ticket, requestRef.current)) {
+        setError(err instanceof Error ? err.message : "Could not remove");
+      }
     } finally {
       setBusy(false);
     }
   }
 
-  const selectedFolder = selectedId === "likes" ? null : folders.find((folder) => folder.id === selectedId);
-  const emptyCopy = selectedId === "likes" ? "No liked models yet." : "This shelf is empty.";
+  const selectedFolder = isLikesShelf(selectedId) ? null : folders.find((folder) => folder.id === selectedId);
+  const emptyCopy = emptyShelfCopy(selectedId);
 
   return (
     <div className="space-y-6">
@@ -175,11 +193,11 @@ export function BookmarksPage() {
                 type="button"
                 onClick={() => setSelectedId("likes")}
                 className={`w-full rounded-xl px-3 py-2 text-left text-sm ${
-                  selectedId === "likes" ? "bg-accent-500/15 text-accent-300" : "bg-ink-900 text-slate-300"
+                  isLikesShelf(selectedId) ? "bg-accent-500/15 text-accent-300" : "bg-ink-900 text-slate-300"
                 }`}
               >
                 Liked
-                {selectedId === "likes" && !modelsLoading ? (
+                {isLikesShelf(selectedId) && !modelsLoading ? (
                   <span className="ml-2 text-xs text-slate-500">{models.length}</span>
                 ) : null}
               </button>
@@ -270,7 +288,7 @@ export function BookmarksPage() {
                     disabled={busy}
                     onClick={() => void removeBookmark(model.id)}
                   >
-                    {selectedId === "likes" ? "Unlike" : "Remove from shelf"}
+                    {isLikesShelf(selectedId) ? "Unlike" : "Remove from shelf"}
                   </button>
                 </div>
               ))}

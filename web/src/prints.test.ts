@@ -4,6 +4,7 @@ import { api } from "./api";
 import {
   BROWSER_NEVER_COPY,
   canCancelJob,
+  canManagePrinters,
   canRetryJob,
   emptyPrintsCopy,
   enqueueErrorMessage,
@@ -152,6 +153,13 @@ describe("print honesty bind", () => {
   it("shows the file picker only when more than one loose asset exists", () => {
     expect(shouldShowAssetPicker([{ id: 1 }])).toBe(false);
     expect(shouldShowAssetPicker([{ id: 1 }, { id: 2 }])).toBe(true);
+  });
+
+  it("gates the printers registry on can_manage_printers, not can_invite", () => {
+    expect(canManagePrinters({ can_manage_printers: true })).toBe(true);
+    expect(canManagePrinters({ can_manage_printers: false })).toBe(false);
+    expect(canManagePrinters(null)).toBe(false);
+    expect(canManagePrinters(undefined)).toBe(false);
   });
 
   it("keeps enqueue errors honest and skips Test print unless the API exists", () => {

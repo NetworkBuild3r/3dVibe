@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth";
 import { canManageCuratorSettings } from "../curatorSettings";
+import { canManagePrinters } from "../prints";
 import { IconChevron } from "./Icons";
 
 export function AvatarMenu() {
@@ -61,7 +62,7 @@ export function AvatarMenu() {
               Curator
             </Link>
           ) : null}
-          {user.can_manage_printers ? (
+          {canManagePrinters(user) ? (
             <Link to="/printers" role="menuitem" className="block px-3 py-2 text-sm text-slate-200 hover:bg-white/5" onClick={() => setOpen(false)}>
               Printers
             </Link>

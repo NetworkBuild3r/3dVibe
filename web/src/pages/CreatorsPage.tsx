@@ -17,6 +17,7 @@ import {
   missingCreatorCopy,
   nextCreatorHasMore
 } from "../creators";
+import { canToggleCardLike, cardLikeBusy, clearLikeBusy, markLikeBusy } from "../likes";
 
 export function CreatorsPage() {
   const { slug } = useParams();
@@ -34,7 +35,7 @@ export function CreatorsPage() {
   const [detailError, setDetailError] = useState<string | null>(null);
   const [missing, setMissing] = useState(false);
   const [hasMore, setHasMore] = useState(false);
-  const [likeBusyId, setLikeBusyId] = useState<number | null>(null);
+  const [likeBusyIds, setLikeBusyIds] = useState<number[]>([]);
 
   const cursorRef = useRef<string | null>(null);
   const hasMoreRef = useRef(false);
@@ -42,6 +43,7 @@ export function CreatorsPage() {
   const requestRef = useRef(0);
   const listRequestRef = useRef(0);
   const sentinel = useRef<HTMLDivElement | null>(null);
+  const likeBusyRef = useRef<number[]>([]);
 
   const filtered = useMemo(() => filterCreators(creators, query), [creators, query]);
   const packHome = Boolean(slug);
@@ -153,15 +155,17 @@ export function CreatorsPage() {
   }, [loadModels, slug, models.length, missing]);
 
   async function toggleLike(model: ModelCard) {
-    if (likeBusyId != null) return;
-    setLikeBusyId(model.id);
+    if (!canToggleCardLike(likeBusyRef.current, model.id)) return;
+    likeBusyRef.current = markLikeBusy(likeBusyRef.current, model.id);
+    setLikeBusyIds(likeBusyRef.current);
     try {
       const payload = model.liked ? await api.unlikeModel(model.id) : await api.likeModel(model.id);
       setModels((current) => current.map((item) => (item.id === model.id ? { ...item, ...payload.model } : item)));
     } catch {
       setDetailError("Could not update like");
     } finally {
-      setLikeBusyId(null);
+      likeBusyRef.current = clearLikeBusy(likeBusyRef.current, model.id);
+      setLikeBusyIds(likeBusyRef.current);
     }
   }
 
@@ -271,7 +275,7 @@ export function CreatorsPage() {
                     <ModelCardView
                       key={model.id}
                       model={model}
-                      likeBusy={likeBusyId === model.id}
+                      likeBusy={cardLikeBusy(likeBusyIds, model.id)}
                       onLike={(item) => void toggleLike(item)}
                     />
                   ))}
