@@ -8,7 +8,16 @@ class BulkIndexVibeModelsJob < ApplicationJob
     SearchIndexBuffer.release_flush!
     ids = Array(model_ids).compact.map { |id| Integer(id) }
     ids = SearchIndexBuffer.drain(SearchIndex.batch_size) if ids.empty?
-    SearchIndex.new.upsert_many(ids) if ids.any?
-    SearchIndexBuffer.schedule_if_pending!
+    return if ids.empty?
+
+    result = SearchIndex.new.upsert_many(ids)
+    if %i[failed unavailable].include?(result)
+      # Drain is destructive (Redis SPOP). Put ids back and debounce so a
+      # Meili blip does not drop cover/scan freshness forever, and so we
+      # do not tight-loop the sidecar.
+      SearchIndexBuffer.add_ids(ids)
+    else
+      SearchIndexBuffer.schedule_if_pending!
+    end
   end
 end

@@ -20,10 +20,15 @@ module API
 
       def content
         asset = find_asset
-        path = asset.absolute_path
-        raise ActiveRecord::RecordNotFound unless File.file?(path)
+        model = asset.vibe_model
+        jail = LibraryPathJail.new(model.library.root_path)
+        path = jail.join(model.folder_name, asset.relative_path)
+        raise ActiveRecord::RecordNotFound unless File.exist?(path.to_s)
 
-        send_file path, filename: asset.filename, disposition: "inline"
+        real = jail.assert_realpath_inside!(path)
+        raise ActiveRecord::RecordNotFound unless File.file?(real.to_s)
+
+        send_file real, filename: asset.filename, disposition: "inline"
       end
 
       private
