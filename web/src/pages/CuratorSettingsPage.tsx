@@ -5,20 +5,26 @@ import { useAuth } from "../auth";
 import { CalmChip } from "../components/CalmChip";
 import { EmptyState, InlineError, Pulse } from "../components/UiStates";
 import {
-  CLEAR_KEY_CONFIRM,
+  DEFAULT_OLLAMA_MODEL,
   KEY_HELPER,
+  OLLAMA_DEFAULT_HINT,
   PROVIDER_OPTIONS,
   SETTINGS_FOOTER,
   STUB_HELPER,
   canManageCuratorSettings,
+  clearKeyConfirm,
+  defaultOllamaModelInput,
+  isCuratorKeyProvider,
+  keyStatusFor,
   parseCuratorSetting,
   providerPatchBody,
+  type ApiKeyStatus,
+  type CuratorKeyProvider,
   type CuratorProvider,
-  type CuratorSetting,
-  type XaiApiKeyStatus
+  type CuratorSetting
 } from "../curatorSettings";
 
-function KeyStatusChip({ status }: { status: XaiApiKeyStatus }) {
+function KeyStatusChip({ status }: { status: ApiKeyStatus }) {
   const missing = status === "missing";
   return (
     <span
@@ -39,6 +45,8 @@ function SettingsSkeleton() {
         <Pulse className="h-9 w-16 rounded-full" />
         <Pulse className="h-9 w-20 rounded-full" />
         <Pulse className="h-9 w-14 rounded-full" />
+        <Pulse className="h-9 w-20 rounded-full" />
+        <Pulse className="h-9 w-24 rounded-full" />
       </div>
       <Pulse className="mt-6 h-4 w-2/3" />
       <Pulse className="mt-4 h-10 w-full" />
@@ -54,7 +62,7 @@ export function CuratorSettingsPage() {
   const keyInput = useRef<HTMLInputElement | null>(null);
   const mounted = useRef(true);
   const [setting, setSetting] = useState<CuratorSetting | null>(null);
-  const [provider, setProvider] = useState<CuratorProvider>("stub");
+  const [provider, setProvider] = useState<CuratorProvider>("ollama");
   const [ollamaUrl, setOllamaUrl] = useState("");
   const [ollamaModel, setOllamaModel] = useState("");
   const [loading, setLoading] = useState(true);
@@ -85,7 +93,7 @@ export function CuratorSettingsPage() {
     setSetting(safe);
     setProvider(safe.provider);
     setOllamaUrl(safe.ollama_url || "");
-    setOllamaModel(safe.ollama_model || "");
+    setOllamaModel(defaultOllamaModelInput(safe));
   }
 
   async function refresh() {
@@ -118,6 +126,16 @@ export function CuratorSettingsPage() {
     if (keyInput.current) keyInput.current.value = "";
   }
 
+  function onSelectProvider(next: CuratorProvider) {
+    setProvider(next);
+    if (next === "ollama" && !ollamaModel.trim()) {
+      setOllamaModel(DEFAULT_OLLAMA_MODEL);
+    }
+    if (isCuratorKeyProvider(next)) {
+      clearKeyField();
+    }
+  }
+
   async function onSaveProvider(event: FormEvent) {
     event.preventDefault();
     if (saving) return;
@@ -135,7 +153,7 @@ export function CuratorSettingsPage() {
     }
   }
 
-  async function onSaveKey(event: FormEvent) {
+  async function onSaveKey(event: FormEvent, keyProvider: CuratorKeyProvider) {
     event.preventDefault();
     if (savingKey) return;
     const value = keyInput.current?.value.trim() ?? "";
@@ -146,7 +164,7 @@ export function CuratorSettingsPage() {
     setSavingKey(true);
     setError(null);
     try {
-      const payload = await api.setCuratorXaiApiKey(value);
+      const payload = await api.setCuratorApiKey(keyProvider, value);
       clearKeyField();
       if (!mounted.current) return;
       applySetting(payload.curator_setting);
@@ -158,13 +176,13 @@ export function CuratorSettingsPage() {
     }
   }
 
-  async function onClearKey() {
+  async function onClearKey(keyProvider: CuratorKeyProvider) {
     if (clearingKey) return;
-    if (!window.confirm(CLEAR_KEY_CONFIRM)) return;
+    if (!window.confirm(clearKeyConfirm(keyProvider))) return;
     setClearingKey(true);
     setError(null);
     try {
-      const payload = await api.clearCuratorXaiApiKey();
+      const payload = await api.clearCuratorApiKey(keyProvider);
       clearKeyField();
       if (!mounted.current) return;
       applySetting(payload.curator_setting);
@@ -194,7 +212,8 @@ export function CuratorSettingsPage() {
     );
   }
 
-  const keyStatus = setting?.xai_api_key_status || "missing";
+  const keyProvider = isCuratorKeyProvider(provider) ? provider : null;
+  const keyStatus = keyProvider ? keyStatusFor(setting, keyProvider) : "missing";
 
   return (
     <div className="space-y-6">
@@ -220,13 +239,14 @@ export function CuratorSettingsPage() {
                     <CalmChip
                       key={option.id}
                       active={provider === option.id}
-                      onClick={() => setProvider(option.id)}
+                      onClick={() => onSelectProvider(option.id)}
                     >
                       {option.label}
                     </CalmChip>
                   ))}
                 </div>
                 {provider === "stub" ? <p className="mt-3 text-sm text-slate-500">{STUB_HELPER}</p> : null}
+                {provider === "ollama" ? <p className="mt-3 text-sm text-slate-500">{OLLAMA_DEFAULT_HINT}</p> : null}
               </div>
 
               {provider === "ollama" ? (
@@ -247,7 +267,7 @@ export function CuratorSettingsPage() {
                       className="mt-1 w-full rounded-lg border border-white/10 bg-ink-950 px-3 py-2 text-white outline-none ring-accent-500 focus:ring-2"
                       value={ollamaModel}
                       onChange={(event) => setOllamaModel(event.target.value)}
-                      placeholder="llama3.1"
+                      placeholder={DEFAULT_OLLAMA_MODEL}
                       autoComplete="off"
                     />
                   </label>
@@ -270,8 +290,8 @@ export function CuratorSettingsPage() {
               </div>
             </form>
 
-            {provider === "xai" ? (
-              <form onSubmit={(event) => void onSaveKey(event)} className="mt-8 border-t border-white/5 pt-6">
+            {keyProvider ? (
+              <form onSubmit={(event) => void onSaveKey(event, keyProvider)} className="mt-8 border-t border-white/5 pt-6">
                 <div className="flex flex-wrap items-center gap-2">
                   <h2 className="text-sm text-slate-300">API key</h2>
                   <KeyStatusChip status={keyStatus} />
@@ -282,7 +302,7 @@ export function CuratorSettingsPage() {
                     ref={keyInput}
                     type="password"
                     autoComplete="new-password"
-                    name="xai-api-key"
+                    name={`${keyProvider}-api-key`}
                     className="mt-1 w-full rounded-lg border border-white/10 bg-ink-950 px-3 py-2 text-white outline-none ring-accent-500 focus:ring-2"
                     placeholder="New key"
                   />
@@ -299,7 +319,7 @@ export function CuratorSettingsPage() {
                   <button
                     type="button"
                     disabled={clearingKey || keyStatus === "missing"}
-                    onClick={() => void onClearKey()}
+                    onClick={() => void onClearKey(keyProvider)}
                     className="rounded-lg border border-rose-400/30 px-4 py-2 text-sm text-rose-300 hover:border-rose-400/50 disabled:opacity-50"
                   >
                     {clearingKey ? "Removing…" : "Clear key"}
