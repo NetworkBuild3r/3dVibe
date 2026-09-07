@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { api, type LibraryInfo, type ScanStatus } from "../api";
+import { api } from "../api";
 import { useLibrary } from "../library";
+import type { LibraryInfo, ScanStatus } from "../types";
 
 function formatWhen(value?: string | null) {
   if (!value) return "—";

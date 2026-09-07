@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { ApiError, api, type LibraryScanDetail, type OpsSnapshot, type ScanStatus } from "../api";
+import { ApiError, api } from "../api";
+import type { LibraryScanDetail, OpsSnapshot, ScanStatus } from "../types";
 import { useAuth } from "../auth";
 import { formatRelativeTime } from "../format";
 import { canReadLibraryOps, canScanLibraries } from "../library";

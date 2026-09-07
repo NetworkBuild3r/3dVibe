@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { api, type BookmarkFolder, type ModelCard } from "../api";
+import { api } from "../api";
+import type { BookmarkFolder, ModelCard } from "../types";
 import { emptyShelfCopy, isLikesShelf, nextShelfTicket, shouldApplyShelfLoad, type ShelfId } from "../bookmarks";
 import { ModelCard as ModelCardView } from "../components/ModelCard";
 import { CardGridSkeleton, EmptyState, InlineError, SidebarSkeleton } from "../components/UiStates";

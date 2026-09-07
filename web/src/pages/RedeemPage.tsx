@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
-import { api, type Invite } from "../api";
+import { api } from "../api";
+import type { Invite } from "../types";
 import { useAuth } from "../auth";
 
 export function RedeemPage() {

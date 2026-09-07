@@ -1,4 +1,4 @@
-import type { Creator, ModelCard } from "./api";
+import type { Creator, ModelCard } from "./types";
 
 export const CREATOR_PAGE_SIZE = 24;
 export const MOSAIC_SIZE = 4;

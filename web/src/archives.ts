@@ -1,4 +1,5 @@
-import { ApiError, type ArchiveMember, type ArchiveSummary, type Asset } from "./api";
+import { ApiError } from "./api";
+import type { ArchiveMember, ArchiveSummary, Asset } from "./types";
 import { truncateArchivePath, truncateMiddle } from "./duplicates";
 
 export const CANCELLED_COPY = "Cancelled";

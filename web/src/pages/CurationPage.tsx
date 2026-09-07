@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { ApiError, api, type CurationPollStatus, type CurationProposal, type LibraryInfo } from "../api";
+import { ApiError, api } from "../api";
+import type { CurationPollStatus, CurationProposal, LibraryInfo } from "../types";
 import { useAuth } from "../auth";
 import { CalmChip } from "../components/CalmChip";
 import { EmptyState, InlineError, Pulse } from "../components/UiStates";

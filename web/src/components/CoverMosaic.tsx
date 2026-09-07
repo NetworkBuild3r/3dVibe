@@ -1,4 +1,4 @@
-import type { ModelCard } from "../api";
+import type { ModelCard } from "../types";
 import { mosaicSlots } from "../creators";
 import { CoverMedia } from "./CoverMedia";
 

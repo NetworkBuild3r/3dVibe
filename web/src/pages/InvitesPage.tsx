@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
-import { api, type Invite } from "../api";
+import { api } from "../api";
 import { useLibrary } from "../library";
+import type { Invite } from "../types";
 
 function inviteUrl(invite: Invite) {
   const path = invite.redeem_path || `/invite/${invite.token || ""}`;

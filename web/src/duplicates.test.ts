@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { DuplicateGroup, DuplicateMember, ExtractedArchiveAsset } from "./api";
+import type { DuplicateGroup, DuplicateMember, ExtractedArchiveAsset } from "./types";
 import {
   allMembersMergeable,
   applyExtractedMembers,

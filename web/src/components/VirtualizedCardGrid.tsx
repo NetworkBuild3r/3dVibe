@@ -1,6 +1,6 @@
 import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { ModelCard as ModelCardType } from "../api";
+import type { ModelCard as ModelCardType } from "../types";
 import { columnCount, gridMetrics, type GalleryDensity } from "../gallery";
 import { gridMetricObserveTargets, readGridMetrics } from "../virtualizedGrid";
 

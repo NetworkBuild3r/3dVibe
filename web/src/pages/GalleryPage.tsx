@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { api, type Creator, type ModelCard } from "../api";
+import { api } from "../api";
+import type { Creator, ModelCard } from "../types";
 import { GalleryFilterBar } from "../components/GalleryFilterBar";
 import { ModelCard as ModelCardView } from "../components/ModelCard";
 import { OpsStrip } from "../components/OpsStrip";
