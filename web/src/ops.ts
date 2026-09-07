@@ -8,7 +8,7 @@ import type {
   ScanBudgets,
   ScanResume,
   ScanStatus
-} from "./api";
+} from "./types";
 import { formatRelativeTime } from "./format";
 
 export const OPS_POLL_MS = 10_000;

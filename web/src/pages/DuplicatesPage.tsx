@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { api, type DuplicateGroup, type DuplicateStatus, type ExtractedArchiveAsset, type LibraryInfo } from "../api";
+import { api } from "../api";
+import type { DuplicateGroup, DuplicateStatus, ExtractedArchiveAsset } from "../types";
 import { useAuth } from "../auth";
 import { CalmChip } from "../components/CalmChip";
 import { CoverMedia } from "../components/CoverMedia";
@@ -39,6 +40,7 @@ import {
   type StatusFilter,
   writeLastRun
 } from "../duplicates";
+import { useLibrary } from "../library";
 import { canStartReviewAction, nextReviewActionTicket, shouldApplyReviewAction } from "../reviewActions";
 
 function GroupRowSkeleton() {
@@ -66,8 +68,18 @@ export function DuplicatesPage() {
   const reviewOpen = Number.isFinite(reviewId);
   const preferredLibraryId = duplicateLibraryFromSearch(searchParams.toString());
 
-  const [libraries, setLibraries] = useState<LibraryInfo[]>([]);
-  const [libraryId, setLibraryId] = useState<number | "">("");
+  const { libraries, libraryId, setLibraryId, library: selectedLibrary } = useLibrary({
+    resolveId: (rows, current) =>
+      resolveDuplicateLibraryId({
+        libraries: rows,
+        preferredId: preferredLibraryId,
+        currentId: current
+      }),
+    onError: (message) => {
+      setError(message);
+      setLoading(false);
+    }
+  });
   const [filter, setFilter] = useState<StatusFilter>("open");
   const [groups, setGroups] = useState<DuplicateGroup[]>([]);
   const [reviewGroup, setReviewGroup] = useState<DuplicateGroup | null>(null);
@@ -85,7 +97,6 @@ export function DuplicatesPage() {
   const actingRef = useRef(false);
   const mounted = useRef(true);
 
-  const selectedLibrary = libraries.find((library) => library.id === libraryId);
   const canReview = Boolean(
     selectedLibrary
       ? (selectedLibrary.can_merge ?? user?.can_merge ?? user?.can_curate)
@@ -97,29 +108,6 @@ export function DuplicatesPage() {
     return () => {
       mounted.current = false;
     };
-  }, []);
-
-  useEffect(() => {
-    api
-      .libraries()
-      .then((payload) => {
-        if (!mounted.current) return;
-        setLibraries(payload.libraries);
-        setLibraryId((current) =>
-          resolveDuplicateLibraryId({
-            libraries: payload.libraries,
-            preferredId: preferredLibraryId,
-            currentId: current
-          })
-        );
-      })
-      .catch((err) => {
-        if (!mounted.current) return;
-        setError(err instanceof Error ? err.message : "Failed to load libraries");
-        setLoading(false);
-      });
-    // preferredLibraryId is the landing URL only — do not re-bootstrap on later query edits.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function refresh(options: { silent?: boolean } = {}): Promise<DuplicateGroup[] | null> {

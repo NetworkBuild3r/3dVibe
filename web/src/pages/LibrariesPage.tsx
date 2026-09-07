@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { api, type LibraryInfo, type ScanStatus } from "../api";
+import { api } from "../api";
+import { useLibrary } from "../library";
+import type { LibraryInfo, ScanStatus } from "../types";
 
 function formatWhen(value?: string | null) {
   if (!value) return "—";
@@ -33,27 +35,17 @@ function scanSummary(scan?: ScanStatus) {
 }
 
 export function LibrariesPage() {
-  const [libraries, setLibraries] = useState<LibraryInfo[]>([]);
-  const [selectedId, setSelectedId] = useState<number | "">("");
+  const { libraries, libraryId: selectedId, setLibraryId: setSelectedId, refresh: refreshList } = useLibrary({
+    onError: (message) => setError(message)
+  });
   const [detail, setDetail] = useState<LibraryInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-
-  async function refreshList() {
-    const payload = await api.libraries();
-    setLibraries(payload.libraries);
-    if (selectedId === "" && payload.libraries[0]) setSelectedId(payload.libraries[0].id);
-  }
 
   async function refreshDetail(id: number) {
     const payload = await api.library(id);
     setDetail(payload.library);
   }
-
-  useEffect(() => {
-    refreshList().catch((err) => setError(err instanceof Error ? err.message : "Failed to load libraries"));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(() => {
     if (selectedId === "") {
@@ -72,7 +64,7 @@ export function LibrariesPage() {
       refreshList().catch(() => undefined);
     }, 3000);
     return () => window.clearInterval(timer);
-  }, [active, selectedId]);
+  }, [active, selectedId, refreshList]);
 
   async function scanNow() {
     if (selectedId === "") return;

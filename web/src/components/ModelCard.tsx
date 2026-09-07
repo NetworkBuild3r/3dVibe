@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import type { ModelCard as ModelCardType } from "../api";
+import type { ModelCard as ModelCardType } from "../types";
 import { CoverMedia } from "./CoverMedia";
 import { IconHeart } from "./Icons";
 

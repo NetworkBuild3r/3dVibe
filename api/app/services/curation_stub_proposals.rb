@@ -1,5 +1,10 @@
 # Deterministic fake proposals from the current catalog.
 # Used when VIBE_CURATOR_URL=stub so HITL works without Spark/DGX.
+#
+# Twin of curator/stub_proposals.rb (sidecar image). Same kinds + stub: refs.
+# Do not require that file from Rails — the API image does not ship curator/.
+# Keep sidecar_ref values and payload keys in lockstep; CI stays in-process.
+# Seeds (stub:tag-calibration etc.) are demo rows, not this contract.
 class CurationStubProposals
   def initialize(library, models: nil)
     @library = library

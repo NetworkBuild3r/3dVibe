@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Printer, PrintJob } from "./api";
+import type { Printer, PrintJob } from "./types";
 import {
   BROWSER_NEVER_COPY,
   canCancelJob,

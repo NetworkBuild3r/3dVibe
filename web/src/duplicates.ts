@@ -1,14 +1,14 @@
-import {
-  ApiError,
-  type DuplicateAsset,
-  type DuplicateConfidence,
-  type DuplicateGroup,
-  type DuplicateMember,
-  type DuplicateReason,
-  type DuplicateStatus,
-  type ExtractedArchiveAsset,
-  type ModelCard
-} from "./api";
+import { ApiError } from "./api";
+import type {
+  DuplicateAsset,
+  DuplicateConfidence,
+  DuplicateGroup,
+  DuplicateMember,
+  DuplicateReason,
+  DuplicateStatus,
+  ExtractedArchiveAsset,
+  ModelCard
+} from "./types";
 
 export const MERGE_UNSUPPORTED = "merge_unsupported";
 export const MERGE_UNSUPPORTED_COPY =

@@ -65,4 +65,32 @@ class StubContractTest < Minitest::Test
     assert_equal "unknown_provider", error.code
     assert_match(/gemini/, error.message)
   end
+
+  def test_empty_catalog_emits_no_proposals
+    assert_empty CuratorStub.proposals_for([])
+  end
+
+  def test_single_model_omits_move_and_merge
+    proposals = CuratorStub.proposals_for([sample_catalog["models"].first])
+    assert_equal %w[tag rename organize], proposals.map { |item| item["kind"] }
+    assert_equal(
+      ["stub:tag:alpha-one", "stub:rename:alpha-one", "stub:organize:fixture"],
+      proposals.map { |item| item["sidecar_ref"] }
+    )
+  end
+
+  def test_skips_rename_when_every_folder_is_already_curated
+    proposals = CuratorStub.proposals_for([{ "id" => 1, "folder_name" => "gamma-curated", "title" => "Gamma Curated" }])
+    refute proposals.any? { |item| item["kind"] == "rename" }
+    assert proposals.any? { |item| item["sidecar_ref"] == "stub:tag:gamma-curated" }
+  end
+
+  def test_skips_move_when_the_second_folder_is_already_a_shelf
+    proposals = CuratorStub.proposals_for([
+      { "id" => 12, "folder_name" => "alpha-one", "title" => "Alpha One" },
+      { "id" => 14, "folder_name" => "beta-two-shelf", "title" => "Beta Two Shelf" }
+    ])
+    refute proposals.any? { |item| item["kind"] == "move" }
+    assert proposals.any? { |item| item["sidecar_ref"] == "stub:merge:alpha-one:beta-two-shelf" }
+  end
 end

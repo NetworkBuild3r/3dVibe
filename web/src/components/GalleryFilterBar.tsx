@@ -1,4 +1,4 @@
-import type { Creator, ModelCard } from "../api";
+import type { Creator, ModelCard } from "../types";
 import {
   allChipActive,
   creatorDisplayName,

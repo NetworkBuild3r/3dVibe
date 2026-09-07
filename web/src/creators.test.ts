@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Creator } from "./api";
+import type { Creator } from "./types";
 import {
   creatorHref,
   creatorsIndexHref,

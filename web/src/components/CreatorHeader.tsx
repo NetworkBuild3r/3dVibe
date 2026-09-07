@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import type { Creator, ModelCard } from "../api";
+import type { Creator, ModelCard } from "../types";
 import { libraryHrefForCreator, modelCountLabel, modelCountOf } from "../creators";
 import { CoverMosaic } from "./CoverMosaic";
 

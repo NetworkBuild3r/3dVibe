@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, type PrintJob } from "../api";
+import { api } from "../api";
+import type { PrintJob } from "../types";
 import { CalmChip } from "../components/CalmChip";
 import { JobProgress, JobStatus, ProtocolChip } from "../components/PrintMeta";
 import { EmptyState, InlineError, ListSkeleton } from "../components/UiStates";

@@ -2,6 +2,10 @@
 
 # Deterministic proposals from a catalog snapshot or first-level folders.
 # Keep sidecar_ref values stable so 3dvibe can upsert on poll.
+#
+# Twin of api/app/services/curation_stub_proposals.rb (Rails in-process stub).
+# Do not require that file — the sidecar image is curator/*.rb only.
+# Same kinds + stub: refs; no vision on stub.
 module CuratorStub
   module_function
 

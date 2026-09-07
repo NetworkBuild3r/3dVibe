@@ -1,4 +1,4 @@
-import type { CoverStatus, ModelCard } from "./api";
+import type { CoverStatus, ModelCard } from "./types";
 
 export type CoverVisual = "image" | "shimmer" | "placeholder";
 

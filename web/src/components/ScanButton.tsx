@@ -1,25 +1,17 @@
-import { useEffect, useState } from "react";
-import { api, type LibraryInfo } from "../api";
+import { useState } from "react";
+import { api } from "../api";
 import { useAuth } from "../auth";
+import { canScanLibraries, scanTargetLibrary, useLibrary } from "../library";
 import { IconScan } from "./Icons";
 
 export function ScanButton() {
   const { user } = useAuth();
-  const [libraries, setLibraries] = useState<LibraryInfo[]>([]);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
 
-  const canScan = Boolean(user?.can_manage_libraries || user?.can_invite);
-
-  useEffect(() => {
-    if (!canScan) return;
-    api
-      .libraries()
-      .then((payload) => setLibraries(payload.libraries))
-      .catch(() => undefined);
-  }, [canScan]);
-
-  const target = libraries.find((library) => library.can_scan) || libraries[0];
+  const canScan = canScanLibraries(user);
+  const { libraries } = useLibrary({ enabled: canScan });
+  const target = scanTargetLibrary(libraries);
 
   async function scan() {
     if (!target || busy) return;
