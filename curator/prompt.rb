@@ -92,13 +92,31 @@ module VibeCurator
     end
 
     # Live chat user turn. Text catalog always; one image part when cover loaded.
-    # OpenAI / xAI use content parts. Native Ollama uses content + images[].
-    def user_chat_message(catalog, cover: nil, native_images: false)
+    # OpenAI / xAI use image_url data-URLs. Native Ollama uses images[].
+    # Anthropic Messages API uses image source blocks.
+    def user_chat_message(catalog, cover: nil, native_images: false, image_style: nil)
       text = user_prompt(catalog, cover: cover)
       return { "role" => "user", "content" => text } unless cover
 
-      if native_images
+      style = (image_style || (native_images ? :native : :openai)).to_sym
+      case style
+      when :native
         { "role" => "user", "content" => text, "images" => [cover.base64] }
+      when :anthropic
+        {
+          "role" => "user",
+          "content" => [
+            { "type" => "text", "text" => text },
+            {
+              "type" => "image",
+              "source" => {
+                "type" => "base64",
+                "media_type" => cover.mime,
+                "data" => cover.base64
+              }
+            }
+          ]
+        }
       else
         {
           "role" => "user",

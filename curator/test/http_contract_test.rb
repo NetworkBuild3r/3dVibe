@@ -108,6 +108,27 @@ class HTTPContractTest < Minitest::Test
     assert_equal "xai_not_configured", result[:body]["error"]
   end
 
+  def test_openai_and_anthropic_misconfig_is_503
+    openai = VibeCurator::HTTP.handle(
+      method: "POST",
+      path: "/proposals",
+      headers: { "Authorization" => "Bearer secret" },
+      body: JSON.generate(sample_catalog),
+      env: env_hash("VIBE_CURATOR_PROVIDER" => "openai", "OPENAI_API_KEY" => "")
+    )
+    anthropic = VibeCurator::HTTP.handle(
+      method: "POST",
+      path: "/proposals",
+      headers: { "Authorization" => "Bearer secret" },
+      body: JSON.generate(sample_catalog),
+      env: env_hash("VIBE_CURATOR_PROVIDER" => "anthropic", "ANTHROPIC_API_KEY" => "")
+    )
+    assert_equal 503, openai[:status]
+    assert_equal "openai_not_configured", openai[:body]["error"]
+    assert_equal 503, anthropic[:status]
+    assert_equal "anthropic_not_configured", anthropic[:body]["error"]
+  end
+
   def test_post_runtime_sets_provider_header
     result = VibeCurator::HTTP.handle(
       method: "POST",

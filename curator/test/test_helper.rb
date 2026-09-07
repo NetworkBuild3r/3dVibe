@@ -100,4 +100,14 @@ module CuratorTestHelper
       }
     end
   end
+
+  def fake_anthropic_transport(content, &inspect)
+    lambda do |uri, request|
+      inspect&.call(uri, request)
+      {
+        code: 200,
+        body: JSON.generate({ "content" => [{ "type" => "text", "text" => content }] })
+      }
+    end
+  end
 end

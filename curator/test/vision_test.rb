@@ -99,6 +99,25 @@ class VisionTest < Minitest::Test
     end
   end
 
+  def test_ollama_defaults_to_gemma4_with_native_images
+    Dir.mktmpdir do |root|
+      seen = nil
+      transport = fake_ollama_transport(llm_payload) do |_uri, request|
+        seen = JSON.parse(request.body)
+      end
+      env = cover_root_env(root,
+        "VIBE_CURATOR_PROVIDER" => "ollama",
+        "VIBE_OLLAMA_URL" => "http://ollama.local:11434"
+      )
+      result = VibeCurator::Service.proposals(payload: catalog_with_ready_cover, env: env, transport: transport)
+
+      assert_equal "ollama", result["provider"]
+      assert_equal "gemma4", seen["model"]
+      user = seen["messages"][1]
+      assert_equal [Base64.strict_encode64(File.binread(FIXTURE_COVER))], user["images"]
+    end
+  end
+
   def test_ollama_native_attaches_images_and_uses_vision_model
     Dir.mktmpdir do |root|
       seen = nil
@@ -227,6 +246,83 @@ class VisionTest < Minitest::Test
     VibeCurator::Service.proposals(payload: catalog_with_ready_cover, env: env, transport: transport, fetch: fetch)
     assert_equal "http://api:3000/covers/12.lqip.webp", fetched
     assert seen["messages"][1]["content"].is_a?(Array)
+  end
+
+  def test_openai_attaches_one_fixture_image_as_data_url
+    Dir.mktmpdir do |root|
+      seen = nil
+      transport = fake_openai_transport(llm_payload) do |_uri, request|
+        seen = JSON.parse(request.body)
+      end
+      env = cover_root_env(root, "VIBE_CURATOR_PROVIDER" => "openai", "OPENAI_API_KEY" => "openai-test-key")
+      result = VibeCurator::Service.proposals(payload: catalog_with_ready_cover, env: env, transport: transport)
+
+      assert_equal "openai", result["provider"]
+      assert_equal 1, result["proposals"].size
+      user = seen["messages"][1]
+      assert user["content"].is_a?(Array)
+      assert_equal 2, user["content"].size
+      text = user["content"][0]
+      image = user["content"][1]
+      assert_equal "text", text["type"]
+      payload = JSON.parse(text["text"])
+      assert_equal 12, payload.dig("cover_image", "model_id")
+      assert_equal "cover_lqip_url", payload.dig("cover_image", "source")
+      assert_equal "image_url", image["type"]
+      url = image.dig("image_url", "url").to_s
+      assert url.start_with?("data:image/png;base64,")
+      decoded = Base64.decode64(url.split(",", 2).last).b
+      assert_equal File.binread(FIXTURE_COVER), decoded
+    end
+  end
+
+  def test_anthropic_attaches_one_image_block
+    Dir.mktmpdir do |root|
+      seen = nil
+      transport = fake_anthropic_transport(llm_payload) do |_uri, request|
+        seen = JSON.parse(request.body)
+      end
+      env = cover_root_env(root, "VIBE_CURATOR_PROVIDER" => "anthropic", "ANTHROPIC_API_KEY" => "anthropic-test-key")
+      result = VibeCurator::Service.proposals(payload: catalog_with_ready_cover, env: env, transport: transport)
+
+      assert_equal "anthropic", result["provider"]
+      user = seen["messages"][0]
+      assert_equal "user", user["role"]
+      assert user["content"].is_a?(Array)
+      text = user["content"][0]
+      image = user["content"][1]
+      payload = JSON.parse(text["text"])
+      assert_equal 12, payload.dig("cover_image", "model_id")
+      assert_equal "cover_lqip_url", payload.dig("cover_image", "source")
+      assert_equal "image", image["type"]
+      assert_equal "base64", image.dig("source", "type")
+      assert_equal "image/png", image.dig("source", "media_type")
+      decoded = Base64.decode64(image.dig("source", "data")).b
+      assert_equal File.binread(FIXTURE_COVER), decoded
+      refute seen["messages"].any? { |message| message["role"] == "system" }
+    end
+  end
+
+  def test_openai_and_anthropic_are_text_only_when_cover_missing
+    openai_seen = nil
+    anthropic_seen = nil
+    VibeCurator::Service.proposals(
+      payload: sample_catalog,
+      env: env_hash("VIBE_CURATOR_PROVIDER" => "openai", "OPENAI_API_KEY" => "openai-test-key"),
+      transport: fake_openai_transport(llm_payload) { |_uri, request| openai_seen = JSON.parse(request.body) }
+    )
+    VibeCurator::Service.proposals(
+      payload: sample_catalog,
+      env: env_hash("VIBE_CURATOR_PROVIDER" => "anthropic", "ANTHROPIC_API_KEY" => "anthropic-test-key"),
+      transport: fake_anthropic_transport(llm_payload) { |_uri, request| anthropic_seen = JSON.parse(request.body) }
+    )
+
+    openai_user = openai_seen["messages"][1]
+    assert openai_user["content"].is_a?(String)
+    refute JSON.parse(openai_user["content"]).key?("cover_image")
+    anthropic_user = anthropic_seen["messages"][0]
+    assert anthropic_user["content"].is_a?(String)
+    refute JSON.parse(anthropic_user["content"]).key?("cover_image")
   end
 
   def test_stub_never_loads_or_attaches_vision
