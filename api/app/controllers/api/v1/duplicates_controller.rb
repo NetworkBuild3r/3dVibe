@@ -59,7 +59,7 @@ module API
           group: group.reload.as_api(viewer: current_user),
           review: review.as_api,
           merge: record.as_api,
-          model: detail_payload(target)
+          model: VibeModel.detail_payload(target, viewer: current_user)
         }
       end
 
@@ -187,7 +187,7 @@ module API
         target = accessible_models.includes(:tags, :uploaded_by, :creator, assets: %i[archive_members uploaded_by])
                                  .find(result.model.id)
         payload = {
-          model: detail_payload(target),
+          model: VibeModel.detail_payload(target, viewer: current_user),
           assets: result.extracted,
           extracted: result.extracted,
           merge: result.merge&.as_api
@@ -250,31 +250,6 @@ module API
           "folder_name" => params[:folder_name],
           "merge_id" => record.id
         }.compact
-      end
-
-      def detail_payload(model)
-        card = VibeModel.card_payloads([model], viewer: current_user).first
-        card.merge(
-          folder_mtime: model.folder_mtime,
-          merges: model.model_merges.includes(:performed_by).recent.map(&:as_api),
-          assets: model.assets.order(:relative_path).map do |asset|
-            {
-              id: asset.id,
-              filename: asset.filename,
-              relative_path: asset.relative_path,
-              kind: asset.kind,
-              byte_size: asset.byte_size,
-              content_digest: asset.content_digest,
-              geometry_digest: asset.geometry_digest,
-              archive: asset.archive?,
-              mesh: asset.mesh?,
-              archive_member_count: asset.archive_members.size,
-              archive_truncated: asset.archive_truncated,
-              archive_support: asset.archive_support,
-              uploaded_by: asset.uploaded_by && { id: asset.uploaded_by.id, display_name: asset.uploaded_by.display_name }
-            }
-          end
-        )
       end
     end
   end

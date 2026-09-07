@@ -61,7 +61,14 @@ class APIV1Test < ActionDispatch::IntegrationTest
     model = @library.vibe_models.find_by!(folder_name: "crate")
     get "/api/v1/models/#{model.id}", headers: headers
     assert_response :success
-    assert response.parsed_body.dig("model", "assets").any? { |asset| asset["archive"] }
+    detail = response.parsed_body.fetch("model")
+    assert detail.key?("folder_mtime")
+    assert detail.key?("merges")
+    archive = detail.fetch("assets").find { |asset| asset["archive"] }
+    assert archive
+    assert_equal true, archive["mergeable"]
+    assert archive.key?("archive_member_count")
+    assert archive.key?("archive_support")
 
     get "/api/v1/models/#{model.id}/archive_members", headers: headers
     assert_response :success
