@@ -35,6 +35,8 @@ class ModelSearch
 
   def call
     if @client.configured?
+      return postgres_result(engine: "postgres", fallback: true) unless client_available?
+
       meilisearch_result
     else
       postgres_result(engine: "postgres", fallback: false)
@@ -47,6 +49,12 @@ class ModelSearch
 
   private
 
+  def client_available?
+    return true unless @client.respond_to?(:available?)
+
+    @client.available?
+  end
+
   def meilisearch_result
     raw = @client.search(
       @query,
@@ -57,7 +65,8 @@ class ModelSearch
     )
     ids = Array(raw["hits"]).map { |hit| hit["id"].to_i }
     models = hydrate(ids)
-    total = (raw["estimatedTotalHits"] || raw["totalHits"] || models.size).to_i
+    hit_count = ids.size
+    total = (raw["estimatedTotalHits"] || raw["totalHits"] || hit_count).to_i
     Result.new(
       models: models,
       engine: "meilisearch",
@@ -65,7 +74,7 @@ class ModelSearch
       offset: @offset,
       limit: @limit,
       estimated_total: total,
-      next_offset: (@offset + models.size < total) && models.size == @limit ? @offset + models.size : nil,
+      next_offset: (@offset + hit_count < total) && hit_count == @limit ? @offset + hit_count : nil,
       facets: normalize_facets(raw["facetDistribution"]),
       query: @query,
       capped: false

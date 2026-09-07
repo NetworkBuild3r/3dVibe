@@ -79,6 +79,23 @@ class APIV1Test < ActionDispatch::IntegrationTest
     assert_includes paths, "docs/info.txt"
   end
 
+  test "asset content is path-jailed against a symlink escape" do
+    model = @library.vibe_models.find_by!(folder_name: "signal-horn")
+    asset = model.assets.find_by!(filename: "horn.stl")
+
+    get "/api/v1/assets/#{asset.id}/content", headers: auth_header(@owner)
+    assert_response :success
+    assert_includes response.body, "solid x"
+
+    FileUtils.rm(asset.absolute_path)
+    File.symlink("/etc/hosts", asset.absolute_path)
+
+    get "/api/v1/assets/#{asset.id}/content", headers: auth_header(@owner)
+    assert_response :unprocessable_entity
+    assert_equal "invalid", response.parsed_body["error"]
+    refute_includes response.body.to_s, "localhost"
+  end
+
   test "search uses postgres ilike fallback" do
     get "/api/v1/search", params: { q: "horn" }, headers: auth_header(@owner)
     assert_response :success

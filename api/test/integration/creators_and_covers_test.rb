@@ -16,8 +16,12 @@ class CreatorsAndCoversTest < ActionDispatch::IntegrationTest
 
     @password = "secret123"
     @owner = create_owner!(password: @password)
+    @viewer = create_user!(email: "viewer@example.test")
+    @contributor = create_user!(email: "contrib@example.test")
     @library = Library.create!(name: "Studio", root_path: @root.to_s)
     Membership.create!(user: @owner, library: @library, role: Membership::OWNER)
+    Membership.create!(user: @viewer, library: @library, role: Membership::VIEWER)
+    Membership.create!(user: @contributor, library: @library, role: Membership::CONTRIBUTOR)
     LibraryScanner.new(@library, budget: ScanBudget.unlimited).scan!
   end
 
@@ -148,6 +152,32 @@ class CreatorsAndCoversTest < ActionDispatch::IntegrationTest
     assert_equal VibeModel::COVER_FAILED, dragon.reload.cover_status
     assert_equal true, dragon.cover_placeholder
     assert_nil dragon.cover_lqip_url
+  end
+
+  test "cover writeback forbids viewers when the shared token is unset" do
+    dragon = @library.vibe_models.find_by!(folder_name: "Mz4250 - Dragon Knight")
+    previous = ENV["VIBE_COVER_TOKEN"]
+    ENV.delete("VIBE_COVER_TOKEN")
+
+    post "/api/v1/covers/writeback",
+         params: { model_id: dragon.id, status: "ready", cover_url: "/covers/stolen.webp" },
+         headers: auth_header(@viewer),
+         as: :json
+    assert_response :forbidden
+    refute_equal "/covers/stolen.webp", dragon.reload.cover_url
+
+    post "/api/v1/covers/writeback",
+         params: { model_id: dragon.id, status: "ready", cover_url: "/covers/curator.webp" },
+         headers: auth_header(@contributor),
+         as: :json
+    assert_response :success
+    assert_equal "/covers/curator.webp", dragon.reload.cover_url
+  ensure
+    if previous.nil?
+      ENV.delete("VIBE_COVER_TOKEN")
+    else
+      ENV["VIBE_COVER_TOKEN"] = previous
+    end
   end
 
   test "cover writeback accepts the shared cover token" do
