@@ -1,5 +1,5 @@
 # Coalesces Meili reindex work so scan / cover / curation / creator bursts
-# cannot enqueue one IndexVibeModelJob per model (or per after_commit).
+# cannot enqueue one Sidekiq job per model (or per after_commit).
 # Unique model ids sit in a set; one BulkIndexVibeModelsJob drains them.
 class SearchIndexBuffer
   PENDING_KEY = "vibe:search:index:pending"

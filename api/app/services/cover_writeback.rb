@@ -41,7 +41,7 @@ class CoverWriteback
     end
     model.update!(updates)
     # after_commit also enqueues; the buffer collapses both so has_cover /
-    # cover_status land in Meili without an IndexVibeModelJob per write-back.
+    # cover_status land in Meili via one BulkIndexVibeModelsJob flush.
     SearchIndex.enqueue(model)
     model
   end

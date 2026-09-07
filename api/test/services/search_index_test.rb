@@ -41,7 +41,20 @@ class SearchIndexTest < ActiveSupport::TestCase
       SearchIndex.enqueue_ids([@alpha.id, @bravo.id, @bravo])
     end
     assert_equal [@alpha.id, @bravo.id].sort, SearchIndexBuffer.pending_ids.sort
-    assert_no_enqueued_jobs only: IndexVibeModelJob
+    assert_equal ["BulkIndexVibeModelsJob"], enqueued_jobs.map { |job| job.fetch("job_class") }.uniq
+    refute File.exist?(Rails.root.join("app/jobs/index_vibe_model_job.rb")),
+           "IndexVibeModelJob is superseded by BulkIndexVibeModelsJob; enqueue must stay bulk-only"
+  ensure
+    ENV.delete("MEILI_URL")
+  end
+
+  test "upsert no-ops without Meili and writes one document when configured" do
+    assert_equal :skipped, SearchIndex.new.upsert(@alpha)
+
+    ENV["MEILI_URL"] = "http://127.0.0.1:9"
+    client = RecordingMeili.new
+    assert_equal :ok, SearchIndex.new(client: client).upsert(@alpha)
+    assert_equal [@alpha.id], client.documents.map { |doc| doc[:id] }
   ensure
     ENV.delete("MEILI_URL")
   end
