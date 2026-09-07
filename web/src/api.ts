@@ -232,6 +232,7 @@ export type Asset = {
   archive_member_count: number;
   archive_truncated?: boolean;
   archive_support?: string | null;
+  mergeable?: boolean;
   uploaded_by?: Author | null;
 };
 

@@ -92,6 +92,34 @@ class VibeModel < ApplicationRecord
     end
   end
 
+  def self.detail_payload(model, viewer: nil)
+    card = card_payloads([model], viewer: viewer).first
+    card.merge(
+      folder_mtime: model.folder_mtime,
+      merges: model.model_merges.includes(:performed_by).recent.map(&:as_api),
+      assets: model.assets.order(:relative_path).map { |asset| asset_detail(asset) }
+    )
+  end
+
+  def self.asset_detail(asset)
+    {
+      id: asset.id,
+      filename: asset.filename,
+      relative_path: asset.relative_path,
+      kind: asset.kind,
+      byte_size: asset.byte_size,
+      content_digest: asset.content_digest,
+      geometry_digest: asset.geometry_digest,
+      archive: asset.archive?,
+      mesh: asset.mesh?,
+      archive_member_count: asset.archive_members.size,
+      archive_truncated: asset.archive_truncated,
+      archive_support: asset.archive_support,
+      mergeable: true,
+      uploaded_by: asset.uploaded_by && { id: asset.uploaded_by.id, display_name: asset.uploaded_by.display_name }
+    }
+  end
+
   private
 
   def enqueue_search_index
