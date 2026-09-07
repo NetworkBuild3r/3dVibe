@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
-import { api, type LibraryInfo, type Printer } from "../api";
+import { api, type Printer } from "../api";
+import { useLibrary } from "../library";
 import { ProtocolChip } from "../components/PrintMeta";
 import { EmptyState, InlineError, ListSkeleton } from "../components/UiStates";
 import {
@@ -26,9 +27,8 @@ const emptyForm = {
 };
 
 export function PrintersPage() {
-  const [libraries, setLibraries] = useState<LibraryInfo[]>([]);
+  const { libraries, libraryId, setLibraryId, applyLibraries } = useLibrary({ autoLoad: false });
   const [printers, setPrinters] = useState<Printer[]>([]);
-  const [libraryId, setLibraryId] = useState<number | "">("");
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [error, setError] = useState<string | null>(null);
@@ -37,9 +37,8 @@ export function PrintersPage() {
 
   async function refresh() {
     const [libraryPayload, printerPayload] = await Promise.all([api.libraries(), api.printers()]);
-    setLibraries(libraryPayload.libraries);
+    applyLibraries(libraryPayload.libraries);
     setPrinters(printerPayload.printers);
-    if (libraryId === "" && libraryPayload.libraries[0]) setLibraryId(libraryPayload.libraries[0].id);
   }
 
   useEffect(() => {

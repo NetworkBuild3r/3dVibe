@@ -1,5 +1,6 @@
-import { DragEvent, useEffect, useMemo, useState } from "react";
-import { api, uploadFileResumable, type LibraryInfo } from "../api";
+import { DragEvent, useMemo, useState } from "react";
+import { uploadFileResumable } from "../api";
+import { isWritableLibrary, useLibrary } from "../library";
 import { fileStatusLabel, summarizeUploadBatch } from "../upload";
 
 type QueuedFile = {
@@ -72,25 +73,16 @@ function stripRoot(relativePath: string, folder: string) {
 }
 
 export function UploadPage() {
-  const [libraries, setLibraries] = useState<LibraryInfo[]>([]);
-  const [libraryId, setLibraryId] = useState<number | "">("");
+  const { libraries, libraryId, setLibraryId } = useLibrary({
+    filter: isWritableLibrary,
+    onError: (message) => setError(message)
+  });
   const [folderName, setFolderName] = useState("");
   const [files, setFiles] = useState<QueuedFile[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
   const [dragOver, setDragOver] = useState(false);
-
-  useEffect(() => {
-    api
-      .libraries()
-      .then((payload) => {
-        const writable = payload.libraries.filter((library) => library.can_upload);
-        setLibraries(writable);
-        if (writable[0]) setLibraryId(writable[0].id);
-      })
-      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load libraries"));
-  }, []);
 
   const folderHint = useMemo(() => inferFolder(files), [files]);
 
