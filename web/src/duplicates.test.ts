@@ -20,7 +20,9 @@ import {
   MERGE_UNSUPPORTED_COPY,
   mergePayloadForGroup,
   preferredTargetId,
-  resolveDuplicateLibraryId
+  resolveDuplicateLibraryId,
+  reviewOverlayIsModal,
+  reviewOverlayKind
 } from "./duplicates";
 
 const archiveMember: DuplicateMember = {
@@ -183,5 +185,19 @@ describe("duplicate library deep links", () => {
     expect(duplicateLibrarySearchOrder([studio, friends], 2)).toEqual([2, 1]);
     expect(duplicateLibrarySearchOrder([studio, friends], "")).toEqual([1, 2]);
     expect(duplicateLibrarySearchOrder([studio, friends], 9)).toEqual([1, 2]);
+  });
+});
+
+describe("duplicate review overlay shells", () => {
+  it("treats loading and error shells as the same modal as the review drawer", () => {
+    expect(reviewOverlayKind({ open: true, loading: true, hasGroup: false, error: null })).toBe("loading");
+    expect(reviewOverlayKind({ open: true, loading: false, hasGroup: true, error: null })).toBe("review");
+    expect(reviewOverlayKind({ open: true, loading: false, hasGroup: false, error: "missing" })).toBe("error");
+    expect(reviewOverlayKind({ open: true, loading: true, hasGroup: true, error: null })).toBe("review");
+    expect(reviewOverlayKind({ open: false, loading: true, hasGroup: false, error: null })).toBeNull();
+    expect(reviewOverlayIsModal("loading")).toBe(true);
+    expect(reviewOverlayIsModal("error")).toBe(true);
+    expect(reviewOverlayIsModal("review")).toBe(true);
+    expect(reviewOverlayIsModal(null)).toBe(false);
   });
 });

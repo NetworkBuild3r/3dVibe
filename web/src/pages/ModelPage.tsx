@@ -81,8 +81,10 @@ export function ModelPage() {
   const likeBusyRef = useRef(false);
   const shelfBusyRef = useRef(false);
   const organizeBusyRef = useRef(false);
+  const printBusyRef = useRef(false);
   const shelfTicket = useRef(0);
   const organizeTicket = useRef(0);
+  const printTicket = useRef(0);
 
   useEffect(() => {
     setViewer({ kind: "idle" });
@@ -92,8 +94,13 @@ export function ModelPage() {
     setShelfBusy(false);
     organizeBusyRef.current = false;
     setOrganizeBusy(false);
+    printBusyRef.current = false;
+    setPrintBusy(false);
+    setPrintJob(null);
+    setPrintError(null);
     shelfTicket.current = nextModelActionTicket(shelfTicket.current);
     organizeTicket.current = nextModelActionTicket(organizeTicket.current);
+    printTicket.current = nextModelActionTicket(printTicket.current);
   }, [id]);
 
   useEffect(() => {
@@ -141,40 +148,60 @@ export function ModelPage() {
 
   useEffect(() => {
     if (!printJob || !isJobActive(printJob.status)) return;
+    const ticket = printTicket.current;
     const timer = window.setInterval(() => {
       api
         .printJob(printJob.id)
-        .then((payload) => setPrintJob(payload.print_job))
+        .then((payload) => {
+          if (!shouldApplyModelAction(ticket, printTicket.current)) return;
+          setPrintJob(payload.print_job);
+        })
         .catch(() => undefined);
     }, 800);
     return () => window.clearInterval(timer);
   }, [printJob]);
 
   async function requestPrint() {
-    if (!model || printerId === "" || assetId === "") return;
+    if (!model || printerId === "" || assetId === "" || !canStartModelAction(printBusyRef.current)) return;
+    const ticket = nextModelActionTicket(printTicket.current);
+    printTicket.current = ticket;
+    printBusyRef.current = true;
     setPrintBusy(true);
     setPrintError(null);
     try {
       const payload = await api.print(model.id, printerId, assetId);
+      if (!shouldApplyModelAction(ticket, printTicket.current)) return;
       setPrintJob(payload.print_job);
     } catch (err) {
+      if (!shouldApplyModelAction(ticket, printTicket.current)) return;
       setPrintError(enqueueErrorMessage(err));
     } finally {
-      setPrintBusy(false);
+      if (shouldApplyModelAction(ticket, printTicket.current)) {
+        printBusyRef.current = false;
+        setPrintBusy(false);
+      }
     }
   }
 
   async function retryPrint() {
-    if (!printJob) return;
+    if (!printJob || !canStartModelAction(printBusyRef.current)) return;
+    const ticket = nextModelActionTicket(printTicket.current);
+    printTicket.current = ticket;
+    printBusyRef.current = true;
     setPrintBusy(true);
     setPrintError(null);
     try {
       const payload = await api.retryPrint(printJob.id);
+      if (!shouldApplyModelAction(ticket, printTicket.current)) return;
       setPrintJob(payload.print_job);
     } catch (err) {
+      if (!shouldApplyModelAction(ticket, printTicket.current)) return;
       setPrintError(err instanceof Error ? err.message : "Could not retry print");
     } finally {
-      setPrintBusy(false);
+      if (shouldApplyModelAction(ticket, printTicket.current)) {
+        printBusyRef.current = false;
+        setPrintBusy(false);
+      }
     }
   }
 

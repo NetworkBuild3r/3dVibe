@@ -4,7 +4,14 @@ import { api, type DuplicateGroup, type DuplicateStatus, type ExtractedArchiveAs
 import { useAuth } from "../auth";
 import { CalmChip } from "../components/CalmChip";
 import { CoverMedia } from "../components/CoverMedia";
-import { ConfidenceBadge, DuplicateReview, DuplicateReviewSkeleton, ResidencePill, StatusChip } from "../components/DuplicateReview";
+import {
+  ConfidenceBadge,
+  DuplicateReview,
+  DuplicateReviewError,
+  DuplicateReviewLoading,
+  ResidencePill,
+  StatusChip
+} from "../components/DuplicateReview";
 import { EmptyState, InlineError, Pulse } from "../components/UiStates";
 import {
   allMembersMergeable,
@@ -27,6 +34,7 @@ import {
   previewModels,
   readLastRun,
   resolveDuplicateLibraryId,
+  reviewOverlayKind,
   STATUS_FILTERS,
   type StatusFilter,
   writeLastRun
@@ -217,15 +225,6 @@ export function DuplicatesPage() {
     setSearchParams(next, { replace: true });
   }, [libraryId, preferredLibraryId, searchParams, setSearchParams]);
 
-  useEffect(() => {
-    if (!reviewOpen || reviewGroup) return;
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") navigate(duplicatesIndexHref(libraryId));
-    }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [reviewOpen, reviewGroup, navigate, libraryId]);
-
   async function analyze() {
     if (libraryId === "" || !canReview || analyzing) return;
     const ticket = ++analyzeTicket.current;
@@ -381,6 +380,13 @@ export function DuplicatesPage() {
     }
   }
 
+  const overlayKind = reviewOverlayKind({
+    open: reviewOpen,
+    loading: reviewLoading,
+    hasGroup: Boolean(displayReviewGroup),
+    error: reviewError
+  });
+
   const lastRunLabel = useMemo(() => {
     const when = formatWhen(lastRunAt);
     if (analyzing) return when ? `Analyzing… last run ${when}` : "Analyzing…";
@@ -511,34 +517,24 @@ export function DuplicatesPage() {
         {!loading && groups.length === 0 && !error ? <EmptyState copy={emptyCopy} /> : null}
       </section>
 
-      {reviewOpen ? (
-        reviewLoading && !reviewGroup ? (
-          <div className="fixed inset-0 z-40 flex justify-end bg-ink-950/65 backdrop-blur-sm">
-            <aside className="flex h-full w-full max-w-4xl flex-col border-l border-white/10 bg-ink-950 p-5 shadow-2xl">
-              <DuplicateReviewSkeleton />
-            </aside>
-          </div>
-        ) : displayReviewGroup ? (
-          <DuplicateReview
-            group={displayReviewGroup}
-            canReview={canReview}
-            busy={acting}
-            busyLabel={busyLabel}
-            error={reviewError}
-            onKeep={() => void keepGroup(displayReviewGroup)}
-            onDismiss={() => void dismissGroup(displayReviewGroup)}
-            onMerge={(payload) => void mergeGroup(displayReviewGroup, payload)}
-            onExtract={(payload) => void extractGroup(reviewGroup || displayReviewGroup, payload)}
-            onExtractAndMerge={(payload) => void extractAndMergeGroup(reviewGroup || displayReviewGroup, payload)}
-            onClose={closeReview}
-          />
-        ) : reviewError ? (
-          <div className="fixed inset-0 z-40 grid place-items-center bg-ink-950/65 px-4">
-            <div className="w-full max-w-md rounded-2xl border border-white/10 bg-ink-900 p-5">
-              <InlineError message={reviewError} onRetry={() => navigate(duplicatesIndexHref(libraryId))} />
-            </div>
-          </div>
-        ) : null
+      {overlayKind === "loading" ? (
+        <DuplicateReviewLoading onClose={closeReview} />
+      ) : overlayKind === "review" && displayReviewGroup ? (
+        <DuplicateReview
+          group={displayReviewGroup}
+          canReview={canReview}
+          busy={acting}
+          busyLabel={busyLabel}
+          error={reviewError}
+          onKeep={() => void keepGroup(displayReviewGroup)}
+          onDismiss={() => void dismissGroup(displayReviewGroup)}
+          onMerge={(payload) => void mergeGroup(displayReviewGroup, payload)}
+          onExtract={(payload) => void extractGroup(reviewGroup || displayReviewGroup, payload)}
+          onExtractAndMerge={(payload) => void extractAndMergeGroup(reviewGroup || displayReviewGroup, payload)}
+          onClose={closeReview}
+        />
+      ) : overlayKind === "error" && reviewError ? (
+        <DuplicateReviewError message={reviewError} onClose={closeReview} />
       ) : null}
     </div>
   );

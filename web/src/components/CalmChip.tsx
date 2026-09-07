@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useFocusTrap } from "../focusTrap";
 import { IconChevron } from "./Icons";
 
 const chipBase =
@@ -39,21 +40,18 @@ export function ChipDropdown({
 }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement | null>(null);
+  const listId = useId();
+
+  useFocusTrap(open, root, { onEscape: () => setOpen(false) });
 
   useEffect(() => {
+    if (!open) return;
     function onDoc(event: MouseEvent) {
       if (!root.current?.contains(event.target as Node)) setOpen(false);
     }
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
-    }
     document.addEventListener("mousedown", onDoc);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, []);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
 
   return (
     <div ref={root} className="relative">
@@ -61,6 +59,7 @@ export function ChipDropdown({
         type="button"
         aria-expanded={open}
         aria-haspopup="listbox"
+        aria-controls={listId}
         onClick={() => setOpen((current) => !current)}
         className={`${chipBase} ${active ? chipActive : chipIdle}`}
       >
@@ -69,7 +68,9 @@ export function ChipDropdown({
       </button>
       {open ? (
         <div
+          id={listId}
           role="listbox"
+          tabIndex={-1}
           className="absolute left-0 z-40 mt-2 max-h-72 min-w-[14rem] overflow-auto rounded-2xl border border-white/10 bg-ink-900 p-1.5 shadow-2xl"
           onClick={() => setOpen(false)}
         >

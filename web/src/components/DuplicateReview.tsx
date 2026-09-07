@@ -107,6 +107,75 @@ export function DuplicateReviewSkeleton() {
   );
 }
 
+function ReviewCloseButton({ onClose }: { onClose: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClose}
+      className="rounded-lg border border-white/10 px-2.5 py-1 text-sm text-slate-300 hover:text-white"
+    >
+      Close
+    </button>
+  );
+}
+
+export function DuplicateReviewLoading({ onClose }: { onClose: () => void }) {
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  useFocusTrap(true, rootRef, { onEscape: onClose });
+
+  return (
+    <div
+      ref={rootRef}
+      tabIndex={-1}
+      className="fixed inset-0 z-40 flex justify-end bg-ink-950/65 backdrop-blur-sm"
+    >
+      <button type="button" tabIndex={-1} className="absolute inset-0 cursor-default" aria-label="Close review" onClick={onClose} />
+      <aside
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="dup-review-loading-title"
+        aria-busy="true"
+        className="relative flex h-full w-full max-w-4xl flex-col border-l border-white/10 bg-ink-950 p-5 shadow-2xl"
+      >
+        <div className="mb-5 flex items-start justify-between gap-4">
+          <h2 id="dup-review-loading-title" className="font-display text-2xl text-white">
+            Loading review…
+          </h2>
+          <ReviewCloseButton onClose={onClose} />
+        </div>
+        <DuplicateReviewSkeleton />
+      </aside>
+    </div>
+  );
+}
+
+export function DuplicateReviewError({ message, onClose }: { message: string; onClose: () => void }) {
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  useFocusTrap(true, rootRef, { onEscape: onClose });
+
+  return (
+    <div ref={rootRef} tabIndex={-1} className="fixed inset-0 z-40 grid place-items-center bg-ink-950/65 px-4">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="dup-review-error-title"
+        tabIndex={-1}
+        className="w-full max-w-md rounded-2xl border border-white/10 bg-ink-900 p-5"
+      >
+        <h2 id="dup-review-error-title" className="font-display text-xl text-white">
+          Could not open this group
+        </h2>
+        <div className="mt-3">
+          <InlineError message={message} />
+        </div>
+        <div className="mt-5">
+          <ReviewCloseButton onClose={onClose} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function DuplicateReview({
   group,
   canReview,
@@ -150,6 +219,7 @@ export function DuplicateReview({
   const titleId = `dup-review-title-${group.id}`;
 
   useFocusTrap(true, rootRef, {
+    layer: confirming,
     onEscape: () => {
       if (confirming) setConfirming(null);
       else onClose();
@@ -212,7 +282,8 @@ export function DuplicateReview({
       <button type="button" tabIndex={-1} className="absolute inset-0 cursor-default" aria-label="Close review" onClick={onClose} />
       <aside
         role="dialog"
-        aria-modal="true"
+        aria-modal={confirming ? undefined : true}
+        aria-hidden={confirming ? true : undefined}
         aria-labelledby={titleId}
         className="relative flex h-full w-full max-w-4xl flex-col border-l border-white/10 bg-ink-950 shadow-2xl"
       >
@@ -233,9 +304,7 @@ export function DuplicateReview({
               is a weak signal — you decide. Kept copies stay in the shared catalog.
             </p>
           </div>
-          <button type="button" onClick={onClose} className="rounded-lg border border-white/10 px-2.5 py-1 text-sm text-slate-300 hover:text-white">
-            Close
-          </button>
+          <ReviewCloseButton onClose={onClose} />
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
@@ -382,6 +451,7 @@ export function DuplicateReview({
             role="dialog"
             aria-modal="true"
             aria-labelledby={`dup-merge-title-${group.id}`}
+            tabIndex={-1}
             className="w-full max-w-md rounded-2xl border border-white/10 bg-ink-900 p-5 shadow-2xl"
           >
             <h3 id={`dup-merge-title-${group.id}`} className="font-display text-xl text-white">
@@ -489,6 +559,7 @@ function ExtractConfirmSheet({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
+        tabIndex={-1}
         className="w-full max-w-md rounded-2xl border border-white/10 bg-ink-900 p-5 shadow-2xl"
       >
         <h3 id={titleId} className="font-display text-xl text-white">
