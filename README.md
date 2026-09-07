@@ -362,7 +362,7 @@ Owner/contributor **ops chips** use `GET /api/v1/libraries/:id/ops` or `GET /api
 | `VIBE_SCAN_QUEUE` | Sidekiq queue for IncrementalScanJob / ScheduledScanJob (default `scan`). Cannot be a critical queue name (`default`, `print`, `search`, …) |
 | `VIBE_SCAN_CONCURRENCY` | Scan-capsule threads (default 1, clamp 1–32). Keep this low so NFS walks do not starve API jobs |
 | `VIBE_SIDEKIQ_CONCURRENCY` | Main-capsule threads for print/search/covers/curation/default (default 5, clamp 1–32) |
-| `VIBE_COVER_TOKEN` | Shared token for `POST /api/v1/covers/writeback` (`X-Cover-Token` or Bearer). Signed-in users can also write back |
+| `VIBE_COVER_TOKEN` | Shared token for `POST /api/v1/covers/writeback` (`X-Cover-Token` or Bearer). Curators can also write back when the token is unset |
 | `VIBE_GEOMETRY_TOKEN` | Shared token for `POST /api/v1/geometry/writeback` (`X-Geometry-Token` or Bearer). Owner/contributor can also write back |
 | `VIBE_GEO_MAX_BYTES` | Skip a mesh larger than this many bytes (default 64 MiB). `0` = unlimited |
 | `VIBE_GEO_MAX_VERTS` | Skip after this many streamed vertices (default 250000). `0` = unlimited |
@@ -596,7 +596,7 @@ All endpoints except `POST /api/v1/session`, invite preview/redeem, and `GET /up
 - `GET /api/v1/search?q=&creator_slug=&creator=&tag=&tags[]=&cover_status=&has_cover=&has_preview=&library_id=&uploaded_by_id=&offset=&limit=` (Meilisearch when configured; Postgres `ILIKE` fallback). Facets: `tags`, `creator_slug`, `cover_status`, `has_cover`, `has_preview`. `has_cover=true` matches the gallery "Has cover" chip (`cover_status=ready`). `creator` is an alias for `creator_slug`. Offset pagination (`offset` / `limit`, max 60) — not the gallery model-id `cursor`. Response adds `capped` when the fallback hit `VIBE_SEARCH_FALLBACK_CAP`.
 - `GET /covers/:id.webp` generated cover bytes (libvips webp under `VIBE_COVER_ROOT`)
 - `GET /covers/:id.lqip.webp` tiny LQIP / small-thumb webp for cheap card chrome
-- `POST /api/v1/covers/writeback` `{ model_id, status: "ready"|"failed", cover_url?, cover_lqip_url?, cover_placeholder?, asset_id?, cache_key? }` (`GenerateCoverJob` uses `CoverWriteback.apply!` in-process; `X-Cover-Token: $VIBE_COVER_TOKEN` or Bearer user)
+- `POST /api/v1/covers/writeback` `{ model_id, status: "ready"|"failed", cover_url?, cover_lqip_url?, cover_placeholder?, asset_id?, cache_key? }` (`GenerateCoverJob` uses `CoverWriteback.apply!` in-process; `X-Cover-Token: $VIBE_COVER_TOKEN` or a curator Bearer token)
 - `GET /api/v1/curator_settings` owner-only — `{ curator_setting: { provider, ollama_url, ollama_model, xai_api_key_status, openai_api_key_status, anthropic_api_key_status } }` (`set` \| `missing`). **Never** returns raw keys. 403 for everyone else.
 - `PATCH /api/v1/curator_settings` `{ provider, ollama_url, ollama_model }` owner-only. `provider` is `stub` \| `ollama` \| `xai` \| `openai` \| `anthropic`. Does not accept raw keys.
 - `PUT /api/v1/curator_settings/xai_api_key` `{ "xai_api_key": "..." }` owner-only. Stores the key encrypted. Response is status only (`set`).
