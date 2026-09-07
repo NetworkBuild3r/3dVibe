@@ -34,19 +34,19 @@ module API
 
       def show
         model = accessible_models.includes(:tags, :uploaded_by, :creator, assets: %i[archive_members uploaded_by]).find(params[:id])
-        render json: { model: detail_payload(model) }
+        render json: { model: VibeModel.detail_payload(model, viewer: current_user) }
       end
 
       def like
         model = accessible_models.find(params[:id])
         current_user.likes.find_or_create_by!(vibe_model: model)
-        render json: { model: detail_payload(model.reload), liked: true }
+        render json: { model: VibeModel.detail_payload(model.reload, viewer: current_user), liked: true }
       end
 
       def unlike
         model = accessible_models.find(params[:id])
         current_user.likes.where(vibe_model: model).delete_all
-        render json: { model: detail_payload(model.reload), liked: false }
+        render json: { model: VibeModel.detail_payload(model.reload, viewer: current_user), liked: false }
       end
 
       def merge
@@ -62,7 +62,7 @@ module API
         )
         target = accessible_models.includes(:tags, :uploaded_by, :creator, assets: %i[archive_members uploaded_by])
                                  .find(record.target_vibe_model_id)
-        render json: { merge: record.as_api, model: detail_payload(target) }, status: :created
+        render json: { merge: record.as_api, model: VibeModel.detail_payload(target, viewer: current_user) }, status: :created
       end
 
       def split
@@ -87,31 +87,6 @@ module API
         values.concat(Array(params[:tags]))
         values << params[:tag]
         values.flatten.compact
-      end
-
-      def detail_payload(model)
-        card = VibeModel.card_payloads([model], viewer: current_user).first
-        card.merge(
-          folder_mtime: model.folder_mtime,
-          merges: model.model_merges.includes(:performed_by).recent.map(&:as_api),
-          assets: model.assets.order(:relative_path).map do |asset|
-            {
-              id: asset.id,
-              filename: asset.filename,
-              relative_path: asset.relative_path,
-              kind: asset.kind,
-              byte_size: asset.byte_size,
-              content_digest: asset.content_digest,
-              geometry_digest: asset.geometry_digest,
-              archive: asset.archive?,
-              mesh: asset.mesh?,
-              archive_member_count: asset.archive_members.size,
-              archive_truncated: asset.archive_truncated,
-              archive_support: asset.archive_support,
-              uploaded_by: asset.uploaded_by && { id: asset.uploaded_by.id, display_name: asset.uploaded_by.display_name }
-            }
-          end
-        )
       end
 
       def restored_models(record)

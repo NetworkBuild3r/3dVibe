@@ -71,50 +71,14 @@ class ApplicationController < ActionController::API
   end
 
   def cover_authorized?
-    expected = ENV["VIBE_COVER_TOKEN"].to_s
-    return false if expected.blank?
-
-    presented = cover_token.to_s
-    return false if presented.blank?
-
-    ActiveSupport::SecurityUtils.secure_compare(presented, expected)
-  end
-
-  def cover_token
-    header = request.headers["Authorization"].to_s
-    bearer = header.split(" ", 2).last if header.start_with?("Bearer ")
-    request.headers["X-Cover-Token"].presence || bearer
+    ServiceToken.authorized?(request, env_key: "VIBE_COVER_TOKEN", header: "X-Cover-Token")
   end
 
   def curator_authorized?
-    expected = ENV["VIBE_CURATOR_TOKEN"].to_s
-    return false if expected.blank?
-
-    presented = curator_token.to_s
-    return false if presented.blank?
-
-    ActiveSupport::SecurityUtils.secure_compare(presented, expected)
-  end
-
-  def curator_token
-    header = request.headers["Authorization"].to_s
-    bearer = header.split(" ", 2).last if header.start_with?("Bearer ")
-    request.headers["X-Curator-Token"].presence || bearer
+    ServiceToken.authorized?(request, env_key: "VIBE_CURATOR_TOKEN", header: "X-Curator-Token")
   end
 
   def geometry_authorized?
-    expected = ENV["VIBE_GEOMETRY_TOKEN"].to_s
-    return false if expected.blank?
-
-    presented = geometry_token.to_s
-    return false if presented.blank?
-
-    ActiveSupport::SecurityUtils.secure_compare(presented, expected)
-  end
-
-  def geometry_token
-    header = request.headers["Authorization"].to_s
-    bearer = header.split(" ", 2).last if header.start_with?("Bearer ")
-    request.headers["X-Geometry-Token"].presence || bearer
+    ServiceToken.authorized?(request, env_key: "VIBE_GEOMETRY_TOKEN", header: "X-Geometry-Token")
   end
 end

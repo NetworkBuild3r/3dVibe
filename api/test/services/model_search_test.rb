@@ -220,10 +220,7 @@ class ModelSearchTest < ActiveSupport::TestCase
   end
 
   test "search index enqueue is a no-op without MEILI_URL" do
-    assert_no_enqueued_jobs only: BulkIndexVibeModelsJob do
-      SearchIndex.enqueue(@horn)
-    end
-    assert_no_enqueued_jobs only: IndexVibeModelJob do
+    assert_no_enqueued_jobs do
       SearchIndex.enqueue(@horn)
     end
   end

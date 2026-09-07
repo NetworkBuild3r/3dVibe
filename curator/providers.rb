@@ -15,8 +15,8 @@ module VibeCurator
       case name.to_s
       when "stub" then Stub.new
       when "ollama" then Ollama.new(env: env, transport: transport, fetch: fetch)
-      when "xai" then Xai.new(env: env, transport: transport, fetch: fetch)
-      when "openai" then Openai.new(env: env, transport: transport, fetch: fetch)
+      when "xai" then OpenAICompat.new("xai", env: env, transport: transport, fetch: fetch)
+      when "openai" then OpenAICompat.new("openai", env: env, transport: transport, fetch: fetch)
       when "anthropic" then Anthropic.new(env: env, transport: transport, fetch: fetch)
       else
         raise Error.new(
@@ -150,19 +150,42 @@ module VibeCurator
       end
     end
 
-    class Xai < ChatProvider
-      def initialize(env: ENV, transport: nil, fetch: nil)
+    class OpenAICompat < ChatProvider
+      SPECS = {
+        "xai" => {
+          key: %w[XAI_API_KEY VIBE_XAI_API_KEY],
+          model: %w[XAI_MODEL VIBE_XAI_MODEL],
+          base_url: %w[XAI_BASE_URL VIBE_XAI_BASE_URL],
+          default_model: "grok-4",
+          default_base_url: "https://api.x.ai/v1",
+          missing: "XAI_API_KEY is blank",
+          code: "xai_not_configured"
+        },
+        "openai" => {
+          key: %w[OPENAI_API_KEY VIBE_OPENAI_API_KEY],
+          model: %w[OPENAI_MODEL VIBE_OPENAI_MODEL],
+          base_url: %w[OPENAI_BASE_URL VIBE_OPENAI_BASE_URL],
+          default_model: "gpt-4o",
+          default_base_url: "https://api.openai.com/v1",
+          missing: "OPENAI_API_KEY is blank",
+          code: "openai_not_configured"
+        }
+      }.freeze
+
+      def initialize(name, env: ENV, transport: nil, fetch: nil)
+        @name = name.to_s
+        @spec = SPECS.fetch(@name)
         @env = env
         @transport = transport
         @fetch = fetch
       end
 
       def name
-        "xai"
+        @name
       end
 
       def propose(catalog)
-        raise Error.new("XAI_API_KEY is blank", status: 503, code: "xai_not_configured") if api_key.empty?
+        raise Error.new(@spec[:missing], status: 503, code: @spec[:code]) if api_key.empty?
 
         super
       end
@@ -180,7 +203,7 @@ module VibeCurator
       end
 
       def model
-        Config.present(@env["XAI_MODEL"]) || Config.present(@env["VIBE_XAI_MODEL"]) || "grok-4"
+        first_present(@spec[:model]) || @spec[:default_model]
       end
 
       def extra_body
@@ -188,57 +211,19 @@ module VibeCurator
       end
 
       def api_key
-        Config.present(@env["XAI_API_KEY"]) || Config.present(@env["VIBE_XAI_API_KEY"]) || ""
+        first_present(@spec[:key]) || ""
       end
 
       def base_url
-        (Config.present(@env["XAI_BASE_URL"]) || Config.present(@env["VIBE_XAI_BASE_URL"]) || "https://api.x.ai/v1").chomp("/")
-      end
-    end
-
-    class Openai < ChatProvider
-      def initialize(env: ENV, transport: nil, fetch: nil)
-        @env = env
-        @transport = transport
-        @fetch = fetch
+        (first_present(@spec[:base_url]) || @spec[:default_base_url]).chomp("/")
       end
 
-      def name
-        "openai"
-      end
-
-      def propose(catalog)
-        raise Error.new("OPENAI_API_KEY is blank", status: 503, code: "openai_not_configured") if api_key.empty?
-
-        super
-      end
-
-      private
-
-      def client
-        ChatClient.new(
-          base_url: base_url,
-          path: "/chat/completions",
-          api_key: api_key,
-          timeout: Config.infer_timeout(env: @env),
-          transport: @transport
-        )
-      end
-
-      def model
-        Config.present(@env["OPENAI_MODEL"]) || Config.present(@env["VIBE_OPENAI_MODEL"]) || "gpt-4o"
-      end
-
-      def extra_body
-        { "temperature" => 0.2 }
-      end
-
-      def api_key
-        Config.present(@env["OPENAI_API_KEY"]) || Config.present(@env["VIBE_OPENAI_API_KEY"]) || ""
-      end
-
-      def base_url
-        (Config.present(@env["OPENAI_BASE_URL"]) || Config.present(@env["VIBE_OPENAI_BASE_URL"]) || "https://api.openai.com/v1").chomp("/")
+      def first_present(keys)
+        keys.each do |key|
+          value = Config.present(@env[key])
+          return value if value
+        end
+        nil
       end
     end
 
