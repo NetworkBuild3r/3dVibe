@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_09_06_220000) do
+ActiveRecord::Schema[8.0].define(version: 2026_09_07_030000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
   enable_extension "pg_trgm"
@@ -128,10 +128,12 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_06_220000) do
   end
 
   create_table "curator_settings", force: :cascade do |t|
-    t.string "provider", default: "stub", null: false
+    t.string "provider", default: "ollama", null: false
     t.string "ollama_url"
-    t.string "ollama_model"
+    t.string "ollama_model", default: "gemma4"
     t.text "xai_api_key"
+    t.text "openai_api_key"
+    t.text "anthropic_api_key"
     t.integer "singleton_lock", default: 1, null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false

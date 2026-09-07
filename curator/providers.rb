@@ -94,7 +94,7 @@ module VibeCurator
       end
 
       def model
-        Config.present(@env["VIBE_OLLAMA_MODEL"]) || "llama3.1"
+        Config.present(@env["VIBE_OLLAMA_MODEL"]) || "gemma4"
       end
 
       def extra_body

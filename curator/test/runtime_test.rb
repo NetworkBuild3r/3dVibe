@@ -100,23 +100,53 @@ class RuntimeTest < Minitest::Test
     assert_equal "llama-env", seen[1]["model"]
   end
 
-  def test_stub_runtime_ignores_xai_key
+  def test_stub_runtime_ignores_provider_keys
     catalog = sample_catalog.merge(
       "provider_hint" => "xai",
       "curator_runtime" => {
         "provider" => "stub",
-        "xai_api_key" => "should-not-be-used"
+        "xai_api_key" => "should-not-be-used",
+        "openai_api_key" => "openai-should-not-be-used",
+        "anthropic_api_key" => "anthropic-should-not-be-used"
       }
     )
-    env = env_hash("VIBE_CURATOR_PROVIDER" => "xai", "XAI_API_KEY" => "env-secret-key")
+    env = env_hash(
+      "VIBE_CURATOR_PROVIDER" => "xai",
+      "XAI_API_KEY" => "env-secret-key",
+      "OPENAI_API_KEY" => "env-openai-key",
+      "ANTHROPIC_API_KEY" => "env-anthropic-key"
+    )
     result = VibeCurator::Service.proposals(payload: catalog, env: env)
 
     assert_equal "stub", result["provider"]
     assert result["proposals"].any? { |item| item["sidecar_ref"].start_with?("stub:") }
     dumped = JSON.generate(result)
     refute_includes dumped, "should-not-be-used"
+    refute_includes dumped, "openai-should-not-be-used"
+    refute_includes dumped, "anthropic-should-not-be-used"
     refute_includes dumped, "env-secret-key"
     refute_includes VibeCurator::Prompt.user_prompt(catalog), "should-not-be-used"
+  end
+
+  def test_runtime_maps_openai_and_anthropic_keys_without_mutating_env
+    env = env_hash(
+      "VIBE_CURATOR_PROVIDER" => "stub",
+      "OPENAI_API_KEY" => "env-openai",
+      "ANTHROPIC_API_KEY" => "env-anthropic"
+    )
+    snapshot = env.dup
+    catalog = sample_catalog.merge(
+      "curator_runtime" => {
+        "provider" => "openai",
+        "openai_api_key" => "ui-openai-key",
+        "anthropic_api_key" => "ui-anthropic-key"
+      }
+    )
+    scoped = VibeCurator::Config.env_with_runtime(catalog, env)
+    assert_equal "openai", scoped["VIBE_CURATOR_PROVIDER"]
+    assert_equal "ui-openai-key", scoped["OPENAI_API_KEY"]
+    assert_equal "ui-anthropic-key", scoped["ANTHROPIC_API_KEY"]
+    assert_equal snapshot, env
   end
 
   def test_provider_switch_mid_process_via_payload

@@ -14,21 +14,27 @@ module API
       end
 
       def update_xai_api_key
-        key = params[:xai_api_key].to_s.strip
-        if key.blank?
-          render json: { error: "invalid", details: ["xai_api_key is required"] }, status: :unprocessable_entity
-          return
-        end
-
-        setting = CuratorSetting.instance!
-        setting.update!(xai_api_key: key)
-        render json: { curator_setting: setting.as_api }
+        update_secret!(:xai_api_key)
       end
 
       def destroy_xai_api_key
-        setting = CuratorSetting.instance
-        setting&.update!(xai_api_key: nil)
-        render json: { curator_setting: CuratorRuntime.as_api }
+        destroy_secret!(:xai_api_key)
+      end
+
+      def update_openai_api_key
+        update_secret!(:openai_api_key)
+      end
+
+      def destroy_openai_api_key
+        destroy_secret!(:openai_api_key)
+      end
+
+      def update_anthropic_api_key
+        update_secret!(:anthropic_api_key)
+      end
+
+      def destroy_anthropic_api_key
+        destroy_secret!(:anthropic_api_key)
       end
 
       private
@@ -45,6 +51,31 @@ module API
         permitted[:ollama_url] = permitted[:ollama_url].presence if permitted.key?(:ollama_url)
         permitted[:ollama_model] = permitted[:ollama_model].presence if permitted.key?(:ollama_model)
         permitted
+      end
+
+      def update_secret!(attribute)
+        key = secret_param(attribute)
+        if key.blank?
+          render json: { error: "invalid", details: ["#{attribute} is required"] }, status: :unprocessable_entity
+          return
+        end
+
+        setting = CuratorSetting.instance!
+        setting.update!(attribute => key)
+        render json: { curator_setting: setting.as_api }
+      end
+
+      def destroy_secret!(attribute)
+        setting = CuratorSetting.instance
+        setting&.update!(attribute => nil)
+        render json: { curator_setting: CuratorRuntime.as_api }
+      end
+
+      def secret_param(attribute)
+        nested = params[:curator_setting]
+        raw = params[attribute]
+        raw = nested[attribute] if raw.blank? && nested.respond_to?(:[])
+        raw.to_s.strip
       end
     end
   end

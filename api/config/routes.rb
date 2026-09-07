@@ -56,6 +56,10 @@ Rails.application.routes.draw do
       resource :curator_settings, only: %i[show update] do
         put :xai_api_key, action: :update_xai_api_key
         delete :xai_api_key, action: :destroy_xai_api_key
+        put :openai_api_key, action: :update_openai_api_key
+        delete :openai_api_key, action: :destroy_openai_api_key
+        put :anthropic_api_key, action: :update_anthropic_api_key
+        delete :anthropic_api_key, action: :destroy_anthropic_api_key
       end
 
       resources :curation_proposals, only: %i[index create] do
