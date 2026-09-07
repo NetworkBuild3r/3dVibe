@@ -241,7 +241,3 @@ export function parseLibraryScan(value: unknown): LibraryScanDetail | null {
     last: parseScanStatus(row.last)
   };
 }
-
-export function scanWhen(scan?: ScanStatus | null) {
-  return formatRelativeTime(scan?.finished_at || scan?.started_at || scan?.updated_at);
-}
