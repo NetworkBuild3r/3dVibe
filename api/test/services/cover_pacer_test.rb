@@ -6,6 +6,12 @@ class CoverPacerTest < ActiveJob::TestCase
     @root = Rails.root.join("tmp/cover-pace-#{SecureRandom.hex(4)}")
     FileUtils.mkdir_p(@root)
     @library = Library.create!(name: "Pace", root_path: @root.to_s)
+    VibeModel.where.not(library_id: @library.id).update_all(
+      cover_status: VibeModel::COVER_MISSING,
+      cover_url: nil,
+      cover_lqip_url: nil,
+      cover_asset_id: nil
+    )
     CoverPacer.reset!
     @prev = {
       "VIBE_COVER_QUEUE_MAX" => ENV["VIBE_COVER_QUEUE_MAX"],
@@ -108,14 +114,15 @@ class CoverPacerTest < ActiveJob::TestCase
     model = mark_ready_without_lqip(create_cover_model("needs-lqip-drain", named: true))
     CoverPacer.reset!
     ActiveJob::Base.queue_adapter.enqueued_jobs.clear
+    ENV["VIBE_COVER_BATCH"] = "20"
+    ENV["VIBE_COVER_QUEUE_MAX"] = "20"
 
-    assert CoverPacer.leftover?
+    assert in_backlog?(model)
     assert_nil model.cover_lqip_url
 
     CoverBacklogJob.perform_now
-    generate = enqueued_jobs.select { |job| job["job_class"] == "GenerateCoverJob" }
+    generate = generate_jobs_for(model.id)
     assert_equal 1, generate.size
-    assert_equal model.id, generate.first["arguments"].first["model_id"]
     model.reload
     assert_equal VibeModel::COVER_READY, model.cover_status
     assert_nil model.cover_lqip_url
@@ -137,7 +144,9 @@ class CoverPacerTest < ActiveJob::TestCase
     assert_equal 1, generate.size
     assert_equal pending.id, generate.first["arguments"].first["model_id"]
     assert_equal VibeModel::COVER_READY, ready.reload.cover_status
-    assert CoverPacer.leftover?
+    assert in_backlog?(ready)
+    assert CoverPacer.send(:drainable_scope).where(id: ready.id).exists?
+    refute CoverPacer.send(:drainable_scope).where(id: pending.id).exists?
   end
 
   test "ready without LQIP and without cover_asset_id is not leftover" do
@@ -149,10 +158,25 @@ class CoverPacerTest < ActiveJob::TestCase
       cover_asset_id: nil,
       cover_placeholder: false
     )
-    refute CoverPacer.leftover?
+    refute in_backlog?(model)
+  end
+
+  test "missing covers are not treated as LQIP backlog" do
+    model = create_cover_model("just-missing", named: true)
+    refute in_backlog?(model)
   end
 
   private
+
+  def in_backlog?(model)
+    CoverPacer.send(:backlog_scope).where(id: model.id).exists?
+  end
+
+  def generate_jobs_for(model_id)
+    enqueued_jobs.select do |job|
+      job["job_class"] == "GenerateCoverJob" && job.dig("arguments", 0, "model_id") == model_id
+    end
+  end
 
   def mark_ready_without_lqip(model)
     CoverEnqueue.call(model)
