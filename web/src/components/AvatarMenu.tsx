@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth";
 import { canManageCuratorSettings } from "../curatorSettings";
+import { useFocusTrap } from "../focusTrap";
 import { canManagePrinters } from "../prints";
 import { IconChevron } from "./Icons";
 
@@ -9,15 +10,19 @@ export function AvatarMenu() {
   const { user, logout } = useAuth();
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement | null>(null);
+  const menuId = useId();
   const initial = (user?.display_name || user?.email || "?").trim().charAt(0).toUpperCase();
 
+  useFocusTrap(open, root, { onEscape: () => setOpen(false) });
+
   useEffect(() => {
+    if (!open) return;
     function onDoc(event: MouseEvent) {
       if (!root.current?.contains(event.target as Node)) setOpen(false);
     }
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
-  }, []);
+  }, [open]);
 
   if (!user) return null;
 
@@ -27,6 +32,7 @@ export function AvatarMenu() {
         type="button"
         aria-expanded={open}
         aria-haspopup="menu"
+        aria-controls={menuId}
         onClick={() => setOpen((current) => !current)}
         className="flex items-center gap-2 rounded-full border border-white/10 py-1 pl-1 pr-2 text-sm text-slate-200 hover:border-white/20"
       >
@@ -37,7 +43,9 @@ export function AvatarMenu() {
       </button>
       {open ? (
         <div
+          id={menuId}
           role="menu"
+          tabIndex={-1}
           className="absolute right-0 z-30 mt-2 w-52 overflow-hidden rounded-2xl border border-white/10 bg-ink-900 py-1 shadow-2xl"
         >
           <div className="border-b border-white/5 px-3 py-2">

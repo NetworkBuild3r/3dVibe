@@ -39,6 +39,7 @@ import {
   type StatusFilter,
   writeLastRun
 } from "../duplicates";
+import { canStartReviewAction, nextReviewActionTicket, shouldApplyReviewAction } from "../reviewActions";
 
 function GroupRowSkeleton() {
   return (
@@ -80,6 +81,8 @@ export function DuplicatesPage() {
   const [error, setError] = useState<string | null>(null);
   const [reviewError, setReviewError] = useState<string | null>(null);
   const analyzeTicket = useRef(0);
+  const reviewTicket = useRef(0);
+  const actingRef = useRef(false);
   const mounted = useRef(true);
 
   const selectedLibrary = libraries.find((library) => library.id === libraryId);
@@ -154,6 +157,10 @@ export function DuplicatesPage() {
 
   useEffect(() => {
     setExtractedRows([]);
+    actingRef.current = false;
+    setActing(false);
+    setBusyLabel(null);
+    reviewTicket.current = nextReviewActionTicket(reviewTicket.current);
   }, [reviewId]);
 
   useEffect(() => {
@@ -265,42 +272,60 @@ export function DuplicatesPage() {
     [reviewGroup, extractedRows]
   );
 
-  async function afterDecision(group: DuplicateGroup) {
+  async function afterDecision(group: DuplicateGroup, ticket: number) {
+    if (!shouldApplyReviewAction(ticket, reviewTicket.current)) return;
     setReviewGroup(group);
     if (group.status !== "open") setExtractedRows([]);
     await refresh({ silent: true });
+    if (!shouldApplyReviewAction(ticket, reviewTicket.current)) return;
     if (filter === "open" && group.status !== "open") {
       navigate(duplicatesIndexHref(libraryId));
     }
   }
 
   async function keepGroup(group: DuplicateGroup) {
-    if (!canReview || acting) return;
+    if (!canReview || !canStartReviewAction(actingRef.current)) return;
+    const ticket = nextReviewActionTicket(reviewTicket.current);
+    reviewTicket.current = ticket;
+    actingRef.current = true;
     setActing(true);
     setBusyLabel(null);
     setReviewError(null);
     try {
       const payload = await api.keepDuplicate(group.id);
-      await afterDecision(payload.group);
+      if (!shouldApplyReviewAction(ticket, reviewTicket.current)) return;
+      await afterDecision(payload.group, ticket);
     } catch (err) {
+      if (!shouldApplyReviewAction(ticket, reviewTicket.current)) return;
       setReviewError(err instanceof Error ? err.message : "Keep failed");
     } finally {
-      setActing(false);
+      if (shouldApplyReviewAction(ticket, reviewTicket.current)) {
+        actingRef.current = false;
+        setActing(false);
+      }
     }
   }
 
   async function dismissGroup(group: DuplicateGroup) {
-    if (!canReview || acting) return;
+    if (!canReview || !canStartReviewAction(actingRef.current)) return;
+    const ticket = nextReviewActionTicket(reviewTicket.current);
+    reviewTicket.current = ticket;
+    actingRef.current = true;
     setActing(true);
     setBusyLabel(null);
     setReviewError(null);
     try {
       const payload = await api.dismissDuplicate(group.id);
-      await afterDecision(payload.group);
+      if (!shouldApplyReviewAction(ticket, reviewTicket.current)) return;
+      await afterDecision(payload.group, ticket);
     } catch (err) {
+      if (!shouldApplyReviewAction(ticket, reviewTicket.current)) return;
       setReviewError(err instanceof Error ? err.message : "Dismiss failed");
     } finally {
-      setActing(false);
+      if (shouldApplyReviewAction(ticket, reviewTicket.current)) {
+        actingRef.current = false;
+        setActing(false);
+      }
     }
   }
 
@@ -308,22 +333,30 @@ export function DuplicatesPage() {
     group: DuplicateGroup,
     body: { source_ids: number[]; asset_ids?: number[]; target_id: number; title?: string }
   ) {
-    if (!canReview || acting) return;
+    if (!canReview || !canStartReviewAction(actingRef.current)) return;
     if (!allMembersMergeable(group)) {
       setReviewError(MERGE_UNSUPPORTED_COPY);
       return;
     }
+    const ticket = nextReviewActionTicket(reviewTicket.current);
+    reviewTicket.current = ticket;
+    actingRef.current = true;
     setActing(true);
     setBusyLabel("Merging…");
     setReviewError(null);
     try {
       const payload = await api.mergeDuplicate(group.id, body);
-      await afterDecision(payload.group);
+      if (!shouldApplyReviewAction(ticket, reviewTicket.current)) return;
+      await afterDecision(payload.group, ticket);
     } catch (err) {
+      if (!shouldApplyReviewAction(ticket, reviewTicket.current)) return;
       setReviewError(isMergeUnsupported(err) ? MERGE_UNSUPPORTED_COPY : err instanceof Error ? err.message : "Merge failed");
     } finally {
-      setActing(false);
-      setBusyLabel(null);
+      if (shouldApplyReviewAction(ticket, reviewTicket.current)) {
+        actingRef.current = false;
+        setActing(false);
+        setBusyLabel(null);
+      }
     }
   }
 
@@ -331,7 +364,10 @@ export function DuplicatesPage() {
     group: DuplicateGroup,
     body: { archive_member_ids: number[]; target_id?: number; title?: string }
   ) {
-    if (!canReview || acting) return;
+    if (!canReview || !canStartReviewAction(actingRef.current)) return;
+    const ticket = nextReviewActionTicket(reviewTicket.current);
+    reviewTicket.current = ticket;
+    actingRef.current = true;
     setActing(true);
     setBusyLabel(EXTRACTING_COPY);
     setReviewError(null);
@@ -341,14 +377,19 @@ export function DuplicatesPage() {
         target_id: body.target_id,
         title: body.title
       });
+      if (!shouldApplyReviewAction(ticket, reviewTicket.current)) return;
       setExtractedRows(payload.extracted || payload.assets || []);
       if (payload.group) setReviewGroup(payload.group);
       await refresh({ silent: true });
     } catch (err) {
+      if (!shouldApplyReviewAction(ticket, reviewTicket.current)) return;
       setReviewError(err instanceof Error ? err.message : "Extract failed");
     } finally {
-      setActing(false);
-      setBusyLabel(null);
+      if (shouldApplyReviewAction(ticket, reviewTicket.current)) {
+        actingRef.current = false;
+        setActing(false);
+        setBusyLabel(null);
+      }
     }
   }
 
@@ -356,7 +397,10 @@ export function DuplicatesPage() {
     group: DuplicateGroup,
     body: { archive_member_ids: number[]; asset_ids: number[]; target_id?: number; title?: string }
   ) {
-    if (!canReview || acting) return;
+    if (!canReview || !canStartReviewAction(actingRef.current)) return;
+    const ticket = nextReviewActionTicket(reviewTicket.current);
+    reviewTicket.current = ticket;
+    actingRef.current = true;
     setActing(true);
     setBusyLabel(EXTRACTING_COPY);
     setReviewError(null);
@@ -367,16 +411,21 @@ export function DuplicatesPage() {
         target_id: body.target_id,
         title: body.title
       });
+      if (!shouldApplyReviewAction(ticket, reviewTicket.current)) return;
       if (payload.group) {
-        await afterDecision(payload.group);
+        await afterDecision(payload.group, ticket);
       } else {
         await refresh({ silent: true });
       }
     } catch (err) {
+      if (!shouldApplyReviewAction(ticket, reviewTicket.current)) return;
       setReviewError(err instanceof Error ? err.message : "Extract & merge failed");
     } finally {
-      setActing(false);
-      setBusyLabel(null);
+      if (shouldApplyReviewAction(ticket, reviewTicket.current)) {
+        actingRef.current = false;
+        setActing(false);
+        setBusyLabel(null);
+      }
     }
   }
 
