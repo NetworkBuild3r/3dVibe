@@ -11,11 +11,14 @@ import {
   PROVIDER_OPTIONS,
   SETTINGS_FOOTER,
   STUB_HELPER,
+  canClearStoredKey,
   canManageCuratorSettings,
   clearKeyConfirm,
   defaultOllamaModelInput,
   isCuratorKeyProvider,
+  keyStatusChipClass,
   keyStatusFor,
+  keyStatusLabel,
   parseCuratorSetting,
   providerPatchBody,
   type ApiKeyStatus,
@@ -25,14 +28,11 @@ import {
 } from "../curatorSettings";
 
 function KeyStatusChip({ status }: { status: ApiKeyStatus }) {
-  const missing = status === "missing";
   return (
     <span
-      className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] uppercase tracking-wide ${
-        missing ? "border-amber-400/30 text-amber-200" : "border-accent-500/40 text-accent-300"
-      }`}
+      className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] uppercase tracking-wide ${keyStatusChipClass(status)}`}
     >
-      {missing ? "Missing" : "Key set"}
+      {keyStatusLabel(status)}
     </span>
   );
 }
@@ -318,7 +318,7 @@ export function CuratorSettingsPage() {
                   </button>
                   <button
                     type="button"
-                    disabled={clearingKey || keyStatus === "missing"}
+                    disabled={clearingKey || !canClearStoredKey(keyStatus)}
                     onClick={() => void onClearKey(keyProvider)}
                     className="rounded-lg border border-rose-400/30 px-4 py-2 text-sm text-rose-300 hover:border-rose-400/50 disabled:opacity-50"
                   >

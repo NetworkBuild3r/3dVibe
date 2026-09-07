@@ -597,7 +597,7 @@ All endpoints except `POST /api/v1/session`, invite preview/redeem, and `GET /up
 - `GET /covers/:id.webp` generated cover bytes (libvips webp under `VIBE_COVER_ROOT`)
 - `GET /covers/:id.lqip.webp` tiny LQIP / small-thumb webp for cheap card chrome
 - `POST /api/v1/covers/writeback` `{ model_id, status: "ready"|"failed", cover_url?, cover_lqip_url?, cover_placeholder?, asset_id?, cache_key? }` (`GenerateCoverJob` uses `CoverWriteback.apply!` in-process; `X-Cover-Token: $VIBE_COVER_TOKEN` or a curator Bearer token)
-- `GET /api/v1/curator_settings` owner-only — `{ curator_setting: { provider, ollama_url, ollama_model, xai_api_key_status, openai_api_key_status, anthropic_api_key_status } }` (`set` \| `missing`). **Never** returns raw keys. 403 for everyone else.
+- `GET /api/v1/curator_settings` owner-only — `{ curator_setting: { provider, ollama_url, ollama_model, xai_api_key_status, openai_api_key_status, anthropic_api_key_status } }` (`set` \| `from_env` \| `missing`). **Never** returns raw keys. 403 for everyone else.
 - `PATCH /api/v1/curator_settings` `{ provider, ollama_url, ollama_model }` owner-only. `provider` is `stub` \| `ollama` \| `xai` \| `openai` \| `anthropic`. Does not accept raw keys.
 - `PUT /api/v1/curator_settings/xai_api_key` `{ "xai_api_key": "..." }` owner-only. Stores the key encrypted. Response is status only (`set`).
 - `DELETE /api/v1/curator_settings/xai_api_key` owner-only. Clears the stored key (`missing`). Compose/CI `XAI_API_KEY` remains the fallback.
