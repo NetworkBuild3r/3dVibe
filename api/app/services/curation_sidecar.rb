@@ -95,9 +95,11 @@ class CurationSidecar
 
   def fetch_result
     if stub_mode?
-      return FetchResult.new(drafts: CurationStubProposals.new(@library).drafts, provider: resolved_provider)
+      return FetchResult.new(drafts: CurationStubProposals.new(@library).drafts, provider: "stub")
     end
-    return FetchResult.new(drafts: [], provider: resolved_provider) if @endpoint.blank?
+    if @endpoint.blank?
+      raise CurationHttpClient::Error, "VIBE_CURATOR_URL is blank"
+    end
 
     remote = (@client || CurationHttpClient.new(endpoint: @endpoint, token: @token)).fetch_proposals(catalog)
     return remote if remote.is_a?(FetchResult)

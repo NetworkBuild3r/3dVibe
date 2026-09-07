@@ -62,6 +62,23 @@ class ModelSearchTest < ActiveSupport::TestCase
     refute_includes doc[:archive_paths], ArchiveMember::PLACEHOLDER_PATH
   end
 
+  test "meilisearch pagination uses raw hit count so stale ids do not stop the page" do
+    client = FakeMeili.new(hits: [{ "id" => @horn.id }, { "id" => 9_999_999 }], total: 5)
+    result = ModelSearch.new(library_scope, query: "x", offset: 0, limit: 2, client: client).call
+    assert_equal [@horn.id], result.models.map(&:id)
+    assert_equal 2, result.next_offset
+    assert_equal 5, result.estimated_total
+  end
+
+  test "known-down Meili skips the search HTTP call and falls back to postgres" do
+    client = FakeMeili.new(hits: [{ "id" => @horn.id }], total: 1, available: false)
+    result = ModelSearch.new(library_scope, query: "horn", client: client).call
+    assert_equal "postgres", result.engine
+    assert result.fallback
+    assert_includes result.models.map(&:id), @horn.id
+    assert_equal 0, client.search_calls
+  end
+
   test "meilisearch stub hydrates hits in ranked order" do
     client = FakeMeili.new(hits: [{ "id" => @box.id }, { "id" => @horn.id }], total: 2)
     result = ModelSearch.new(library_scope, query: "anything", client: client).call
@@ -221,19 +238,26 @@ class ModelSearchTest < ActiveSupport::TestCase
   end
 
   class FakeMeili
-    attr_reader :last_filter, :last_facets
+    attr_reader :last_filter, :last_facets, :search_calls
 
-    def initialize(hits: [], total: nil, error: nil)
+    def initialize(hits: [], total: nil, error: nil, available: true)
       @hits = hits
       @total = total || hits.size
       @error = error
+      @available = available
+      @search_calls = 0
     end
 
     def configured?
       true
     end
 
+    def available?
+      @available
+    end
+
     def search(*args, **kwargs)
+      @search_calls += 1
       raise @error if @error
 
       options = kwargs

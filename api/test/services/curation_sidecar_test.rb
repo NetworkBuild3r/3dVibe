@@ -48,10 +48,25 @@ class CurationSidecarTest < ActiveSupport::TestCase
     assert_equal 1, @library.curation_proposals.where(sidecar_ref: kept.sidecar_ref).count
   end
 
-  test "blank endpoint without stub mode returns no drafts" do
+  test "blank endpoint without stub mode fails the poll instead of succeeding empty" do
     sidecar = CurationSidecar.new(@library, endpoint: "")
     sidecar.define_singleton_method(:stub_mode?) { false }
-    assert_equal [], sidecar.fetch_drafts
+
+    error = assert_raises(CurationHttpClient::Error) { sidecar.ingest_remote! }
+    assert_match(/blank/, error.message)
+
+    @library.reload
+    assert_equal "VIBE_CURATOR_URL is blank", @library.last_error
+    assert @library.last_polled_at.present?
+    assert @library.curation_proposals.none?
+  end
+
+  test "stub adapter records last_provider stub even when the UI provider is live" do
+    sidecar = CurationSidecar.new(@library, endpoint: "stub", provider_hint: "openai")
+    sidecar.ingest_remote!
+    assert_equal "stub", @library.reload.last_provider
+    assert_nil @library.last_error
+    assert @library.curation_proposals.pending.exists?
   end
 
   test "catalog includes locked snapshot fields without file bytes" do

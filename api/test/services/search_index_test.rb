@@ -80,12 +80,12 @@ class SearchIndexTest < ActiveSupport::TestCase
     ENV.delete("MEILI_URL")
   end
 
-  test "bulk index job drains the buffer without raising when Meili is down" do
+  test "bulk index job requeues ids when Meili is down so freshness is not dropped" do
     ENV["MEILI_URL"] = "http://127.0.0.1:9"
     SearchIndex.enqueue(@alpha)
     assert_includes SearchIndexBuffer.pending_ids, @alpha.id
     assert_nothing_raised { BulkIndexVibeModelsJob.perform_now }
-    assert_empty SearchIndexBuffer.pending_ids
+    assert_includes SearchIndexBuffer.pending_ids, @alpha.id
   ensure
     ENV.delete("MEILI_URL")
   end
