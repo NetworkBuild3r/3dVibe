@@ -83,4 +83,24 @@ class ModelComposerTest < ActiveSupport::TestCase
     end
     assert File.file?(@root.join("outside.stl"))
   end
+
+  test "merge does not follow a nested directory symlink out of the jail" do
+    outside = Rails.root.join("tmp/compose-escape-#{SecureRandom.hex(4)}")
+    FileUtils.mkdir_p(outside)
+    File.write(outside.join("secret.stl"), "solid secret\nendsolid secret\n")
+    File.symlink(outside, @root.join("signal-horn/escape-dir"))
+
+    record = ModelComposer.new(@library, performed_by: @owner).merge!(
+      source_ids: [@horn.id],
+      target_id: @crate.id
+    )
+
+    assert File.file?(@root.join("crate/signal-horn/horn.stl"))
+    refute File.exist?(@root.join("crate/signal-horn/escape-dir/secret.stl"))
+    assert File.file?(outside.join("secret.stl"))
+    assert_equal "solid secret\nendsolid secret\n", File.read(outside.join("secret.stl"))
+    refute record.parts.first["files"].any? { |path| path.include?("secret.stl") }
+  ensure
+    FileUtils.rm_rf(outside) if defined?(outside) && outside
+  end
 end

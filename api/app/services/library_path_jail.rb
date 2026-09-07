@@ -1,6 +1,45 @@
+require "find"
+
 class LibraryPathJail
   def initialize(root)
     @root = Pathname.new(root).expand_path
+  end
+
+  # Regular files only. Directory (and file) symlinks are not followed, so a
+  # nested escape hatch cannot walk or move bytes from outside the jail.
+  def self.each_regular_file(dir)
+    root = Pathname.new(dir)
+    Find.find(root.to_s) do |path|
+      pathname = Pathname.new(path)
+      if pathname.symlink?
+        Find.prune
+        next
+      end
+      next unless pathname.file?
+
+      yield pathname, pathname.relative_path_from(root).to_s
+    end
+  end
+
+  def self.remove_empty_tree!(dir, junk_names: [])
+    dir = Pathname.new(dir)
+    return false unless dir.directory? && !dir.symlink?
+
+    dir.children.each do |child|
+      next if child.symlink?
+
+      if child.directory?
+        remove_empty_tree!(child, junk_names: junk_names)
+      elsif junk_names.include?(child.basename.to_s)
+        child.unlink
+      end
+    end
+    return false unless dir.empty?
+
+    dir.rmdir
+    true
+  rescue Errno::ENOTEMPTY, Errno::ENOENT
+    false
   end
 
   def join(folder_name, relative_path)

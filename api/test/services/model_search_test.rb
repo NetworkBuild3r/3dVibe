@@ -37,6 +37,29 @@ class ModelSearchTest < ActiveSupport::TestCase
     assert result.facets["tags"].key?("stl")
   end
 
+  test "postgres has_preview includes gif archive members like previewable?" do
+    FileUtils.mkdir_p(@root.join("gif-pack"))
+    Zip::File.open(@root.join("gif-pack/shots.zip"), Zip::File::CREATE) do |zip|
+      zip.get_output_stream("turntable.gif") { |io| io.write("GIF89a") }
+    end
+    LibraryScanner.new(@library, uploaded_by: @owner).scan!
+    gif = @library.vibe_models.find_by!(folder_name: "gif-pack")
+    member = gif.assets.find_by!(filename: "shots.zip").archive_members.find_by!(internal_path: "turntable.gif")
+
+    assert member.previewable?
+    assert gif.previewable?
+    assert ModelCatalogFilters.previewable_model_ids.exists?(id: gif.id)
+    assert_includes ArchiveMember::PREVIEW_EXTENSIONS, "gif"
+
+    preview = ModelSearch.new(library_scope, query: "", filters: { has_preview: true }).call
+    assert_includes preview.models.map(&:id), gif.id
+    refute_includes preview.models.map(&:id), @box.id
+
+    hidden = ModelSearch.new(library_scope, query: "", filters: { has_preview: false }).call
+    refute_includes hidden.models.map(&:id), gif.id
+    assert_includes hidden.models.map(&:id), @box.id
+  end
+
   test "postgres filters by tag and has_preview with offset" do
     preview = ModelSearch.new(library_scope, query: "", filters: { has_preview: true }).call
     assert_includes preview.models.map(&:id), @horn.id

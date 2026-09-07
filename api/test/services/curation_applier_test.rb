@@ -75,6 +75,30 @@ class CurationApplierTest < ActiveSupport::TestCase
     assert_match(/first-level/i, nested.apply_error)
   end
 
+  test "merge does not follow a nested directory symlink out of the jail" do
+    outside = Rails.root.join("tmp/curate-escape-#{SecureRandom.hex(4)}")
+    FileUtils.mkdir_p(outside)
+    File.write(outside.join("secret.stl"), "solid secret\nendsolid secret\n")
+    File.symlink(outside, @root.join("hex-tray/escape-dir"))
+
+    proposal = approve("merge", {
+      "source_id" => @tray.id,
+      "target_id" => @horn.id,
+      "from" => "hex-tray",
+      "to" => "signal-horn"
+    })
+    CurationApplier.new(proposal).apply!
+
+    assert proposal.reload.applied?
+    assert File.exist?(@root.join("signal-horn/hex-tray/hex.stl"))
+    refute File.exist?(@root.join("signal-horn/hex-tray/escape-dir/secret.stl"))
+    assert File.file?(outside.join("secret.stl"))
+    assert_equal "solid secret\nendsolid secret\n", File.read(outside.join("secret.stl"))
+    refute Array(proposal.result["moved"]).any? { |path| path.to_s.include?("secret.stl") }
+  ensure
+    FileUtils.rm_rf(outside) if defined?(outside) && outside
+  end
+
   test "merges by moving files and only removes the empty source directory" do
     leftover_root = @root.join("hex-tray")
     proposal = approve("merge", {

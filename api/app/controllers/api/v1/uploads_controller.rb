@@ -35,6 +35,8 @@ module API
 
       def update
         upload = find_upload
+        return if require_upload!(upload.library)
+
         unless upload.pending?
           render json: { error: "not_pending", offset: upload.byte_offset }, status: :conflict
           return
@@ -58,6 +60,8 @@ module API
 
       def complete
         upload = find_upload
+        return if require_upload!(upload.library)
+
         finalize!(upload)
         render json: { upload: serialize(upload.reload) }
       end

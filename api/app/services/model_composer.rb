@@ -182,22 +182,15 @@ class ModelComposer
 
   def move_tree!(source_dir, target_folder, prefix)
     moved = []
-    each_regular_file(source_dir) do |path, rel|
+    LibraryPathJail.each_regular_file(source_dir) do |path, rel|
+      next if JUNK_NAMES.include?(path.basename.to_s)
+
       dest = @jail.join(target_folder, "#{prefix}/#{rel}")
       FileUtils.mkdir_p(dest.dirname)
       FileUtils.mv(path.to_s, dest.to_s)
       moved << "#{prefix}/#{rel}"
     end
     moved
-  end
-
-  def each_regular_file(dir)
-    Pathname.new(dir).find do |path|
-      next unless path.file?
-      next if JUNK_NAMES.include?(path.basename.to_s)
-
-      yield path, path.relative_path_from(dir).to_s
-    end
   end
 
   def prefix_for(target_folder, desired)
@@ -249,21 +242,7 @@ class ModelComposer
   end
 
   def remove_empty_tree!(dir)
-    return false unless dir.directory?
-
-    dir.children.each do |child|
-      if child.directory?
-        remove_empty_tree!(child)
-      elsif JUNK_NAMES.include?(child.basename.to_s)
-        child.unlink
-      end
-    end
-    return false unless dir.empty?
-
-    dir.rmdir
-    true
-  rescue Errno::ENOTEMPTY, Errno::ENOENT
-    false
+    LibraryPathJail.remove_empty_tree!(dir, junk_names: JUNK_NAMES)
   end
 
   def rescan!(prefixes)

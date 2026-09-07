@@ -371,6 +371,68 @@ class DuplicatesTest < ActionDispatch::IntegrationTest
     refute group.duplicate_reviews.exists?
   end
 
+  test "merge with explicit asset_ids still 422s when a selected id is archive-resident" do
+    member = seed_packed_member!
+    loose = @library.vibe_models.find_by!(folder_name: "crate").assets.find_by!(filename: "box.stl")
+    GeometryWriteback.apply!(archive_member_id: member.id, geometry_digest: "mesh:v1:asset-ids-block")
+    GeometryWriteback.apply!(asset_id: loose.id, geometry_digest: "mesh:v1:asset-ids-block")
+    AnalyzeDuplicatesJob.perform_now(@library.id)
+    group = DuplicateGroup.open.find_by!(reason: DuplicateGroup::REASON_GEOMETRY, digest: "mesh:v1:asset-ids-block")
+    zip_bytes = File.binread(@root.join("packed/pack.zip"))
+
+    post "/api/v1/duplicates/#{group.id}/merge",
+         params: { asset_ids: [member.asset_id], target_id: loose.vibe_model_id },
+         headers: auth_header(@contributor),
+         as: :json
+    assert_response :unprocessable_entity
+    assert_equal "merge_unsupported", response.parsed_body["error"]
+    assert_match(/archive-resident/i, response.parsed_body["message"])
+    assert_equal DuplicateGroup::OPEN, group.reload.status
+    refute group.duplicate_reviews.exists?
+    assert File.file?(@root.join("packed/pack.zip"))
+    assert_equal zip_bytes, File.binread(@root.join("packed/pack.zip"))
+    refute File.exist?(@root.join("crate/pack.zip"))
+
+    post "/api/v1/duplicates/#{group.id}/merge",
+         params: { asset_ids: [member.id], target_id: loose.vibe_model_id },
+         headers: auth_header(@contributor),
+         as: :json
+    assert_response :unprocessable_entity
+    assert_equal "merge_unsupported", response.parsed_body["error"]
+    assert_equal DuplicateGroup::OPEN, group.reload.status
+  end
+
+  test "extract rejects archive_member_ids that are not in the duplicate group" do
+    member = seed_packed_member!
+    other = seed_second_packed_member!
+    loose = @library.vibe_models.find_by!(folder_name: "crate").assets.find_by!(filename: "box.stl")
+    GeometryWriteback.apply!(archive_member_id: member.id, geometry_digest: "mesh:v1:extract-scope")
+    GeometryWriteback.apply!(asset_id: loose.id, geometry_digest: "mesh:v1:extract-scope")
+    AnalyzeDuplicatesJob.perform_now(@library.id)
+    group = DuplicateGroup.open.find_by!(reason: DuplicateGroup::REASON_GEOMETRY, digest: "mesh:v1:extract-scope")
+    zip_bytes = File.binread(@root.join("packed-b/other.zip"))
+
+    post "/api/v1/duplicates/#{group.id}/extract",
+         params: { archive_member_ids: [other.id], title: "Unrelated" },
+         headers: auth_header(@contributor),
+         as: :json
+    assert_response :unprocessable_entity
+    assert_match(/not in this duplicate group/i, response.parsed_body["details"].join)
+    refute @library.vibe_models.exists?(folder_name: "unrelated")
+    refute File.exist?(@root.join("unrelated/bar.stl"))
+    assert_equal zip_bytes, File.binread(@root.join("packed-b/other.zip"))
+    assert_equal DuplicateGroup::OPEN, group.reload.status
+
+    post "/api/v1/duplicates/#{group.id}/extract_and_merge",
+         params: { archive_member_ids: [member.id, other.id], target_id: loose.vibe_model_id },
+         headers: auth_header(@contributor),
+         as: :json
+    assert_response :unprocessable_entity
+    refute File.exist?(@root.join("crate/foo.stl"))
+    refute File.exist?(@root.join("crate/bar.stl"))
+    assert_equal DuplicateGroup::OPEN, group.reload.status
+  end
+
   test "keep and dismiss still work on groups that include an archive member" do
     member = seed_packed_member!
     loose = @library.vibe_models.find_by!(folder_name: "crate").assets.find_by!(filename: "box.stl")
