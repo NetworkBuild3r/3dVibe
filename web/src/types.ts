@@ -40,6 +40,12 @@ export type Author = {
   display_name: string;
 };
 
+/** Library membership row for the Friend picker — not a Creator. */
+export type LibraryMember = {
+  id: number;
+  display_name: string;
+};
+
 export type CoverStatus = "missing" | "pending" | "ready" | "failed";
 
 export type CreatorRef = {

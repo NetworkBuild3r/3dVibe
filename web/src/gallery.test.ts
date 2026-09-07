@@ -10,6 +10,7 @@ import {
   engineStatus,
   facetCreators,
   facetTags,
+  friendDisplayName,
   galleryFilterClearParams,
   hasActiveFilters,
   headerCountLabel,
@@ -17,6 +18,8 @@ import {
   readDensity,
   readGalleryFilters,
   searchPillLabel,
+  truncateUploaderLabel,
+  uploaderSegment,
   usesSearchEndpoint
 } from "./gallery";
 
@@ -50,7 +53,8 @@ describe("gallery URL and API bind", () => {
       q: "hero",
       creator: "packed-minis",
       tag: "stl",
-      hasCover: true
+      hasCover: true,
+      uploadedBy: ""
     });
     expect(hasActiveFilters(filters)).toBe(true);
     expect(usesSearchEndpoint(filters)).toBe(true);
@@ -104,14 +108,16 @@ describe("facets and empty states", () => {
   });
 
   it("uses the states-kit empty copy", () => {
-    expect(emptyLibraryCopy({ q: "", creator: "", tag: "", hasCover: false }).copy).toBe(
+    expect(emptyLibraryCopy({ q: "", creator: "", tag: "", hasCover: false, uploadedBy: "" }).copy).toBe(
       "Scan the NFS mount to index folders."
     );
-    expect(emptyLibraryCopy({ q: "nope", creator: "", tag: "", hasCover: false })).toEqual({
+    expect(emptyLibraryCopy({ q: "nope", creator: "", tag: "", hasCover: false, uploadedBy: "" })).toEqual({
       copy: "No models match these filters.",
       clearFilters: true
     });
-    expect(emptyLibraryCopy({ q: "", creator: "", tag: "", hasCover: true }).copy).toMatch(/ready covers/);
+    expect(emptyLibraryCopy({ q: "", creator: "", tag: "", hasCover: true, uploadedBy: "" }).copy).toMatch(
+      /ready covers/
+    );
   });
 
   it("treats search q as an active filter for All / Clear", () => {
@@ -123,7 +129,13 @@ describe("facets and empty states", () => {
     expect(allChipActive(idle)).toBe(true);
     expect(searchPillLabel(searchOnly)).toBe("hero");
     expect(searchPillLabel({ q: "  " })).toBe("");
-    expect(galleryFilterClearParams()).toEqual({ q: null, tag: null, creator: null, cover: null });
+    expect(galleryFilterClearParams()).toEqual({
+      q: null,
+      tag: null,
+      creator: null,
+      cover: null,
+      uploaded_by: null
+    });
   });
 
   it("halts infinite-scroll paging after a failed page", () => {
@@ -136,5 +148,71 @@ describe("facets and empty states", () => {
     expect(readDensity({ getItem: () => null })).toBe("comfortable");
     expect(readDensity({ getItem: () => "compact" })).toBe("compact");
     expect(columnCount(700, "comfortable")).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("uploader filter bind", () => {
+  const members = [
+    { id: 4, display_name: "Pal" },
+    { id: 7, display_name: "Very Long Friend Display Name" }
+  ];
+
+  it("reads Everyone / Mine / Friend URL params and maps catalog query", () => {
+    const everyone = readGalleryFilters(new URLSearchParams());
+    const mine = readGalleryFilters(new URLSearchParams("uploaded_by=me&tag=stl"));
+    const friend = readGalleryFilters(new URLSearchParams("uploaded_by=4&q=hero"));
+    const unknown = readGalleryFilters(new URLSearchParams("uploaded_by=friend"));
+
+    expect(everyone.uploadedBy).toBe("");
+    expect(uploaderSegment(everyone)).toBe("everyone");
+    expect(catalogQuery(everyone)).toEqual({});
+    expect(applyCatalogParams(new URLSearchParams(), catalogQuery(everyone)).has("uploaded_by")).toBe(false);
+
+    expect(mine.uploadedBy).toBe("me");
+    expect(uploaderSegment(mine)).toBe("mine");
+    expect(hasActiveFilters(mine)).toBe(true);
+    expect(allChipActive(mine)).toBe(false);
+    expect(usesSearchEndpoint(mine)).toBe(false);
+    expect(catalogQuery(mine)).toEqual({ tag: "stl", uploaded_by: "me" });
+
+    expect(friend.uploadedBy).toBe("4");
+    expect(uploaderSegment(friend)).toBe("friend");
+    expect(usesSearchEndpoint(friend)).toBe(true);
+    expect(catalogQuery(friend)).toEqual({ q: "hero", uploaded_by: "4" });
+
+    expect(unknown.uploadedBy).toBe("friend");
+    expect(uploaderSegment(unknown)).toBe("friend");
+    expect(catalogQuery(unknown)).toEqual({ uploaded_by: "friend" });
+    expect(applyCatalogParams(new URLSearchParams(), catalogQuery(unknown)).get("uploaded_by")).toBe("friend");
+  });
+
+  it("clears uploaded_by with All / Clear All and keeps other chips when only the segment changes", () => {
+    expect(galleryFilterClearParams().uploaded_by).toBeNull();
+    const creatorPlusMine = readGalleryFilters(new URLSearchParams("creator=packed-minis&uploaded_by=me"));
+    const afterEveryone = { ...creatorPlusMine, uploadedBy: "" };
+    expect(catalogQuery(creatorPlusMine)).toEqual({ creator_slug: "packed-minis", uploaded_by: "me" });
+    expect(catalogQuery(afterEveryone)).toEqual({ creator_slug: "packed-minis" });
+  });
+
+  it("uses Mine / Friend empty copy and does not invent a friend name", () => {
+    expect(emptyLibraryCopy({ q: "", creator: "", tag: "", hasCover: false, uploadedBy: "me" })).toEqual({
+      copy: "Nothing you’ve uploaded yet. NFS scans without an uploader stay under Everyone.",
+      clearFilters: true
+    });
+    expect(
+      emptyLibraryCopy({ q: "", creator: "", tag: "", hasCover: false, uploadedBy: "4" }, { members })
+    ).toEqual({
+      copy: "No uploads from Pal yet.",
+      clearFilters: true
+    });
+    expect(emptyLibraryCopy({ q: "", creator: "", tag: "", hasCover: false, uploadedBy: "999" }, { members })).toEqual({
+      copy: "No models match these filters.",
+      clearFilters: true
+    });
+    expect(friendDisplayName("4", members)).toBe("Pal");
+    expect(friendDisplayName("me", members)).toBe("");
+    expect(friendDisplayName("999", members)).toBe("");
+    expect(truncateUploaderLabel("Pal")).toBe("Pal");
+    expect(truncateUploaderLabel("Very Long Friend Display Name")).toBe("Very Long Friend…");
   });
 });

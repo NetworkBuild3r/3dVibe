@@ -21,6 +21,7 @@ import type {
   DuplicatesPayload,
   Invite,
   LibraryInfo,
+  LibraryMember,
   LibraryScanDetail,
   LibraryUpload,
   MeiliHealth,
@@ -91,6 +92,8 @@ export const api = {
   logout: () => request<void>("/session", { method: "DELETE" }),
   libraries: () => request<{ libraries: LibraryInfo[] }>("/libraries"),
   library: (id: number | string) => request<{ library: LibraryInfo }>(`/libraries/${id}`),
+  libraryMembers: (id: number | string) =>
+    request<{ members: LibraryMember[] }>(`/libraries/${id}/members`),
   libraryScan: (id: number | string) => request<LibraryScanDetail>(`/libraries/${id}/scan`),
   ops: (libraryId?: number | string) => {
     const suffix = libraryId != null ? `?library_id=${encodeURIComponent(String(libraryId))}` : "";
@@ -116,6 +119,7 @@ export const api = {
     tag?: string;
     has_cover?: boolean;
     cover_status?: string;
+    uploaded_by?: string;
   } = {}) => {
     const params = new URLSearchParams({ limit: String(options.limit ?? 48) });
     if (options.cursor) params.set("cursor", options.cursor);
@@ -125,6 +129,7 @@ export const api = {
       params.set("has_cover", String(options.has_cover));
     }
     if (options.cover_status) params.set("cover_status", options.cover_status);
+    if (options.uploaded_by) params.set("uploaded_by", options.uploaded_by);
     return request<{ models: ModelCard[]; next_cursor: number | null }>(`/models?${params}`);
   },
   model: (id: string | number, signal?: AbortSignal) =>
@@ -233,6 +238,7 @@ export const api = {
     creator_slug?: string;
     has_cover?: boolean;
     cover_status?: string;
+    uploaded_by?: string;
     offset?: number;
     limit?: number;
     library_id?: number | string;
@@ -248,6 +254,7 @@ export const api = {
       params.set("has_cover", String(options.has_cover));
     }
     if (options.cover_status) params.set("cover_status", options.cover_status);
+    if (options.uploaded_by) params.set("uploaded_by", options.uploaded_by);
     if (options.offset != null) params.set("offset", String(options.offset));
     if (options.limit != null) params.set("limit", String(options.limit));
     if (options.library_id) params.set("library_id", String(options.library_id));

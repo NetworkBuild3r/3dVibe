@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
-import type { Creator, ModelCard } from "../types";
+import { useLibrary } from "../library";
+import type { Creator, LibraryMember, ModelCard } from "../types";
 import { GalleryFilterBar } from "../components/GalleryFilterBar";
 import { ModelCard as ModelCardView } from "../components/ModelCard";
 import { OpsStrip } from "../components/OpsStrip";
@@ -29,7 +30,8 @@ import { canToggleCardLike, cardLikeBusy, clearLikeBusy, markLikeBusy } from "..
 export function GalleryPage() {
   const [params, setParams] = useSearchParams();
   const filters = useMemo(() => readGalleryFilters(params), [params]);
-  const queryKey = `${filters.q}\0${filters.tag}\0${filters.creator}\0${filters.hasCover}`;
+  const queryKey = `${filters.q}\0${filters.tag}\0${filters.creator}\0${filters.hasCover}\0${filters.uploadedBy}`;
+  const { libraries, library } = useLibrary();
 
   const [models, setModels] = useState<ModelCard[]>([]);
   const [creators, setCreators] = useState<Creator[]>([]);
@@ -46,6 +48,9 @@ export function GalleryPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [likeBusyIds, setLikeBusyIds] = useState<number[]>([]);
   const [density, setDensity] = useState<GalleryDensity>(() => readDensity(window.localStorage));
+  const [members, setMembers] = useState<LibraryMember[]>([]);
+  const [membersReady, setMembersReady] = useState(false);
+  const [membersError, setMembersError] = useState<string | null>(null);
 
   const sentinel = useRef<HTMLDivElement | null>(null);
   const filtersRef = useRef(filters);
@@ -54,6 +59,7 @@ export function GalleryPage() {
   const hasMoreRef = useRef(true);
   const loadingRef = useRef(false);
   const requestRef = useRef(0);
+  const membersTicket = useRef(0);
   const likeBusyRef = useRef<number[]>([]);
 
   const activeSearch = hasActiveFilters(filters);
@@ -95,6 +101,7 @@ export function GalleryPage() {
       if (useSearch) {
         const page = await api.search({
           ...query,
+          uploaded_by: query.uploaded_by,
           offset: offsetRef.current,
           limit: PAGE_SIZE
         });
@@ -129,7 +136,8 @@ export function GalleryPage() {
             limit: PAGE_SIZE,
             creator_slug: query.creator_slug,
             tag: query.tag,
-            has_cover: query.has_cover
+            has_cover: query.has_cover,
+            uploaded_by: query.uploaded_by
           }),
           firstPage
             ? api
@@ -137,6 +145,7 @@ export function GalleryPage() {
                   creator_slug: query.creator_slug,
                   tag: query.tag,
                   has_cover: query.has_cover,
+                  uploaded_by: query.uploaded_by,
                   limit: 1
                 })
                 .catch(() => null)
@@ -208,11 +217,36 @@ export function GalleryPage() {
       .creators()
       .then((payload) => setCreators(payload.creators))
       .catch(() => undefined);
-    api
-      .libraries()
-      .then((payload) => setLibraryTotal(payload.libraries.reduce((sum, library) => sum + (library.model_count || 0), 0)))
-      .catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    if (!libraries.length) return;
+    setLibraryTotal(libraries.reduce((sum, item) => sum + (item.model_count || 0), 0));
+  }, [libraries]);
+
+  const loadMembers = useCallback(() => {
+    if (!library) return;
+    const ticket = ++membersTicket.current;
+    setMembersReady(false);
+    setMembersError(null);
+    api
+      .libraryMembers(library.id)
+      .then((payload) => {
+        if (ticket !== membersTicket.current) return;
+        setMembers(payload.members);
+        setMembersReady(true);
+      })
+      .catch((err) => {
+        if (ticket !== membersTicket.current) return;
+        setMembers([]);
+        setMembersReady(true);
+        setMembersError(err instanceof Error ? err.message : "Could not load members");
+      });
+  }, [library]);
+
+  useEffect(() => {
+    loadMembers();
+  }, [loadMembers]);
 
   useEffect(() => {
     filtersRef.current = filters;
@@ -241,7 +275,7 @@ export function GalleryPage() {
   const headerCount = activeSearch ? estimatedTotal : libraryTotal;
   const countLabel = headerCountLabel({ filtered: activeSearch, count: headerCount, capped: activeSearch && capped });
   const showInitialSkeleton = loading && models.length === 0 && !loadError;
-  const empty = emptyLibraryCopy(filters);
+  const empty = emptyLibraryCopy(filters, { members });
 
   return (
     <div>
@@ -259,6 +293,9 @@ export function GalleryPage() {
         facets={facets}
         creators={creators}
         models={models}
+        members={members}
+        membersReady={membersReady}
+        membersError={membersError}
         density={density}
         engine={engine}
         facetsReady={facetsReady}
@@ -266,6 +303,7 @@ export function GalleryPage() {
         onPatch={patchParams}
         onClear={clearFilters}
         onRetry={() => resetAndLoad()}
+        onRetryMembers={loadMembers}
         onDensity={applyDensity}
       />
 

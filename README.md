@@ -654,6 +654,8 @@ Cover-first Library at `/`. Slim rail + top search stay in the chrome. Sticky ch
 | `?cover=1` | `has_cover=true` (ready cover only). Do **not** `models.filter(hasReadyCover)` |
 | `?uploaded_by=me` \| `?uploaded_by=<user_id>` | same param on `/models` (chips only) or `/search` (when `q` is set). Omit = All. Friend ids come from `GET /libraries/:id/members`, not Creators. |
 
+Everyone · Mine · Friend… is a mutually exclusive uploader segment **before** Creators / Tags / Has cover. Everyone omits `uploaded_by`. Mine sends `uploaded_by=me`. Friend… lists `GET /libraries/:id/members` by `display_name` and sends `uploaded_by=<user_id>`. Switching the segment replaces `uploaded_by` only; other chips stay. All / Clear All also clears the uploader. Bad or unknown ids stay on the wire (empty models, never silent All). Null `uploaded_by` on a card is omitted — do not invent owners.
+
 Facets (`tags`, `creator_slug`, `cover_status`, `has_cover`) drive the Creators / Tags dropdowns. Active pills show the creator **name**, never a raw slug. Null `creator` on a card is omitted (never “Unknown creator”). Failed covers may show a “Cover failed” checker line.
 
 When Meili is down the search payload is `engine: "postgres"`, `fallback: true`. If `capped: true`, `estimated_total` is a floor.

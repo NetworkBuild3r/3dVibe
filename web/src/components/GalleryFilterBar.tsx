@@ -1,11 +1,14 @@
-import type { Creator, ModelCard } from "../types";
+import type { Creator, LibraryMember, ModelCard } from "../types";
 import {
   allChipActive,
   creatorDisplayName,
   facetCreators,
   facetTags,
+  friendDisplayName,
   hasActiveFilters,
   searchPillLabel,
+  truncateUploaderLabel,
+  uploaderSegment,
   type CatalogFacets,
   type GalleryDensity,
   type GalleryFilters
@@ -19,6 +22,9 @@ export function GalleryFilterBar({
   facets,
   creators,
   models,
+  members,
+  membersReady,
+  membersError,
   density,
   engine,
   facetsReady,
@@ -26,12 +32,16 @@ export function GalleryFilterBar({
   onPatch,
   onClear,
   onRetry,
+  onRetryMembers,
   onDensity
 }: {
   filters: GalleryFilters;
   facets?: CatalogFacets;
   creators: Creator[];
   models: ModelCard[];
+  members: LibraryMember[];
+  membersReady: boolean;
+  membersError: string | null;
   density: GalleryDensity;
   engine: string;
   facetsReady: boolean;
@@ -39,6 +49,7 @@ export function GalleryFilterBar({
   onPatch: (updates: Record<string, string | null>) => void;
   onClear: () => void;
   onRetry: () => void;
+  onRetryMembers: () => void;
   onDensity: (density: GalleryDensity) => void;
 }) {
   const creatorOptions = facetCreators(facets, creators, models);
@@ -46,10 +57,50 @@ export function GalleryFilterBar({
   const selectedCreatorName = creatorDisplayName(filters.creator, creators, models);
   const filtersActive = hasActiveFilters(filters);
   const queryLabel = searchPillLabel(filters);
+  const segment = uploaderSegment(filters);
+  const friendName = friendDisplayName(filters.uploadedBy, members);
+  const friendLabel = friendName ? truncateUploaderLabel(friendName) : undefined;
+  const memberOptions = members.filter((member) => member.display_name);
+  const pickerEmpty = membersError
+    ? undefined
+    : membersReady && memberOptions.length === 0
+      ? "No members yet"
+      : undefined;
 
   return (
     <div className="gallery-filter-bar">
       <div className="flex flex-wrap items-center gap-2">
+        <CalmChip active={segment === "everyone"} onClick={() => onPatch({ uploaded_by: null })}>
+          Everyone
+        </CalmChip>
+        <CalmChip active={segment === "mine"} onClick={() => onPatch({ uploaded_by: "me" })}>
+          Mine
+        </CalmChip>
+        <ChipDropdown
+          label="Friend…"
+          active={segment === "friend"}
+          activeLabel={friendLabel}
+          empty={pickerEmpty}
+        >
+          {memberOptions.map((member) => (
+            <ChipOption
+              key={member.id}
+              selected={filters.uploadedBy === String(member.id)}
+              onSelect={() =>
+                onPatch({
+                  uploaded_by: filters.uploadedBy === String(member.id) ? null : String(member.id)
+                })
+              }
+            >
+              <span>{member.display_name}</span>
+            </ChipOption>
+          ))}
+          {membersError ? (
+            <div className="px-3 py-2">
+              <InlineError message={membersError} onRetry={onRetryMembers} />
+            </div>
+          ) : null}
+        </ChipDropdown>
         {!facetsReady && creatorOptions.length === 0 && tagOptions.length === 0 ? (
           <ChipRowSkeleton />
         ) : (
