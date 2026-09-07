@@ -6,15 +6,21 @@ import {
   archiveMemberIds,
   archiveMembersToExtract,
   canExtractArchiveMembers,
+  duplicateLibraryFromSearch,
+  duplicateLibrarySearchOrder,
+  duplicateReviewHref,
+  duplicatesIndexHref,
   EXTRACT_AND_MERGE_COPY,
   EXTRACTING_COPY,
+  findGroupInLibraries,
   groupHasArchive,
   isArchiveResident,
   looseAssetIds,
   memberDisplayPath,
   MERGE_UNSUPPORTED_COPY,
   mergePayloadForGroup,
-  preferredTargetId
+  preferredTargetId,
+  resolveDuplicateLibraryId
 } from "./duplicates";
 
 const archiveMember: DuplicateMember = {
@@ -120,5 +126,62 @@ describe("duplicate extract bind", () => {
     expect(payload.asset_ids).toEqual([88]);
     expect(payload.source_ids).not.toContain(4);
     expect(payload.asset_ids).not.toContain(12);
+  });
+});
+
+describe("duplicate library deep links", () => {
+  const studio = { id: 1, name: "Studio" };
+  const friends = { id: 2, name: "Friends" };
+
+  it("reads and writes library context on review URLs", () => {
+    expect(duplicateLibraryFromSearch("?library=2")).toBe(2);
+    expect(duplicateLibraryFromSearch("library=2&status=open")).toBe(2);
+    expect(duplicateLibraryFromSearch("")).toBeNull();
+    expect(duplicateLibraryFromSearch("library=nope")).toBeNull();
+    expect(duplicateReviewHref(44, 2)).toBe("/duplicates/44?library=2");
+    expect(duplicateReviewHref(44)).toBe("/duplicates/44");
+    expect(duplicatesIndexHref(2)).toBe("/duplicates?library=2");
+  });
+
+  it("does not assume libraries[0] when the URL or group points elsewhere", () => {
+    expect(
+      resolveDuplicateLibraryId({
+        libraries: [studio, friends],
+        preferredId: 2
+      })
+    ).toBe(2);
+    expect(
+      resolveDuplicateLibraryId({
+        libraries: [studio, friends],
+        groupLibraryId: 2,
+        preferredId: 9
+      })
+    ).toBe(2);
+    expect(
+      resolveDuplicateLibraryId({
+        libraries: [studio, friends],
+        currentId: 2
+      })
+    ).toBe(2);
+    expect(resolveDuplicateLibraryId({ libraries: [studio, friends] })).toBe(1);
+  });
+
+  it("finds a deep-linked group in a later library index", () => {
+    const hit = findGroupInLibraries(
+      [
+        { library_id: 1, groups: [{ ...group, id: 3, library_id: 1 }] },
+        { library_id: 2, groups: [{ ...group, id: 44, library_id: 2, filename: "other.stl" }] }
+      ],
+      44
+    );
+    expect(hit?.libraryId).toBe(2);
+    expect(hit?.group.filename).toBe("other.stl");
+    expect(findGroupInLibraries([{ library_id: 1, groups: [group] }], 99)).toBeNull();
+  });
+
+  it("searches the selected library first, then the rest — never only libraries[0]", () => {
+    expect(duplicateLibrarySearchOrder([studio, friends], 2)).toEqual([2, 1]);
+    expect(duplicateLibrarySearchOrder([studio, friends], "")).toEqual([1, 2]);
+    expect(duplicateLibrarySearchOrder([studio, friends], 9)).toEqual([1, 2]);
   });
 });
