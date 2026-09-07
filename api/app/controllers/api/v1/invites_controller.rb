@@ -51,9 +51,13 @@ module API
             password: params.require(:password),
             password_confirmation: params.require(:password)
           )
-        elsif params[:password].present? && !user.authenticate(params[:password])
-          render json: { error: "invalid_credentials" }, status: :unauthorized
-          return
+        else
+          # Existing accounts must prove the password. Omitting it used to
+          # issue a session token for whoever held the invite link.
+          unless params[:password].present? && user.authenticate(params[:password])
+            render json: { error: "invalid_credentials" }, status: :unauthorized
+            return
+          end
         end
 
         invite.redeem!(user)

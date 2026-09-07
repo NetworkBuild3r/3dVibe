@@ -56,6 +56,20 @@ class LibraryScannerTest < ActiveSupport::TestCase
     assert_equal first_scan.to_i, cursor.reload.last_scanned_at.to_i
   end
 
+  test "does not index a first-level folder that is a symlink out of the library" do
+    outside = Rails.root.join("tmp/scan-symlink-#{SecureRandom.hex(4)}")
+    FileUtils.mkdir_p(outside)
+    File.write(outside.join("secret.stl"), "solid outside\nendsolid outside\n")
+    File.symlink(outside, @root.join("escape-pack"))
+
+    LibraryScanner.new(@library).scan!
+
+    refute @library.vibe_models.exists?(folder_name: "escape-pack")
+    assert @library.vibe_models.exists?(folder_name: "cube-gauge")
+  ensure
+    FileUtils.rm_rf(outside) if defined?(outside) && outside
+  end
+
   test "targeted scan indexes one folder and skips hidden incoming dirs" do
     FileUtils.mkdir_p(@root.join(".vibe-incoming"))
     File.write(@root.join(".vibe-incoming/partial"), "tmp")
