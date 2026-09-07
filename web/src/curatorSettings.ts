@@ -14,16 +14,39 @@ export type KeyStatusTone = "accent" | "slate" | "amber";
 
 export const DEFAULT_OLLAMA_MODEL = "gemma4";
 
+/** One row per cloud-key provider. Status field, HTTP door, and chip label stay in this map. */
+export type CuratorKeyPanel = {
+  id: CuratorKeyProvider;
+  label: string;
+  field: `${CuratorKeyProvider}_api_key`;
+  statusField: `${CuratorKeyProvider}_api_key_status`;
+};
+
+function defineKeyPanel<K extends CuratorKeyProvider>(id: K, label: string) {
+  return {
+    id,
+    label,
+    field: `${id}_api_key` as `${K}_api_key`,
+    statusField: `${id}_api_key_status` as `${K}_api_key_status`
+  };
+}
+
+export const CURATOR_KEY_PANELS = {
+  xai: defineKeyPanel("xai", "xAI"),
+  openai: defineKeyPanel("openai", "OpenAI"),
+  anthropic: defineKeyPanel("anthropic", "Anthropic")
+} as const satisfies Record<CuratorKeyProvider, CuratorKeyPanel>;
+
 export const CURATOR_KEY_FIELDS = {
-  xai: "xai_api_key",
-  openai: "openai_api_key",
-  anthropic: "anthropic_api_key"
+  xai: CURATOR_KEY_PANELS.xai.field,
+  openai: CURATOR_KEY_PANELS.openai.field,
+  anthropic: CURATOR_KEY_PANELS.anthropic.field
 } as const;
 
 export const CURATOR_KEY_STATUS_FIELDS = {
-  xai: "xai_api_key_status",
-  openai: "openai_api_key_status",
-  anthropic: "anthropic_api_key_status"
+  xai: CURATOR_KEY_PANELS.xai.statusField,
+  openai: CURATOR_KEY_PANELS.openai.statusField,
+  anthropic: CURATOR_KEY_PANELS.anthropic.statusField
 } as const;
 
 export type CuratorSetting = {
@@ -38,9 +61,10 @@ export type CuratorSetting = {
 export const PROVIDER_OPTIONS: Array<{ id: CuratorProvider; label: string }> = [
   { id: "stub", label: "Stub" },
   { id: "ollama", label: "Ollama" },
-  { id: "xai", label: "xAI" },
-  { id: "openai", label: "OpenAI" },
-  { id: "anthropic", label: "Anthropic" }
+  ...CURATOR_KEY_PROVIDERS.map((id) => ({
+    id,
+    label: CURATOR_KEY_PANELS[id].label
+  }))
 ];
 
 export const STUB_HELPER = "CI / offline fixtures.";
@@ -50,16 +74,18 @@ export const KEY_HELPER = "Stored encrypted on the server. Not kept in the brows
 export const SETTINGS_FOOTER =
   "Applies on the next Refresh proposals. Stub stays for CI. Live default is Ollama + gemma4 when selected.";
 
+const MISSING_KEY_STATUSES = {
+  xai_api_key_status: "missing",
+  openai_api_key_status: "missing",
+  anthropic_api_key_status: "missing"
+} as const satisfies Pick<CuratorSetting, (typeof CURATOR_KEY_PANELS)[CuratorKeyProvider]["statusField"]>;
+
 const EMPTY_SETTING: CuratorSetting = {
   provider: "ollama",
   ollama_url: null,
   ollama_model: null,
-  xai_api_key_status: "missing",
-  openai_api_key_status: "missing",
-  anthropic_api_key_status: "missing"
+  ...MISSING_KEY_STATUSES
 };
-
-const RAW_KEY_FIELDS = ["xai_api_key", "openai_api_key", "anthropic_api_key"] as const;
 
 export function isCuratorProvider(value: unknown): value is CuratorProvider {
   return typeof value === "string" && (CURATOR_PROVIDERS as readonly string[]).includes(value);
@@ -69,7 +95,24 @@ export function isCuratorKeyProvider(value: unknown): value is CuratorKeyProvide
   return typeof value === "string" && (CURATOR_KEY_PROVIDERS as readonly string[]).includes(value);
 }
 
+export function curatorKeyPanel(provider: CuratorKeyProvider) {
+  return CURATOR_KEY_PANELS[provider];
+}
+
+export function curatorKeyPanelFor(provider: CuratorProvider) {
+  return isCuratorKeyProvider(provider) ? CURATOR_KEY_PANELS[provider] : null;
+}
+
+export function curatorKeyEndpoint(provider: CuratorKeyProvider) {
+  return `/curator_settings/${CURATOR_KEY_PANELS[provider].field}`;
+}
+
+export function curatorKeyPutBody(provider: CuratorKeyProvider, apiKey: string) {
+  return { [CURATOR_KEY_PANELS[provider].field]: apiKey };
+}
+
 export function providerLabel(id: CuratorProvider) {
+  if (isCuratorKeyProvider(id)) return CURATOR_KEY_PANELS[id].label;
   return PROVIDER_OPTIONS.find((option) => option.id === id)?.label ?? id;
 }
 
@@ -144,12 +187,12 @@ export function parseCuratorSetting(raw: unknown): CuratorSetting {
     provider: isCuratorProvider(row.provider) ? row.provider : EMPTY_SETTING.provider,
     ollama_url: asOptionalText(row.ollama_url),
     ollama_model: asOptionalText(row.ollama_model),
-    xai_api_key_status: asKeyStatus(row.xai_api_key_status),
-    openai_api_key_status: asKeyStatus(row.openai_api_key_status),
-    anthropic_api_key_status: asKeyStatus(row.anthropic_api_key_status)
+    ...MISSING_KEY_STATUSES
   };
 
-  for (const field of RAW_KEY_FIELDS) {
+  for (const id of CURATOR_KEY_PROVIDERS) {
+    const { field, statusField } = CURATOR_KEY_PANELS[id];
+    parsed[statusField] = asKeyStatus(row[statusField]);
     delete (parsed as Record<string, unknown>)[field];
   }
 

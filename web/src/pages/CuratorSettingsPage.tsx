@@ -14,8 +14,8 @@ import {
   canClearStoredKey,
   canManageCuratorSettings,
   clearKeyConfirm,
+  curatorKeyPanelFor,
   defaultOllamaModelInput,
-  isCuratorKeyProvider,
   keyStatusChipClass,
   keyStatusFor,
   keyStatusLabel,
@@ -131,7 +131,7 @@ export function CuratorSettingsPage() {
     if (next === "ollama" && !ollamaModel.trim()) {
       setOllamaModel(DEFAULT_OLLAMA_MODEL);
     }
-    if (isCuratorKeyProvider(next)) {
+    if (curatorKeyPanelFor(next)) {
       clearKeyField();
     }
   }
@@ -212,8 +212,8 @@ export function CuratorSettingsPage() {
     );
   }
 
-  const keyProvider = isCuratorKeyProvider(provider) ? provider : null;
-  const keyStatus = keyProvider ? keyStatusFor(setting, keyProvider) : "missing";
+  const keyPanel = curatorKeyPanelFor(provider);
+  const keyStatus = keyPanel ? keyStatusFor(setting, keyPanel.id) : "missing";
 
   return (
     <div className="space-y-6">
@@ -290,8 +290,8 @@ export function CuratorSettingsPage() {
               </div>
             </form>
 
-            {keyProvider ? (
-              <form onSubmit={(event) => void onSaveKey(event, keyProvider)} className="mt-8 border-t border-white/5 pt-6">
+            {keyPanel ? (
+              <form onSubmit={(event) => void onSaveKey(event, keyPanel.id)} className="mt-8 border-t border-white/5 pt-6">
                 <div className="flex flex-wrap items-center gap-2">
                   <h2 className="text-sm text-slate-300">API key</h2>
                   <KeyStatusChip status={keyStatus} />
@@ -302,7 +302,7 @@ export function CuratorSettingsPage() {
                     ref={keyInput}
                     type="password"
                     autoComplete="new-password"
-                    name={`${keyProvider}-api-key`}
+                    name={`${keyPanel.id}-api-key`}
                     className="mt-1 w-full rounded-lg border border-white/10 bg-ink-950 px-3 py-2 text-white outline-none ring-accent-500 focus:ring-2"
                     placeholder="New key"
                   />
@@ -319,7 +319,7 @@ export function CuratorSettingsPage() {
                   <button
                     type="button"
                     disabled={clearingKey || !canClearStoredKey(keyStatus)}
-                    onClick={() => void onClearKey(keyProvider)}
+                    onClick={() => void onClearKey(keyPanel.id)}
                     className="rounded-lg border border-rose-400/30 px-4 py-2 text-sm text-rose-300 hover:border-rose-400/50 disabled:opacity-50"
                   >
                     {clearingKey ? "Removing…" : "Clear key"}
