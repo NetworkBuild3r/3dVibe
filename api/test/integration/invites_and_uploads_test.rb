@@ -193,6 +193,45 @@ class InvitesAndUploadsTest < ActionDispatch::IntegrationTest
     refute File.exist?(@root.join("escape.stl"))
   end
 
+  test "existing viewer redeeming a contributor invite is upgraded" do
+    viewer = create_user!(email: "viewer@example.test")
+    Membership.create!(user: viewer, library: @library, role: Membership::VIEWER)
+
+    post "/api/v1/invites",
+         params: { library_id: @library.id, email: viewer.email, role: Membership::CONTRIBUTOR },
+         headers: auth_header(@owner),
+         as: :json
+    assert_response :created
+    token = response.parsed_body.dig("invite", "token")
+
+    post "/api/v1/invites/#{token}/redeem",
+         params: { email: viewer.email, password: "secret123" },
+         as: :json
+    assert_response :success
+    assert_equal Membership::CONTRIBUTOR, response.parsed_body.dig("user", "role")
+    assert viewer.reload.can_upload?(@library)
+    assert viewer.can_curate?(@library)
+    refute viewer.can_print?(@library)
+  end
+
+  test "contributor redeeming a viewer invite is not downgraded" do
+    contributor = create_user!(email: "keep@example.test")
+    Membership.create!(user: contributor, library: @library, role: Membership::CONTRIBUTOR)
+
+    post "/api/v1/invites",
+         params: { library_id: @library.id, email: contributor.email, role: Membership::VIEWER },
+         headers: auth_header(@owner),
+         as: :json
+    token = response.parsed_body.dig("invite", "token")
+
+    post "/api/v1/invites/#{token}/redeem",
+         params: { email: contributor.email, password: "secret123" },
+         as: :json
+    assert_response :success
+    assert_equal Membership::CONTRIBUTOR, response.parsed_body.dig("user", "role")
+    assert contributor.reload.can_upload?(@library)
+  end
+
   test "owner lists invites" do
     @library.invites.create!(invited_by: @owner, email: "one@example.test", role: Membership::CONTRIBUTOR)
     get "/api/v1/invites", headers: auth_header(@owner)

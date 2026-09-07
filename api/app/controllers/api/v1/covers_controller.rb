@@ -39,6 +39,16 @@ module API
         return if cover_authorized?
 
         authenticate!
+        return if performed?
+
+        library = writeback_library
+        return if library && current_user.can_curate?(library)
+
+        render json: { error: "forbidden" }, status: :forbidden
+      end
+
+      def writeback_library
+        VibeModel.find_by(id: params[:model_id].presence || params[:id])&.library
       end
     end
   end
