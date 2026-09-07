@@ -23,6 +23,7 @@ import {
   type CatalogFacets,
   type GalleryDensity
 } from "../gallery";
+import { canToggleCardLike, cardLikeBusy, clearLikeBusy, markLikeBusy } from "../likes";
 
 export function GalleryPage() {
   const [params, setParams] = useSearchParams();
@@ -42,7 +43,7 @@ export function GalleryPage() {
   const [capped, setCapped] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [likeBusyId, setLikeBusyId] = useState<number | null>(null);
+  const [likeBusyIds, setLikeBusyIds] = useState<number[]>([]);
   const [density, setDensity] = useState<GalleryDensity>(() => readDensity(window.localStorage));
 
   const sentinel = useRef<HTMLDivElement | null>(null);
@@ -52,6 +53,7 @@ export function GalleryPage() {
   const hasMoreRef = useRef(true);
   const loadingRef = useRef(false);
   const requestRef = useRef(0);
+  const likeBusyRef = useRef<number[]>([]);
 
   const activeSearch = hasActiveFilters(filters);
 
@@ -220,16 +222,18 @@ export function GalleryPage() {
   }, [queryKey, filters, resetAndLoad]);
 
   async function toggleLike(model: ModelCard) {
-    if (likeBusyId != null) return;
+    if (!canToggleCardLike(likeBusyRef.current, model.id)) return;
+    likeBusyRef.current = markLikeBusy(likeBusyRef.current, model.id);
+    setLikeBusyIds(likeBusyRef.current);
     setActionError(null);
-    setLikeBusyId(model.id);
     try {
       const payload = model.liked ? await api.unlikeModel(model.id) : await api.likeModel(model.id);
       setModels((current) => current.map((item) => (item.id === model.id ? { ...item, ...payload.model } : item)));
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Could not update like");
     } finally {
-      setLikeBusyId(null);
+      likeBusyRef.current = clearLikeBusy(likeBusyRef.current, model.id);
+      setLikeBusyIds(likeBusyRef.current);
     }
   }
 
@@ -289,7 +293,7 @@ export function GalleryPage() {
           renderCard={(model) => (
             <ModelCardView
               model={model}
-              likeBusy={likeBusyId === model.id}
+              likeBusy={cardLikeBusy(likeBusyIds, model.id)}
               onLike={(item) => void toggleLike(item)}
               onTag={(name) => patchParams({ tag: filters.tag === name ? null : name })}
             />

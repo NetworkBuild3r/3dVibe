@@ -16,6 +16,7 @@ import { CreatorsPage } from "./pages/CreatorsPage";
 import { DuplicatesPage } from "./pages/DuplicatesPage";
 import { CuratorSettingsPage } from "./pages/CuratorSettingsPage";
 import { canManageCuratorSettings } from "./curatorSettings";
+import { canManagePrinters } from "./prints";
 
 function Guard({ children }: { children: React.ReactNode }) {
   const { user, ready } = useAuth();
@@ -41,6 +42,12 @@ function CuratorSettingsGuard({ children }: { children: React.ReactNode }) {
 function UploadGuard({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   if (!user?.can_upload) return <Navigate to="/" replace />;
+  return <>{children}</>;
+}
+
+function PrintersGuard({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
+  if (!canManagePrinters(user)) return <Navigate to="/" replace />;
   return <>{children}</>;
 }
 
@@ -84,9 +91,9 @@ export default function App() {
         <Route
           path="/printers"
           element={
-            <OwnerGuard>
+            <PrintersGuard>
               <PrintersPage />
-            </OwnerGuard>
+            </PrintersGuard>
           }
         />
         <Route
