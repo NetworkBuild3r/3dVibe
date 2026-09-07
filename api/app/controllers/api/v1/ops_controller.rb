@@ -2,8 +2,10 @@ module API
   module V1
     class OpsController < ApplicationController
       def show
-        if params[:library_id].present?
-          library = accessible_libraries.find(params[:library_id])
+        # GET /ops?library_id= and GET /libraries/:id/ops share this action.
+        library_id = params[:library_id].presence || params[:id]
+        if library_id.present?
+          library = accessible_libraries.find(library_id)
           return if require_curator!(library)
 
           render json: { ops: OpsSnapshot.new(library).as_api }

@@ -162,6 +162,7 @@ class DuplicatesTest < ActionDispatch::IntegrationTest
          headers: auth_header(@contributor),
          as: :json
     assert_response :created
+    assert_equal %w[assets extracted group merge model], response.parsed_body.keys.sort
     extracted = response.parsed_body.fetch("extracted")
     assert_equal 1, extracted.size
     assert_equal true, extracted.first["mergeable"]
@@ -200,6 +201,7 @@ class DuplicatesTest < ActionDispatch::IntegrationTest
          headers: auth_header(@contributor),
          as: :json
     assert_response :created
+    assert_equal %w[assets extracted group merge model review], response.parsed_body.keys.sort
     assert_equal true, response.parsed_body.fetch("extracted").first["mergeable"]
     assert_equal "merged", response.parsed_body.dig("group", "status")
     assert_equal "merge", response.parsed_body.dig("review", "decision")

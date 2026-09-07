@@ -16,13 +16,6 @@ module API
         render json: library.scan_status_as_api.merge(library_id: library.id)
       end
 
-      def ops
-        library = accessible_libraries.find(params[:id])
-        return if require_curator!(library)
-
-        render json: { ops: OpsSnapshot.new(library).as_api }
-      end
-
       def create
         unless current_user.owner_anywhere?
           render json: { error: "forbidden" }, status: :forbidden

@@ -113,6 +113,29 @@ class ArchiveMemberExtractorTest < ActiveSupport::TestCase
     refute File.exist?(Pathname.new(@root).join("..", "outside.stl"))
   end
 
+  test "as_api is the shared extract JSON used by archive_members and duplicates" do
+    extracted = [{
+      archive_member_id: @member.id,
+      asset_id: @crate.assets.first.id,
+      model_id: @crate.id,
+      mergeable: true
+    }]
+    result = ArchiveMemberExtractor::Result.new(
+      model: @crate,
+      assets: [@crate.assets.first],
+      extracted: extracted,
+      merge: nil
+    )
+    payload = ArchiveMemberExtractor.as_api(result, model: @crate, viewer: @owner)
+
+    assert_equal %i[assets extracted merge model], payload.keys.sort
+    assert_equal extracted, payload[:assets]
+    assert_equal extracted, payload[:extracted]
+    assert_nil payload[:merge]
+    assert_equal @crate.id, payload[:model][:id]
+    assert payload[:model][:assets].all? { |asset| asset[:mergeable] == true }
+  end
+
   test "extract does not write sibling zip members" do
     extractor.extract!(archive_member_ids: [@member.id], target_id: @crate.id)
     refute File.exist?(@root.join("crate/huge.bin"))
