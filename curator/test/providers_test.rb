@@ -81,6 +81,7 @@ class ProvidersTest < Minitest::Test
     assert_equal "https://api.x.ai/v1/chat/completions", seen[0]
     assert_equal "Bearer xai-test-key", seen[1]
     assert_equal "grok-4", seen[2]["model"]
+    assert_equal 0.2, seen[2]["temperature"]
     assert_equal 1, result["proposals"].size
     assert result["proposals"].first["sidecar_ref"].start_with?("xai:tag:")
   end
@@ -162,6 +163,7 @@ class ProvidersTest < Minitest::Test
     assert_equal "https://api.openai.com/v1/chat/completions", seen[0]
     assert_equal "Bearer openai-test-key", seen[1]
     assert_equal "gpt-4o", seen[2]["model"]
+    assert_equal 0.2, seen[2]["temperature"]
     assert_equal 1, result["proposals"].size
     assert result["proposals"].first["sidecar_ref"].start_with?("openai:tag:")
   end
@@ -265,5 +267,101 @@ class ProvidersTest < Minitest::Test
     assert_equal "anthropic", anthropic["provider"]
     assert_equal "ui-anthropic-key", anthropic_seen[0]
     refute_includes anthropic_seen[1], "ui-anthropic-key"
+  end
+
+  def test_xai_and_openai_share_openai_compat
+    xai = VibeCurator::Providers.build("xai", env: env_hash("XAI_API_KEY" => "k"))
+    openai = VibeCurator::Providers.build("openai", env: env_hash("OPENAI_API_KEY" => "k"))
+    ollama = VibeCurator::Providers.build("ollama", env: env_hash)
+    anthropic = VibeCurator::Providers.build("anthropic", env: env_hash("ANTHROPIC_API_KEY" => "k"))
+
+    assert_instance_of VibeCurator::Providers::OpenAICompat, xai
+    assert_instance_of VibeCurator::Providers::OpenAICompat, openai
+    assert_equal "xai", xai.name
+    assert_equal "openai", openai.name
+    refute_kind_of VibeCurator::Providers::OpenAICompat, ollama
+    refute_kind_of VibeCurator::Providers::OpenAICompat, anthropic
+  end
+
+  def test_openai_compat_vibe_aliases_and_defaults
+    [
+      {
+        provider: "xai",
+        alias_key: "VIBE_XAI_API_KEY",
+        secret: "vibe-xai-key",
+        default_model: "grok-4",
+        default_base: "https://api.x.ai/v1",
+        model_alias: "VIBE_XAI_MODEL",
+        model_value: "grok-alias",
+        base_alias: "VIBE_XAI_BASE_URL",
+        base_value: "https://xai.alias/v1"
+      },
+      {
+        provider: "openai",
+        alias_key: "VIBE_OPENAI_API_KEY",
+        secret: "vibe-openai-key",
+        default_model: "gpt-4o",
+        default_base: "https://api.openai.com/v1",
+        model_alias: "VIBE_OPENAI_MODEL",
+        model_value: "gpt-alias",
+        base_alias: "VIBE_OPENAI_BASE_URL",
+        base_value: "https://openai.alias/v1"
+      }
+    ].each do |row|
+      defaults = nil
+      aliases = nil
+      default_transport = fake_openai_transport(llm_payload) do |uri, request|
+        defaults = [uri.to_s, request["Authorization"], JSON.parse(request.body)]
+      end
+      alias_transport = fake_openai_transport(llm_payload) do |uri, request|
+        aliases = [uri.to_s, JSON.parse(request.body)]
+      end
+
+      default_env = env_hash("VIBE_CURATOR_PROVIDER" => row[:provider], row[:alias_key] => row[:secret])
+      alias_env = default_env.merge(row[:model_alias] => row[:model_value], row[:base_alias] => row[:base_value])
+      default_result = VibeCurator::Service.proposals(payload: sample_catalog, env: default_env, transport: default_transport)
+      alias_result = VibeCurator::Service.proposals(payload: sample_catalog, env: alias_env, transport: alias_transport)
+
+      assert_equal row[:provider], default_result["provider"], row[:provider]
+      assert_equal row[:provider], alias_result["provider"], row[:provider]
+      assert_equal "#{row[:default_base]}/chat/completions", defaults[0], row[:provider]
+      assert_equal "Bearer #{row[:secret]}", defaults[1], row[:provider]
+      assert_equal row[:default_model], defaults[2]["model"], row[:provider]
+      assert_equal 0.2, defaults[2]["temperature"], row[:provider]
+      assert_equal 2, defaults[2]["messages"].size, row[:provider]
+      assert_equal "system", defaults[2]["messages"][0]["role"], row[:provider]
+      assert_equal "#{row[:base_value]}/chat/completions", aliases[0], row[:provider]
+      assert_equal row[:model_value], aliases[1]["model"], row[:provider]
+    end
+  end
+
+  def test_openai_compat_keys_stay_provider_specific
+    xai = assert_raises(VibeCurator::Error) do
+      VibeCurator::Service.proposals(
+        payload: sample_catalog,
+        env: env_hash(
+          "VIBE_CURATOR_PROVIDER" => "xai",
+          "XAI_API_KEY" => "",
+          "OPENAI_API_KEY" => "openai-only",
+          "VIBE_OPENAI_API_KEY" => "openai-alias"
+        )
+      )
+    end
+    assert_equal 503, xai.status
+    assert_equal "xai_not_configured", xai.code
+
+    openai = assert_raises(VibeCurator::Error) do
+      VibeCurator::Service.proposals(
+        payload: sample_catalog,
+        env: env_hash(
+          "VIBE_CURATOR_PROVIDER" => "openai",
+          "OPENAI_API_KEY" => "",
+          "XAI_API_KEY" => "xai-only",
+          "VIBE_XAI_API_KEY" => "xai-alias"
+        )
+      )
+    end
+    assert_equal 503, openai.status
+    assert_equal "openai_not_configured", openai.code
   end
 end
