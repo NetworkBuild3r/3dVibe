@@ -4,7 +4,7 @@
 #   GET  /health
 #   POST /proposals   catalog snapshot in, proposal batch out
 #   GET  /proposals   fallback listing of LIBRARY_ROOT
-# Providers: stub (CI default), ollama, xai.
+# Providers: stub (CI default), ollama, xai, openai, anthropic.
 # POST /proposals prefers request-scoped curator_runtime over process ENV.
 require "json"
 require "webrick"

@@ -191,7 +191,7 @@ VIBE_OLLAMA_URL=http://host.docker.internal:11434
 VIBE_OLLAMA_MODEL=gemma4
 VIBE_CURATOR_TIMEOUT=90
 
-# xAI Grok (preferred live vision path — grok-4 already sees images)
+# xAI Grok (grok-4 already sees images)
 VIBE_CURATOR_URL=http://curator:8088
 VIBE_CURATOR_PROVIDER=xai
 XAI_API_KEY=...
@@ -200,10 +200,22 @@ XAI_MODEL=grok-4
 VIBE_COVER_BASE_URL=http://api:3000
 VIBE_CURATOR_TIMEOUT=90
 
-# Ollama vision (when xAI is not the live path)
-# ollama pull llava
+# OpenAI (chat completions + image_url data-URL when a ready cover is present)
+VIBE_CURATOR_PROVIDER=openai
+OPENAI_API_KEY=...
+OPENAI_MODEL=gpt-4o
+VIBE_COVER_BASE_URL=http://api:3000
+
+# Anthropic (Messages API + image blocks when a ready cover is present)
+VIBE_CURATOR_PROVIDER=anthropic
+ANTHROPIC_API_KEY=...
+ANTHROPIC_MODEL=claude-sonnet-4-5
+VIBE_COVER_BASE_URL=http://api:3000
+
+# Ollama vision override (gemma4 is multimodal; set this only to swap the vision model)
+# ollama pull gemma4
 VIBE_CURATOR_PROVIDER=ollama
-VIBE_OLLAMA_VISION_MODEL=llava
+VIBE_OLLAMA_VISION_MODEL=
 ```
 
 Raise Rails `VIBE_CURATOR_TIMEOUT` above `VIBE_CURATOR_INFER_TIMEOUT` (sidecar default 60s) when using a live provider. The sidecar only suggests; nothing is auto-approved.
@@ -263,13 +275,17 @@ Environment variables (see `.env.example`):
 | `VIBE_COVER_BASE_URL` | Sidecar origin for catalog `/covers/:id.webp` (compose `http://api:3000`). Optional when `VIBE_COVER_ROOT` has the file. |
 | `VIBE_OLLAMA_URL` | Ollama base (`http://host.docker.internal:11434` or `…/v1` for OpenAI-compat) |
 | `VIBE_OLLAMA_MODEL` | Ollama model (default `gemma4`; `ollama pull gemma4`) |
-| `VIBE_OLLAMA_VISION_MODEL` | Ollama model used **only** when a ready cover is attached. Blank keeps `VIBE_OLLAMA_MODEL` (needs a vision-capable model, e.g. `llava`) |
+| `VIBE_OLLAMA_VISION_MODEL` | Ollama model used **only** when a ready cover is attached. Blank keeps `VIBE_OLLAMA_MODEL` (`gemma4` is multimodal) |
 | `VIBE_OLLAMA_API` | `openai` or `native` (blank = native unless URL ends in `/v1`) |
 | `XAI_API_KEY` | xAI API key (`VIBE_XAI_API_KEY` alias). Env fallback when owner UI key is unset. |
 | `XAI_BASE_URL` | xAI base (default `https://api.x.ai/v1`) |
 | `XAI_MODEL` | xAI model (default `grok-4`) |
 | `OPENAI_API_KEY` | OpenAI API key (`VIBE_OPENAI_API_KEY` alias). Env fallback when owner UI key is unset. |
+| `OPENAI_BASE_URL` | OpenAI chat-completions base (default `https://api.openai.com/v1`) |
+| `OPENAI_MODEL` | OpenAI model (default `gpt-4o`; vision via `image_url` data-URL) |
 | `ANTHROPIC_API_KEY` | Anthropic API key (`VIBE_ANTHROPIC_API_KEY` alias). Env fallback when owner UI key is unset. |
+| `ANTHROPIC_BASE_URL` | Anthropic Messages API base (default `https://api.anthropic.com`) |
+| `ANTHROPIC_MODEL` | Anthropic model (default `claude-sonnet-4-5`; vision via image blocks) |
 | `VIBE_PRINT_TIMEOUT` | Adapter timeout in seconds (default 15). Timeouts mark the job failed; they do not 502 the UI |
 | `VIBE_PRINT_MOCK_DELAY_MS` | Mock adapter step delay (compose default 400; unset/0 in tests) |
 | `VIBE_SDCP_PORT` | Default SDCP port when the printer host has no `:port` and `settings.port` is unset (3030) |
@@ -889,10 +905,10 @@ Owner UI / seed default for a new `CuratorSetting` is `ollama` + `gemma4` (`olla
 | `stub` | `curator_runtime.provider`, else `VIBE_CURATOR_PROVIDER=stub` (default), or `VIBE_CURATOR_URL=stub` on Rails | Deterministic fixture proposals. CI-safe. No secrets on the wire. |
 | `ollama` | `curator_runtime` / UI / `VIBE_CURATOR_PROVIDER=ollama` | Native `POST {VIBE_OLLAMA_URL}/api/chat` or OpenAI `…/v1/chat/completions`. Runtime `ollama_url` / `ollama_model` override env. Default model `gemma4`. |
 | `xai` | `curator_runtime` / UI / `VIBE_CURATOR_PROVIDER=xai` | `POST {XAI_BASE_URL}/chat/completions` with `curator_runtime.xai_api_key` or `XAI_API_KEY`. **Preferred vision path** (`XAI_MODEL`, default `grok-4`). |
-| `openai` | `curator_runtime` / UI / `VIBE_CURATOR_PROVIDER=openai` | Bind `curator_runtime.openai_api_key` → `OPENAI_API_KEY`. Do not require a sidecar rebuild to switch. |
-| `anthropic` | `curator_runtime` / UI / `VIBE_CURATOR_PROVIDER=anthropic` | Bind `curator_runtime.anthropic_api_key` → `ANTHROPIC_API_KEY`. Do not require a sidecar rebuild to switch. |
+| `openai` | `curator_runtime` / UI / `VIBE_CURATOR_PROVIDER=openai` | `POST {OPENAI_BASE_URL}/chat/completions` with `curator_runtime.openai_api_key` or `OPENAI_API_KEY`. Vision via `image_url` data-URL. Default model `gpt-4o`. |
+| `anthropic` | `curator_runtime` / UI / `VIBE_CURATOR_PROVIDER=anthropic` | `POST {ANTHROPIC_BASE_URL}/v1/messages` with `x-api-key` from `curator_runtime.anthropic_api_key` or `ANTHROPIC_API_KEY`. Vision via image blocks. Default model `claude-sonnet-4-5`. |
 
-**Multimodal spike (one image).** Live `ollama` / `xai` attach **at most one** cover to the chat user turn when a ranked model has `cover_status=ready` and a usable `cover_lqip_url` (else `cover_url`). Text catalog stays. Stub never loads or sends an image. Fetch/over-budget/missing → text-only fallback. No embeddings, no multi-view, no mesh bytes.
+**Vision (one image).** Live `ollama` / `xai` / `openai` / `anthropic` attach **at most one** cover to the chat user turn when a ranked model has `cover_status=ready` and a usable `cover_lqip_url` (else `cover_url`). Text catalog stays. Stub never loads or sends an image. Fetch/over-budget/missing → text-only fallback. No embeddings, no multi-view, no mesh bytes.
 
 | Knob | Default | Role |
 | --- | --- | --- |
@@ -902,6 +918,9 @@ Owner UI / seed default for a new `CuratorSetting` is `ollama` + `gemma4` (`olla
 | `VIBE_COVER_BASE_URL` | compose `http://api:3000` | Prefix for catalog `/covers/:id.webp` |
 | `VIBE_COVER_ROOT` | compose `/covers` | Optional local jail for `{id}.webp` / `{id}.lqip.webp` |
 | `XAI_MODEL` | `grok-4` | xAI vision+text (owner UI / `XAI_API_KEY` live path) |
+| `OPENAI_MODEL` | `gpt-4o` | OpenAI vision+text (`image_url` data-URL) |
+| `ANTHROPIC_MODEL` | `claude-sonnet-4-5` | Anthropic vision+text (image blocks) |
+| `VIBE_OLLAMA_MODEL` | `gemma4` | Owner UI / sidecar default (`ollama pull gemma4`). Multimodal; `VIBE_OLLAMA_VISION_MODEL` overrides only when an image is attached. |
 | `VIBE_OLLAMA_VISION_MODEL` | blank | Ollama override only when an image is attached |
 
 **Manual check.** Ready cover + live sidecar → **Refresh proposals**. Tag/rename should name what the cover shows (subject), not just the filename. Missing/pending/failed covers stay text-only. Stub CI is unchanged.

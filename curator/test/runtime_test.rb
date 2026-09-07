@@ -149,6 +149,38 @@ class RuntimeTest < Minitest::Test
     assert_equal snapshot, env
   end
 
+  def test_runtime_openai_and_anthropic_keys_reach_adapters
+    env = env_hash("VIBE_CURATOR_PROVIDER" => "stub")
+    snapshot = env.dup
+    openai_seen = nil
+    anthropic_seen = nil
+
+    openai = VibeCurator::Service.proposals(
+      payload: sample_catalog.merge(
+        "curator_runtime" => { "provider" => "openai", "openai_api_key" => "poll-openai-key" }
+      ),
+      env: env,
+      transport: fake_openai_transport(llm_payload) do |_uri, request|
+        openai_seen = request["Authorization"]
+      end
+    )
+    anthropic = VibeCurator::Service.proposals(
+      payload: sample_catalog.merge(
+        "curator_runtime" => { "provider" => "anthropic", "anthropic_api_key" => "poll-anthropic-key" }
+      ),
+      env: env,
+      transport: fake_anthropic_transport(llm_payload) do |_uri, request|
+        anthropic_seen = request["x-api-key"]
+      end
+    )
+
+    assert_equal "openai", openai["provider"]
+    assert_equal "Bearer poll-openai-key", openai_seen
+    assert_equal "anthropic", anthropic["provider"]
+    assert_equal "poll-anthropic-key", anthropic_seen
+    assert_equal snapshot, env
+  end
+
   def test_provider_switch_mid_process_via_payload
     env = env_hash(
       "VIBE_CURATOR_PROVIDER" => "stub",

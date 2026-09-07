@@ -9,13 +9,14 @@ module VibeCurator
   # Minimal OpenAI-compatible / Ollama chat client. Transport is injectable
   # so tests can mock provider responses without a network.
   class ChatClient
-    def initialize(base_url:, path:, api_key: nil, timeout: 60, transport: nil, headers: {})
+    def initialize(base_url:, path:, api_key: nil, timeout: 60, transport: nil, headers: {}, bearer: true)
       @base_url = base_url.to_s.chomp("/")
       @path = path.start_with?("/") ? path : "/#{path}"
       @api_key = api_key.to_s
       @timeout = timeout.to_f
       @transport = transport
       @headers = headers
+      @bearer = bearer
     end
 
     def complete(model:, messages:, extra: {})
@@ -60,7 +61,7 @@ module VibeCurator
       request = Net::HTTP::Post.new(uri.request_uri)
       request["Content-Type"] = "application/json"
       request["Accept"] = "application/json"
-      request["Authorization"] = "Bearer #{@api_key}" unless @api_key.empty?
+      request["Authorization"] = "Bearer #{@api_key}" if @bearer && !@api_key.empty?
       @headers.each { |key, value| request[key] = value }
       request.body = JSON.generate(body)
       return @transport.call(uri, request) if @transport
@@ -108,6 +109,18 @@ module VibeCurator
         end
         message = parsed["message"]
         return message["content"].to_s if message.is_a?(Hash)
+
+        content = parsed["content"]
+        if content.is_a?(Array)
+          texts = content.filter_map do |part|
+            next unless part.is_a?(Hash)
+            next unless part["type"].to_s.empty? || part["type"] == "text"
+
+            part["text"]
+          end
+          return texts.join unless texts.empty?
+        end
+        return content.to_s if content.is_a?(String) && !content.empty?
         return parsed["response"].to_s if parsed["response"]
         return parsed["output_text"].to_s if parsed["output_text"]
       end
