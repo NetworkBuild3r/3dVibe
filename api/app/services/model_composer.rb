@@ -1,6 +1,6 @@
-# Merge selected models or files into one first-level folder, and split them
+# Merge selected models or files into one pack folder, and split them
 # back out. NFS is truth: files are moved with FileUtils.mv (never loaded).
-# Destinations stay inside LibraryPathJail.
+# Destinations stay inside LibraryPathJail (library + pack). INIT-020/SPEC-005.
 class ModelComposer
   JUNK_NAMES = %w[.DS_Store Thumbs.db].freeze
 
@@ -90,7 +90,11 @@ class ModelComposer
       return @library.vibe_models.find(target_id)
     end
 
-    name = folder_name.presence || slug_folder(title.presence || "merged")
+    name = if folder_name.present?
+      @jail.normalize_pack_folder(folder_name)
+    else
+      slug_folder(title.presence || "merged")
+    end
     name = unique_model_folder(name)
     dir = @jail.folder_path(name)
     FileUtils.mkdir_p(dir) unless dir.exist?
@@ -150,7 +154,7 @@ class ModelComposer
   def restore_part!(part, target)
     preferred = part["folder_name"].presence || slug_folder(part["title"].presence || "restored")
     folder = if preferred && (@library.vibe_models.exists?(folder_name: preferred) || @jail.folder_path(preferred).exist?)
-      @jail.normalize_model_folder(preferred)
+      @jail.normalize_pack_folder(preferred)
     else
       unique_model_folder(preferred)
     end
@@ -201,7 +205,8 @@ class ModelComposer
 
   def unique_nested_prefix(target_folder, desired)
     base = begin
-      @jail.normalize_folder(desired)
+      leaf = desired.to_s.tr("\\", "/").split("/").reject(&:blank?).last
+      @jail.normalize_folder(leaf)
     rescue ArgumentError
       "part"
     end
@@ -218,7 +223,7 @@ class ModelComposer
 
   def unique_model_folder(desired)
     base = begin
-      @jail.normalize_model_folder(desired.to_s)
+      @jail.normalize_pack_folder(desired.to_s)
     rescue ArgumentError
       slug_folder(desired)
     end

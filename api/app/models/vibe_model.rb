@@ -5,6 +5,7 @@ class VibeModel < ApplicationRecord
   COVER_FAILED = "failed"
   COVER_STATUSES = [COVER_MISSING, COVER_PENDING, COVER_READY, COVER_FAILED].freeze
   CARD_INCLUDES = [:tags, :library, :uploaded_by, :creator, :assets].freeze
+  WINDOWS_DRIVE = /\A[A-Za-z]:[\\\/]/.freeze
 
   belongs_to :library
   belongs_to :uploaded_by, class_name: "User", optional: true
@@ -22,10 +23,14 @@ class VibeModel < ApplicationRecord
   validates :folder_name, presence: true, uniqueness: { scope: :library_id }
   validates :title, presence: true
   validates :cover_status, inclusion: { in: COVER_STATUSES }
+  validates :category, presence: true
+  validate :folder_name_is_safe_pack_path
 
   scope :recent, -> { order(updated_at: :desc, id: :desc) }
   scope :for_cards, -> { includes(*CARD_INCLUDES) }
+  scope :in_category, ->(name) { where(category: name) }
 
+  before_validation :assign_category_from_folder_name
   after_commit :enqueue_search_index, on: %i[create update]
   after_commit :enqueue_search_removal, on: :destroy
 
@@ -52,6 +57,7 @@ class VibeModel < ApplicationRecord
       id: id,
       title: title,
       folder_name: folder_name,
+      category: category,
       synopsis: synopsis,
       asset_count: asset_count,
       byte_size: byte_size,
@@ -121,6 +127,35 @@ class VibeModel < ApplicationRecord
   end
 
   private
+
+  def assign_category_from_folder_name
+    segment = pack_path_segments.first
+    self.category = segment if segment.present?
+  end
+
+  # INIT-020/SPEC-003 — identity is library-relative; reject jail escapes at persist.
+  def folder_name_is_safe_pack_path
+    name = folder_name.to_s
+    if name.include?("\0")
+      errors.add(:folder_name, "contains a NUL byte")
+      return
+    end
+    if absolute_pack_path?(name)
+      errors.add(:folder_name, "must be a library-relative path")
+      return
+    end
+    if pack_path_segments.include?("..")
+      errors.add(:folder_name, "must not contain ..")
+    end
+  end
+
+  def absolute_pack_path?(name)
+    name.start_with?("/", "\\") || name.match?(WINDOWS_DRIVE)
+  end
+
+  def pack_path_segments
+    folder_name.to_s.tr("\\", "/").split("/").reject(&:blank?)
+  end
 
   def enqueue_search_index
     SearchIndex.enqueue(self)

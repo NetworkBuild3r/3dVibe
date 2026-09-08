@@ -16,7 +16,7 @@ class APIV1Test < ActionDispatch::IntegrationTest
 
     @password = "secret123"
     @owner = create_owner!(password: @password)
-    @library = Library.create!(name: "Studio", root_path: @root.to_s)
+    @library = Library.create!(name: "Studio", root_path: @root.to_s, layout_mode: Library::LAYOUT_FLAT)
     Membership.create!(user: @owner, library: @library, role: Membership::OWNER)
     LibraryScanner.new(@library).scan!
     @library.curation_proposals.create!(
@@ -54,6 +54,9 @@ class APIV1Test < ActionDispatch::IntegrationTest
     body = response.parsed_body
     assert_equal 1, body.fetch("models").length
     assert body["next_cursor"].present?
+    card = body.fetch("models").first
+    assert card["category"].present?
+    assert card["folder_name"].present?
 
     get "/api/v1/models", params: { cursor: body["next_cursor"], limit: 1 }, headers: headers
     assert_response :success

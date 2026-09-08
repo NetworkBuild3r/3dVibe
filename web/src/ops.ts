@@ -45,7 +45,18 @@ function asString(value: unknown) {
 }
 
 export function isActiveScan(scan?: ScanStatus | null) {
-  return Boolean(scan?.status && ACTIVE_SCAN.has(scan.status));
+  return Boolean(scan?.running === true || (scan?.status && ACTIVE_SCAN.has(scan.status)));
+}
+
+/** SPEC-007 `packs_indexed`; fall back to folders_indexed — never invent a model count. */
+export function packsIndexedCount(scan?: ScanStatus | null): number {
+  if (typeof scan?.packs_indexed === "number" && Number.isFinite(scan.packs_indexed)) {
+    return Math.max(0, scan.packs_indexed);
+  }
+  if (typeof scan?.folders_indexed === "number" && Number.isFinite(scan.folders_indexed)) {
+    return Math.max(0, scan.folders_indexed);
+  }
+  return 0;
 }
 
 export function scanPrefix(scan?: ScanStatus | null) {
@@ -55,6 +66,8 @@ export function scanPrefix(scan?: ScanStatus | null) {
 export function scanChip(scan?: ScanStatus | null): OpsChip {
   if (isActiveScan(scan)) {
     const parts = ["Scanning"];
+    const packs = packsIndexedCount(scan);
+    parts.push(`${packs} pack${packs === 1 ? "" : "s"}`);
     if (scan?.phase) parts.push(scan.phase);
     const prefix = scanPrefix(scan);
     if (prefix) parts.push(prefix);
@@ -159,6 +172,9 @@ export function parseScanStatus(value: unknown): ScanStatus | null {
     folders_seen: typeof row.folders_seen === "number" ? row.folders_seen : undefined,
     folders_indexed: typeof row.folders_indexed === "number" ? row.folders_indexed : undefined,
     folders_skipped: typeof row.folders_skipped === "number" ? row.folders_skipped : undefined,
+    packs_indexed: typeof row.packs_indexed === "number" ? row.packs_indexed : undefined,
+    running: typeof row.running === "boolean" ? row.running : undefined,
+    last_pack_path: asString(row.last_pack_path),
     files_seen: typeof row.files_seen === "number" ? row.files_seen : undefined,
     files_changed: typeof row.files_changed === "number" ? row.files_changed : undefined,
     pruned_count: typeof row.pruned_count === "number" ? row.pruned_count : undefined,

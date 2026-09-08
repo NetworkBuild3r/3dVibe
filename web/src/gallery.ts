@@ -7,8 +7,16 @@ export type GalleryFilters = {
   q: string;
   creator: string;
   tag: string;
+  category: string;
   hasCover: boolean;
   uploadedBy: string;
+};
+
+export type FacetCategory = { name: string; count: number };
+
+export type ScanProgress = {
+  scanning: boolean;
+  packsIndexed: number;
 };
 
 export type CatalogFacets = {
@@ -40,15 +48,16 @@ export function readGalleryFilters(params: URLSearchParams): GalleryFilters {
     q: params.get("q") || "",
     creator: params.get("creator") || "",
     tag: params.get("tag") || "",
+    category: params.get("category") || "",
     hasCover: params.get("cover") === "1",
     uploadedBy: params.get("uploaded_by") || ""
   };
 }
 
 export function hasChipFilters(
-  filters: Pick<GalleryFilters, "creator" | "tag" | "hasCover" | "uploadedBy">
+  filters: Pick<GalleryFilters, "creator" | "tag" | "category" | "hasCover" | "uploadedBy">
 ): boolean {
-  return Boolean(filters.tag || filters.creator || filters.hasCover || filters.uploadedBy);
+  return Boolean(filters.tag || filters.creator || filters.category || filters.hasCover || filters.uploadedBy);
 }
 
 export function hasActiveFilters(filters: GalleryFilters): boolean {
@@ -56,8 +65,11 @@ export function hasActiveFilters(filters: GalleryFilters): boolean {
 }
 
 /** All / Clear filters / Clear All must drop search `q` as well as chips. */
-export function galleryFilterClearParams(): Record<"q" | "tag" | "creator" | "cover" | "uploaded_by", null> {
-  return { q: null, tag: null, creator: null, cover: null, uploaded_by: null };
+export function galleryFilterClearParams(): Record<
+  "q" | "tag" | "creator" | "category" | "cover" | "uploaded_by",
+  null
+> {
+  return { q: null, tag: null, creator: null, category: null, cover: null, uploaded_by: null };
 }
 
 export function uploaderSegment(filters: Pick<GalleryFilters, "uploadedBy">): UploaderSegment {
@@ -106,6 +118,7 @@ export function catalogQuery(filters: GalleryFilters): CatalogQuery {
   if (q) query.q = q;
   if (filters.creator) query.creator_slug = filters.creator;
   if (filters.tag) query.tag = filters.tag;
+  // Category chips filter pack cards locally — GET /models has no category query (INIT-020/SPEC-008).
   if (filters.hasCover) query.has_cover = true;
   if (filters.uploadedBy) query.uploaded_by = filters.uploadedBy;
   return query;
@@ -176,7 +189,40 @@ export function headerCountLabel(options: {
     const unit = options.count === 1 ? "match" : "matches";
     return options.capped ? `at least ${n} ${unit}` : `${n} ${unit}`;
   }
-  return `${n} model${options.count === 1 ? "" : "s"}`;
+  return `${n} pack${options.count === 1 ? "" : "s"}`;
+}
+
+/** First path segment when API omits category — never invent a mega-category card. */
+export function categoryFromCard(model: Pick<ModelCard, "category" | "folder_name">): string {
+  const labeled = model.category?.trim();
+  if (labeled) return labeled;
+  const folder = model.folder_name?.trim() || "";
+  const slash = folder.indexOf("/");
+  return slash > 0 ? folder.slice(0, slash) : "";
+}
+
+export function facetCategories(models: ModelCard[] = []): FacetCategory[] {
+  const counts = new Map<string, number>();
+  models.forEach((item) => {
+    const name = categoryFromCard(item);
+    if (!name) return;
+    counts.set(name, (counts.get(name) || 0) + 1);
+  });
+  return [...counts.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function filterPacksByCategory(models: ModelCard[], category: string): ModelCard[] {
+  const selected = category.trim();
+  if (!selected) return models;
+  return models.filter((item) => categoryFromCard(item) === selected);
+}
+
+export function shouldReloadGalleryForScan(prev: ScanProgress, next: ScanProgress): boolean {
+  if (next.scanning && next.packsIndexed > prev.packsIndexed) return true;
+  if (prev.scanning && !next.scanning) return true;
+  return false;
 }
 
 export function engineStatus(engine: string, fallback: boolean, capped: boolean): string {
@@ -187,12 +233,16 @@ export function engineStatus(engine: string, fallback: boolean, capped: boolean)
 
 export function emptyLibraryCopy(
   filters: GalleryFilters,
-  options: { members?: Pick<LibraryMember, "id" | "display_name">[] } = {}
+  options: {
+    members?: Pick<LibraryMember, "id" | "display_name">[];
+    scanning?: boolean;
+    packsIndexed?: number;
+  } = {}
 ): {
   copy: string;
   clearFilters: boolean;
 } {
-  const chipsOnly = !filters.q.trim() && !filters.tag && !filters.creator;
+  const chipsOnly = !filters.q.trim() && !filters.tag && !filters.creator && !filters.category;
   const segment = uploaderSegment(filters);
 
   if (segment === "mine" && chipsOnly && !filters.hasCover) {
@@ -213,8 +263,27 @@ export function emptyLibraryCopy(
       clearFilters: true
     };
   }
+  if (filters.category && !filters.q.trim() && !filters.tag && !filters.creator && !filters.hasCover && !filters.uploadedBy) {
+    if (options.scanning) {
+      return {
+        copy: `Scanning… packs in ${filters.category} appear as they’re indexed.`,
+        clearFilters: true
+      };
+    }
+    return { copy: `No packs in ${filters.category} yet.`, clearFilters: true };
+  }
   if (hasActiveFilters(filters)) {
     return { copy: "No models match these filters.", clearFilters: true };
+  }
+  if (options.scanning) {
+    const n = options.packsIndexed ?? 0;
+    return {
+      copy:
+        n > 0
+          ? `Scanning… ${n} pack${n === 1 ? "" : "s"} indexed so far.`
+          : "Scanning the library… packs appear as they’re indexed.",
+      clearFilters: false
+    };
   }
   return { copy: "Scan the NFS mount to index folders.", clearFilters: false };
 }

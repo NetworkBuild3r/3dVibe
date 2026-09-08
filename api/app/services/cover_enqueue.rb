@@ -79,6 +79,8 @@ class CoverEnqueue
   end
 
   def self.jailed_path_for(model, asset)
+    jail = LibraryPathJail.new(model.library.root_path)
+    jail.join(model.folder_name, asset.relative_path)
     [model.folder_name, asset.relative_path].join("/")
   end
 
@@ -100,7 +102,7 @@ class CoverEnqueue
   private
 
   def pick_candidate
-    assets = @model.assets.to_a
+    assets = @model.assets.to_a.select { |asset| jailed_relative?(asset) }
     images = assets.select(&:image?)
     named = images.select { |asset| CANDIDATE_NAME.match?(asset.filename) || CANDIDATE_NAME.match?(asset.relative_path) }
     ranked = named.min_by { |asset| [name_rank(asset), asset.relative_path] }
@@ -108,6 +110,13 @@ class CoverEnqueue
     return images.min_by(&:relative_path) if images.any?
 
     assets.select(&:mesh?).min_by(&:relative_path)
+  end
+
+  def jailed_relative?(asset)
+    LibraryPathJail.new(@model.library.root_path).join(@model.folder_name, asset.relative_path)
+    true
+  rescue ArgumentError
+    false
   end
 
   def name_rank(asset)

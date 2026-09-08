@@ -23,7 +23,8 @@ class LibrariesOpsTest < ActionDispatch::IntegrationTest
       root_path: @root.to_s,
       last_polled_at: Time.utc(2026, 9, 6, 12, 0, 0),
       last_provider: "stub",
-      last_error: nil
+      last_error: nil,
+      layout_mode: Library::LAYOUT_FLAT
     )
     Membership.create!(user: @owner, library: @library, role: Membership::OWNER)
     LibraryScanner.new(@library, budget: ScanBudget.unlimited).scan!
@@ -51,6 +52,8 @@ class LibrariesOpsTest < ActionDispatch::IntegrationTest
     assert_equal @library.id, ops["library_id"]
     assert_equal "Studio", ops["library_name"]
     assert_equal "completed", ops.dig("scan", "status")
+    assert ops.dig("scan").key?("packs_indexed")
+    assert_equal false, ops.dig("scan", "running")
     assert ops.dig("scan", "budgets", "max_folders").present?
     refute ops["scan"].key?("queue")
     assert_equal %w[max_files max_folders max_seconds], ops.dig("scan", "budgets").keys.sort

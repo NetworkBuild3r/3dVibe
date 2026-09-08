@@ -13,7 +13,7 @@ class CurationApplierTest < ActiveSupport::TestCase
     File.write(@root.join("hex-tray/hex.stl"), "solid hex\nendsolid hex\n")
     File.write(@root.join("hex-tray/readme.txt"), "tray")
 
-    @library = Library.create!(name: "Curate", root_path: @root.to_s)
+    @library = Library.create!(name: "Curate", root_path: @root.to_s, layout_mode: Library::LAYOUT_FLAT)
     LibraryScanner.new(@library).scan!
     @horn = @library.vibe_models.find_by!(folder_name: "signal-horn")
     @tray = @library.vibe_models.find_by!(folder_name: "hex-tray")

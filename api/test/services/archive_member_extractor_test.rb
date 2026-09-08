@@ -14,7 +14,7 @@ class ArchiveMemberExtractorTest < ActiveSupport::TestCase
     File.write(@root.join("crate/box.stl"), "solid box\nendsolid box\n")
 
     @owner = create_owner!
-    @library = Library.create!(name: "Extract pile", root_path: @root.to_s)
+    @library = Library.create!(name: "Extract pile", root_path: @root.to_s, layout_mode: Library::LAYOUT_FLAT)
     Membership.create!(user: @owner, library: @library, role: Membership::OWNER)
     LibraryScanner.new(@library, budget: ScanBudget.unlimited).scan!
     @member = packed_member("path/foo.stl")
@@ -91,6 +91,45 @@ class ArchiveMemberExtractorTest < ActiveSupport::TestCase
     assert result.merge
     assert File.file?(@root.join("packed/pack.zip"))
     refute File.exist?(@root.join("packed/path/foo.stl"))
+  end
+
+  test "extract writes into a Category/Pack folder and still jails .." do
+    pack_root = Rails.root.join("tmp/extract-pack-#{SecureRandom.hex(4)}")
+    FileUtils.mkdir_p(pack_root.join("Anime/Packed"))
+    Zip::File.open(pack_root.join("Anime/Packed/pack.zip"), Zip::File::CREATE) do |zip|
+      zip.get_output_stream("path/foo.stl") { |io| io.write(stl_body) }
+    end
+
+    library = Library.create!(name: "Pack extract", root_path: pack_root.to_s, layout_mode: Library::LAYOUT_CATEGORY_MODEL)
+    Membership.create!(user: @owner, library: library, role: Membership::OWNER)
+    LibraryScanner.new(library, budget: ScanBudget.unlimited).scan!
+    archive = library.vibe_models.find_by!(folder_name: "Anime/Packed").assets.find_by!(filename: "pack.zip")
+    member = archive.archive_members.find_by!(internal_path: "path/foo.stl")
+
+    result = ArchiveMemberExtractor.new(library, performed_by: @owner).extract!(
+      archive_member_ids: [member.id],
+      folder_name: "Anime/Pulled",
+      title: "Pulled meshes"
+    )
+    assert_equal "Anime/Pulled", result.model.folder_name
+    assert File.file?(pack_root.join("Anime/Pulled/foo.stl"))
+    assert_equal stl_body, File.binread(pack_root.join("Anime/Pulled/foo.stl"))
+
+    assert_raises(ArgumentError) do
+      ArchiveMemberExtractor.new(library, performed_by: @owner).extract!(
+        archive_member_ids: [member.id],
+        folder_name: "../etc"
+      )
+    end
+    assert_raises(ArgumentError) do
+      ArchiveMemberExtractor.new(library, performed_by: @owner).extract!(
+        archive_member_ids: [member.id],
+        folder_name: "Anime/../etc"
+      )
+    end
+    refute File.exist?(pack_root.join("../etc"))
+  ensure
+    FileUtils.rm_rf(pack_root) if defined?(pack_root) && pack_root
   end
 
   test "extract rejects a jail-escaping folder name" do

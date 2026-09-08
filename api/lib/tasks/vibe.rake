@@ -26,6 +26,32 @@ namespace :vibe do
     puts "Queued scan jobs"
   end
 
+  # INIT-020/SPEC-009 — explicit owner action (D-5). Not a civil-hour cron.
+  # Dry-run by default. APPLY=1 wipes catalog rows only (NFS files stay).
+  desc "Report or wipe first-level mega-models (WIPE=mega|all) then enqueue category_model scan. APPLY=1 LIBRARY_ID= USER_ID= required to apply."
+  task rebuild_catalog: :environment do
+    apply = ActiveModel::Type::Boolean.new.cast(ENV["APPLY"]) == true
+    wipe = ENV["WIPE"].presence || CatalogRebuild::WIPE_MEGA
+    if apply
+      abort "APPLY=1 requires LIBRARY_ID=" if ENV["LIBRARY_ID"].blank?
+      abort "APPLY=1 requires USER_ID= of a library owner" if ENV["USER_ID"].blank?
+    end
+
+    actor = ENV["USER_ID"].present? ? User.find(ENV["USER_ID"]) : nil
+    scope = ENV["LIBRARY_ID"].present? ? Library.where(id: ENV["LIBRARY_ID"]) : Library.all
+    scope.find_each do |library|
+      result = CatalogRebuild.new(library, apply: apply, wipe: wipe, actor: actor).call
+      puts "library=#{result[:library_id]} name=#{result[:library_name]} wipe=#{result[:wipe]} apply=#{result[:apply]} " \
+           "targets=#{result[:models].size} deleted=#{result[:deleted]} scan_enqueued=#{result[:scan_enqueued]} " \
+           "files_unlinked=#{result[:files_unlinked]}"
+      result[:models].each do |model|
+        puts "  model id=#{model[:id]} folder=#{model[:folder_name]} title=#{model[:title]}"
+      end
+    end
+  rescue CatalogRebuild::Forbidden => e
+    abort e.message
+  end
+
   desc "Queue a print against the mock (or named) printer. ASSET_ID= or MODEL_FOLDER= PRINTER_ID="
   task print: :environment do
     library = ENV["LIBRARY_ID"].present? ? Library.find(ENV["LIBRARY_ID"]) : Library.first!

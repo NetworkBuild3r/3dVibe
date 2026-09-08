@@ -16,7 +16,7 @@ class ArchiveMembersExtractTest < ActionDispatch::IntegrationTest
     @owner = create_owner!
     @contributor = create_user!(email: "contrib@example.test")
     @viewer = create_user!(email: "viewer@example.test")
-    @library = Library.create!(name: "Extract API", root_path: @root.to_s)
+    @library = Library.create!(name: "Extract API", root_path: @root.to_s, layout_mode: Library::LAYOUT_FLAT)
     Membership.create!(user: @owner, library: @library, role: Membership::OWNER)
     Membership.create!(user: @contributor, library: @library, role: Membership::CONTRIBUTOR)
     Membership.create!(user: @viewer, library: @library, role: Membership::VIEWER)

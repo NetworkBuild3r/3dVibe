@@ -73,6 +73,40 @@ class CoverEnqueueTest < ActiveJob::TestCase
     end
   end
 
+  test "Category/Pack jailed_path stays under the pack root and skips .. assets" do
+    FileUtils.mkdir_p(@root.join("Anime/Hero-Figure"))
+    File.binwrite(@root.join("Anime/Hero-Figure/preview.png"), "png")
+    File.write(@root.join("outside.png"), "png")
+    pack = @library.vibe_models.create!(folder_name: "Anime/Hero-Figure", title: "Hero Figure")
+    preview = pack.assets.create!(
+      relative_path: "preview.png",
+      filename: "preview.png",
+      kind: "png",
+      mtime: Time.at(1_710_000_000),
+      content_digest: "pack123",
+      byte_size: 3
+    )
+    pack.assets.create!(
+      relative_path: "../outside.png",
+      filename: "outside.png",
+      kind: "png",
+      mtime: Time.at(1_710_000_000),
+      content_digest: "escape123",
+      byte_size: 3
+    )
+
+    assert_enqueued_with(job: GenerateCoverJob) do
+      assert_equal :enqueued, CoverEnqueue.call(pack)
+    end
+    job = enqueued_jobs.find { |item| item["job_class"] == "GenerateCoverJob" }
+    payload = job["arguments"].first
+    assert_equal "Anime/Hero-Figure/preview.png", payload["jailed_path"]
+    assert_equal preview.id, payload["asset_id"]
+    assert_raises(ArgumentError) do
+      CoverEnqueue.jailed_path_for(pack, pack.assets.find_by!(filename: "outside.png"))
+    end
+  end
+
   test "writeback hook requires cover_url when ready" do
     error = assert_raises(ArgumentError) do
       CoverWriteback.apply!("model_id" => @model.id, "status" => "ready")

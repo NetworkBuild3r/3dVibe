@@ -2,6 +2,24 @@ require "test_helper"
 require "fileutils"
 
 class JobsTest < ActiveJob::TestCase
+  test "incremental scan job admits category_model packs on the isolated scan queue" do
+    root = Rails.root.join("tmp/job-packs-#{SecureRandom.hex(4)}")
+    FileUtils.mkdir_p(root.join("Anime/PackA"))
+    File.write(root.join("Anime/PackA/a.txt"), "x")
+    FileUtils.mkdir_p(root.join("Anime/PackB"))
+    File.write(root.join("Anime/PackB/b.txt"), "y")
+    library = Library.create!(name: "Pack jobs", root_path: root.to_s, layout_mode: Library::LAYOUT_CATEGORY_MODEL)
+
+    IncrementalScanJob.perform_now(library.id)
+    assert_equal %w[Anime/PackA Anime/PackB], library.vibe_models.order(:folder_name).pluck(:folder_name)
+    refute library.vibe_models.exists?(folder_name: "Anime")
+    assert_enqueued_with(job: IncrementalScanJob, queue: ScanSettings.queue) do
+      IncrementalScanJob.perform_later(library.id)
+    end
+  ensure
+    FileUtils.rm_rf(root)
+  end
+
   test "incremental scan job runs the scanner" do
     root = Rails.root.join("tmp/job-lib-#{SecureRandom.hex(4)}")
     FileUtils.mkdir_p(root.join("only"))
@@ -10,7 +28,7 @@ class JobsTest < ActiveJob::TestCase
     Zip::File.open(root.join("only/minis.zip"), Zip::File::CREATE) do |zip|
       zip.get_output_stream("hero.stl") { |io| io.write("solid x\nendsolid x\n") }
     end
-    library = Library.create!(name: "Jobs", root_path: root.to_s)
+    library = Library.create!(name: "Jobs", root_path: root.to_s, layout_mode: Library::LAYOUT_FLAT)
 
     IncrementalScanJob.perform_now(library.id)
     assert_equal 1, library.vibe_models.count
@@ -59,7 +77,7 @@ class JobsTest < ActiveJob::TestCase
     FileUtils.mkdir_p(root.join("only"))
     File.write(root.join("only/a.stl"), "solid a\nendsolid a\n")
     user = create_owner!
-    library = Library.create!(name: "Print jobs", root_path: root.to_s)
+    library = Library.create!(name: "Print jobs", root_path: root.to_s, layout_mode: Library::LAYOUT_FLAT)
     Membership.create!(user: user, library: library, role: Membership::OWNER)
     LibraryScanner.new(library).scan!
     model = library.vibe_models.find_by!(folder_name: "only")
@@ -140,7 +158,7 @@ class JobsTest < ActiveJob::TestCase
     File.write(root.join("a/horn.stl"), "solid horn\nendsolid horn\n")
     File.write(root.join("b/horn.stl"), "solid horn\nendsolid horn\n")
     write_ascii_stl(root.join("a/cube.stl"))
-    library = Library.create!(name: "Dup jobs", root_path: root.to_s)
+    library = Library.create!(name: "Dup jobs", root_path: root.to_s, layout_mode: Library::LAYOUT_FLAT)
     LibraryScanner.new(library, budget: ScanBudget.unlimited).scan!
     empty = library.vibe_models.find_by!(folder_name: "a").assets.find_by!(filename: "horn.stl")
     cube = library.vibe_models.find_by!(folder_name: "a").assets.find_by!(filename: "cube.stl")
@@ -161,7 +179,7 @@ class JobsTest < ActiveJob::TestCase
     root = Rails.root.join("tmp/fetch-lib-#{SecureRandom.hex(4)}")
     FileUtils.mkdir_p(root.join("only"))
     File.write(root.join("only/a.txt"), "x")
-    library = Library.create!(name: "Fetch", root_path: root.to_s, last_error: "stale")
+    library = Library.create!(name: "Fetch", root_path: root.to_s, last_error: "stale", layout_mode: Library::LAYOUT_FLAT)
     LibraryScanner.new(library).scan!
 
     FetchCurationProposalsJob.perform_now(library.id)
@@ -178,7 +196,7 @@ class JobsTest < ActiveJob::TestCase
     root = Rails.root.join("tmp/fetch-fail-#{SecureRandom.hex(4)}")
     FileUtils.mkdir_p(root.join("only"))
     File.write(root.join("only/a.txt"), "x")
-    library = Library.create!(name: "Fetch fail", root_path: root.to_s)
+    library = Library.create!(name: "Fetch fail", root_path: root.to_s, layout_mode: Library::LAYOUT_FLAT)
     LibraryScanner.new(library).scan!
 
     previous = ENV["VIBE_CURATOR_URL"]

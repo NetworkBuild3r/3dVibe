@@ -11,7 +11,7 @@ class ArchiveTreeTest < ActiveSupport::TestCase
       zip.get_output_stream("extras/readme.txt") { |io| io.write("note") }
       zip.get_output_stream("extras/nested/note.txt") { |io| io.write("deep") }
     end
-    @library = Library.create!(name: "Tree", root_path: @root.to_s)
+    @library = Library.create!(name: "Tree", root_path: @root.to_s, layout_mode: Library::LAYOUT_FLAT)
     LibraryScanner.new(@library).scan!
     @model = @library.vibe_models.find_by!(folder_name: "kit")
     @asset = @model.assets.find_by!(filename: "minis.zip")

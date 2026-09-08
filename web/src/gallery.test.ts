@@ -4,12 +4,15 @@ import {
   allChipActive,
   applyCatalogParams,
   catalogQuery,
+  categoryFromCard,
   columnCount,
   creatorDisplayName,
   emptyLibraryCopy,
   engineStatus,
+  facetCategories,
   facetCreators,
   facetTags,
+  filterPacksByCategory,
   friendDisplayName,
   galleryFilterClearParams,
   hasActiveFilters,
@@ -18,6 +21,7 @@ import {
   readDensity,
   readGalleryFilters,
   searchPillLabel,
+  shouldReloadGalleryForScan,
   truncateUploaderLabel,
   uploaderSegment,
   usesSearchEndpoint
@@ -53,6 +57,7 @@ describe("gallery URL and API bind", () => {
       q: "hero",
       creator: "packed-minis",
       tag: "stl",
+      category: "",
       hasCover: true,
       uploadedBy: ""
     });
@@ -103,19 +108,20 @@ describe("facets and empty states", () => {
 
   it("labels capped fallback totals as a floor", () => {
     expect(headerCountLabel({ filtered: true, count: 250, capped: true })).toBe("at least 250 matches");
-    expect(headerCountLabel({ filtered: false, count: 12 })).toBe("12 models");
+    expect(headerCountLabel({ filtered: false, count: 12 })).toBe("12 packs");
+    expect(headerCountLabel({ filtered: false, count: 1 })).toBe("1 pack");
     expect(engineStatus("postgres", true, true)).toBe("postgres fallback · count is a floor");
   });
 
   it("uses the states-kit empty copy", () => {
-    expect(emptyLibraryCopy({ q: "", creator: "", tag: "", hasCover: false, uploadedBy: "" }).copy).toBe(
+    expect(emptyLibraryCopy({ q: "", creator: "", tag: "", category: "", hasCover: false, uploadedBy: "" }).copy).toBe(
       "Scan the NFS mount to index folders."
     );
-    expect(emptyLibraryCopy({ q: "nope", creator: "", tag: "", hasCover: false, uploadedBy: "" })).toEqual({
+    expect(emptyLibraryCopy({ q: "nope", creator: "", tag: "", category: "", hasCover: false, uploadedBy: "" })).toEqual({
       copy: "No models match these filters.",
       clearFilters: true
     });
-    expect(emptyLibraryCopy({ q: "", creator: "", tag: "", hasCover: true, uploadedBy: "" }).copy).toMatch(
+    expect(emptyLibraryCopy({ q: "", creator: "", tag: "", category: "", hasCover: true, uploadedBy: "" }).copy).toMatch(
       /ready covers/
     );
   });
@@ -133,6 +139,7 @@ describe("facets and empty states", () => {
       q: null,
       tag: null,
       creator: null,
+      category: null,
       cover: null,
       uploaded_by: null
     });
@@ -195,17 +202,19 @@ describe("uploader filter bind", () => {
   });
 
   it("uses Mine / Friend empty copy and does not invent a friend name", () => {
-    expect(emptyLibraryCopy({ q: "", creator: "", tag: "", hasCover: false, uploadedBy: "me" })).toEqual({
+    expect(emptyLibraryCopy({ q: "", creator: "", tag: "", category: "", hasCover: false, uploadedBy: "me" })).toEqual({
       copy: "Nothing you’ve uploaded yet. NFS scans without an uploader stay under Everyone.",
       clearFilters: true
     });
     expect(
-      emptyLibraryCopy({ q: "", creator: "", tag: "", hasCover: false, uploadedBy: "4" }, { members })
+      emptyLibraryCopy({ q: "", creator: "", tag: "", category: "", hasCover: false, uploadedBy: "4" }, { members })
     ).toEqual({
       copy: "No uploads from Pal yet.",
       clearFilters: true
     });
-    expect(emptyLibraryCopy({ q: "", creator: "", tag: "", hasCover: false, uploadedBy: "999" }, { members })).toEqual({
+    expect(
+      emptyLibraryCopy({ q: "", creator: "", tag: "", category: "", hasCover: false, uploadedBy: "999" }, { members })
+    ).toEqual({
       copy: "No models match these filters.",
       clearFilters: true
     });
@@ -214,5 +223,65 @@ describe("uploader filter bind", () => {
     expect(friendDisplayName("999", members)).toBe("");
     expect(truncateUploaderLabel("Pal")).toBe("Pal");
     expect(truncateUploaderLabel("Very Long Friend Display Name")).toBe("Very Long Friend…");
+  });
+});
+
+describe("category chips and scan empty copy — INIT-020/SPEC-008", () => {
+  const packA: ModelCard = {
+    ...models[0],
+    id: 21,
+    title: "AOT Eren",
+    folder_name: "Anime/AOT-ErenXArmored",
+    category: "Anime"
+  };
+  const packB: ModelCard = {
+    ...models[0],
+    id: 22,
+    title: "Batman",
+    folder_name: "DC/Batman",
+    category: "DC"
+  };
+  const idle = { q: "", creator: "", tag: "", category: "", hasCover: false, uploadedBy: "" };
+
+  it("filters packs by category without an Anime model row", () => {
+    const rows = [packA, packB];
+    expect(rows.some((item) => item.folder_name === "Anime")).toBe(false);
+    expect(facetCategories(rows).map((item) => item.name)).toEqual(["Anime", "DC"]);
+    expect(filterPacksByCategory(rows, "Anime").map((item) => item.folder_name)).toEqual([
+      "Anime/AOT-ErenXArmored"
+    ]);
+    expect(categoryFromCard({ folder_name: "Anime/PackA", category: null })).toBe("Anime");
+    const filters = readGalleryFilters(new URLSearchParams("category=Anime"));
+    expect(filters.category).toBe("Anime");
+    expect(hasActiveFilters(filters)).toBe(true);
+    expect(usesSearchEndpoint(filters)).toBe(false);
+    expect(catalogQuery(filters)).toEqual({});
+  });
+
+  it("uses different empty copy when scanning vs idle", () => {
+    expect(emptyLibraryCopy(idle).copy).toBe("Scan the NFS mount to index folders.");
+    expect(emptyLibraryCopy(idle, { scanning: true, packsIndexed: 0 }).copy).toBe(
+      "Scanning the library… packs appear as they’re indexed."
+    );
+    expect(emptyLibraryCopy(idle, { scanning: true, packsIndexed: 1 }).copy).toBe(
+      "Scanning… 1 pack indexed so far."
+    );
+    expect(emptyLibraryCopy({ ...idle, category: "Anime" }, { scanning: false }).copy).toBe(
+      "No packs in Anime yet."
+    );
+    expect(emptyLibraryCopy({ ...idle, category: "Anime" }, { scanning: true }).copy).toMatch(/Scanning/);
+    expect(emptyLibraryCopy(idle).copy).not.toBe(emptyLibraryCopy(idle, { scanning: true }).copy);
+  });
+
+  it("reloads the gallery when packs_indexed grows during a scan", () => {
+    expect(
+      shouldReloadGalleryForScan({ scanning: true, packsIndexed: 0 }, { scanning: true, packsIndexed: 1 })
+    ).toBe(true);
+    expect(
+      shouldReloadGalleryForScan({ scanning: true, packsIndexed: 1 }, { scanning: true, packsIndexed: 1 })
+    ).toBe(false);
+    expect(
+      shouldReloadGalleryForScan({ scanning: true, packsIndexed: 1 }, { scanning: false, packsIndexed: 1 })
+    ).toBe(true);
   });
 });

@@ -9,6 +9,8 @@ Rails.application.routes.draw do
 
       resources :libraries, only: %i[index show create] do
         get :members, on: :member
+        get :settings, on: :member, action: :show_settings
+        patch :settings, on: :member
         get :scan, on: :member, action: :show_scan
         post :scan, on: :member
         # Thin wrapper: same JSON as GET /ops?library_id= (docs/thin-cut-audit.md slice 6).

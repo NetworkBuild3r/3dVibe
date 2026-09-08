@@ -15,7 +15,7 @@ class ModelComposerTest < ActiveSupport::TestCase
     File.write(@root.join("crate/box.stl"), "solid box\nendsolid box\n")
 
     @owner = create_owner!
-    @library = Library.create!(name: "Compose pile", root_path: @root.to_s)
+    @library = Library.create!(name: "Compose pile", root_path: @root.to_s, layout_mode: Library::LAYOUT_FLAT)
     Membership.create!(user: @owner, library: @library, role: Membership::OWNER)
     LibraryScanner.new(@library).scan!
     @horn = @library.vibe_models.find_by!(folder_name: "signal-horn")
@@ -69,6 +69,43 @@ class ModelComposerTest < ActiveSupport::TestCase
     assert File.file?(@root.join("signal-horn/horn.stl"))
     refute File.exist?(@root.join("crate/signal-horn/horn.stl"))
     assert restored.assets.exists?(filename: "horn.stl")
+  end
+
+  test "merge and split use Category/Pack folder_name and jail .." do
+    pack_root = Rails.root.join("tmp/compose-pack-#{SecureRandom.hex(4)}")
+    FileUtils.mkdir_p(pack_root.join("Anime/Horn"))
+    File.write(pack_root.join("Anime/Horn/horn.stl"), "solid horn\nendsolid horn\n")
+    FileUtils.mkdir_p(pack_root.join("Anime/Crate"))
+    File.write(pack_root.join("Anime/Crate/box.stl"), "solid box\nendsolid box\n")
+
+    library = Library.create!(name: "Pack compose", root_path: pack_root.to_s, layout_mode: Library::LAYOUT_CATEGORY_MODEL)
+    Membership.create!(user: @owner, library: library, role: Membership::OWNER)
+    LibraryScanner.new(library).scan!
+    horn = library.vibe_models.find_by!(folder_name: "Anime/Horn")
+    crate = library.vibe_models.find_by!(folder_name: "Anime/Crate")
+
+    composer = ModelComposer.new(library, performed_by: @owner)
+    record = composer.merge!(source_ids: [horn.id], target_id: crate.id)
+    refute library.vibe_models.exists?(id: horn.id)
+    assert File.file?(pack_root.join("Anime/Crate/Horn/horn.stl"))
+    refute File.exist?(pack_root.join("Anime/Horn"))
+    assert crate.reload.assets.exists?(relative_path: "Horn/horn.stl")
+
+    split = composer.split!(crate.reload, merge_id: record.id)
+    assert split.split?
+    restored = library.vibe_models.find_by!(folder_name: "Anime/Horn")
+    assert File.file?(pack_root.join("Anime/Horn/horn.stl"))
+    assert restored.assets.exists?(filename: "horn.stl")
+
+    assert_raises(ArgumentError) do
+      composer.merge!(source_ids: [restored.id], folder_name: "../etc")
+    end
+    assert_raises(ArgumentError) do
+      composer.merge!(source_ids: [restored.id], folder_name: "Anime/../etc")
+    end
+    refute File.exist?(pack_root.join("../etc"))
+  ensure
+    FileUtils.rm_rf(pack_root) if defined?(pack_root) && pack_root
   end
 
   test "merge stays inside the path jail" do

@@ -123,11 +123,103 @@ class ProvidersTest < Minitest::Test
     catalog = sample_catalog.merge("provider_hint" => "ollama")
     result = VibeCurator::Service.proposals(
       payload: catalog,
-      env: env_hash("VIBE_CURATOR_PROVIDER" => ""),
+      env: env_hash(
+        "VIBE_CURATOR_PROVIDER" => "",
+        "VIBE_OLLAMA_URL" => "http://ollama.local:11434"
+      ),
       transport: transport
     )
     assert seen
     assert_equal "ollama", result["provider"]
+  end
+
+  # INIT-020/SPEC-006 — Spark identity reuses ollama + openai API flag.
+  def test_spark_shaped_openai_url_and_gemma4_uncensored_model
+    seen = nil
+    transport = fake_openai_transport(llm_payload) do |uri, request|
+      seen = [uri.to_s, JSON.parse(request.body)]
+    end
+    env = env_hash(
+      "VIBE_CURATOR_PROVIDER" => "ollama",
+      "VIBE_OLLAMA_URL" => "http://192.168.11.161:11435/v1",
+      "VIBE_OLLAMA_API" => "openai",
+      "VIBE_OLLAMA_MODEL" => "gemma4-uncensored"
+    )
+    result = VibeCurator::Service.proposals(payload: sample_catalog, env: env, transport: transport)
+
+    assert_equal "http://192.168.11.161:11435/v1/chat/completions", seen[0]
+    assert_equal "gemma4-uncensored", seen[1]["model"]
+    assert_equal "ollama", result["provider"]
+    refute result.key?("applied")
+    refute result.key?("auto_apply")
+    assert_equal 1, result["proposals"].size
+  end
+
+  def test_ollama_localhost_url_raises_without_send
+    sent = false
+    transport = fake_openai_transport(llm_payload) { sent = true }
+    %w[
+      http://localhost:11434
+      http://127.0.0.1:11434
+      http://127.0.0.1:11434/v1
+    ].each do |url|
+      error = assert_raises(VibeCurator::Error) do
+        VibeCurator::Service.proposals(
+          payload: sample_catalog,
+          env: env_hash(
+            "VIBE_CURATOR_PROVIDER" => "ollama",
+            "VIBE_OLLAMA_URL" => url,
+            "VIBE_OLLAMA_API" => "openai"
+          ),
+          transport: transport
+        )
+      end
+      assert_equal 503, error.status, url
+      assert_equal "ollama_url_banned", error.code, url
+    end
+    refute sent
+  end
+
+  def test_ollama_banned_url_does_not_echo_userinfo
+    sent = false
+    transport = fake_openai_transport(llm_payload) { sent = true }
+    error = assert_raises(VibeCurator::Error) do
+      VibeCurator::Service.proposals(
+        payload: sample_catalog,
+        env: env_hash(
+          "VIBE_CURATOR_PROVIDER" => "ollama",
+          "VIBE_OLLAMA_URL" => "http://owner:s3cret-token@127.0.0.1:11434/v1",
+          "VIBE_OLLAMA_API" => "openai"
+        ),
+        transport: transport
+      )
+    end
+    assert_equal "ollama_url_banned", error.code
+    refute_includes error.message, "s3cret-token"
+    refute sent
+  end
+
+  def test_ollama_blank_url_raises_without_send_in_production_like_env
+    sent = false
+    transport = fake_openai_transport(llm_payload) { sent = true }
+    ["", "   ", nil].each do |url|
+      env = {
+        "VIBE_CURATOR_PROVIDER" => "ollama",
+        "VIBE_OLLAMA_API" => "openai",
+        "RACK_ENV" => "production"
+      }
+      env["VIBE_OLLAMA_URL"] = url unless url.nil?
+      error = assert_raises(VibeCurator::Error) do
+        VibeCurator::Service.proposals(
+          payload: sample_catalog,
+          env: env_hash(env),
+          transport: transport
+        )
+      end
+      assert_equal 503, error.status, url.inspect
+      assert_equal "ollama_url_blank", error.code, url.inspect
+    end
+    refute sent
   end
 
   def test_ollama_defaults_to_gemma4

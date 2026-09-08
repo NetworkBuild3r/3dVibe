@@ -191,6 +191,13 @@ VIBE_OLLAMA_URL=http://host.docker.internal:11434
 VIBE_OLLAMA_MODEL=gemma4
 VIBE_CURATOR_TIMEOUT=90
 
+# Cluster Spark (same ollama slug + openai flag — do not add a spark provider)
+# VIBE_CURATOR_PROVIDER=ollama
+# VIBE_OLLAMA_API=openai
+# VIBE_OLLAMA_URL=http://192.168.11.161:11435/v1
+# VIBE_OLLAMA_MODEL=gemma4-uncensored
+# Blank / localhost / 127.0.0.1 VIBE_OLLAMA_URL raises; sidecar proposes only.
+
 # xAI Grok (grok-4 already sees images)
 VIBE_CURATOR_URL=http://curator:8088
 VIBE_CURATOR_PROVIDER=xai
@@ -273,10 +280,10 @@ Environment variables (see `.env.example`):
 | `VIBE_CURATOR_VISION_MAX_PX` | Live cover-image max width/height (default 512). Over budget → text-only. Stub ignores. |
 | `VIBE_CURATOR_VISION_TIMEOUT` | HTTP fetch timeout for `/covers/…` (default 3s). Failed fetch → text-only. |
 | `VIBE_COVER_BASE_URL` | Sidecar origin for catalog `/covers/:id.webp` (compose `http://api:3000`). Optional when `VIBE_COVER_ROOT` has the file. |
-| `VIBE_OLLAMA_URL` | Ollama base (`http://host.docker.internal:11434` or `…/v1` for OpenAI-compat) |
-| `VIBE_OLLAMA_MODEL` | Ollama model (default `gemma4`; `ollama pull gemma4`) |
+| `VIBE_OLLAMA_URL` | Ollama/Spark base (`http://host.docker.internal:11434` or `…/v1` for OpenAI-compat). Production Spark: `http://192.168.11.161:11435/v1`. Blank or `localhost`/`127.0.0.1` raises (no loopback fallback). |
+| `VIBE_OLLAMA_MODEL` | Ollama model (sidecar default `gemma4`; production Spark `gemma4-uncensored`) |
 | `VIBE_OLLAMA_VISION_MODEL` | Ollama model used **only** when a ready cover is attached. Blank keeps `VIBE_OLLAMA_MODEL` (`gemma4` is multimodal) |
-| `VIBE_OLLAMA_API` | `openai` or `native` (blank = native unless URL ends in `/v1`) |
+| `VIBE_OLLAMA_API` | `openai` or `native` (blank = native unless URL ends in `/v1`). Production Spark uses `openai` with provider slug `ollama`. |
 | `XAI_API_KEY` | xAI API key (`VIBE_XAI_API_KEY` alias). Env fallback when owner UI key is unset. |
 | `XAI_BASE_URL` | xAI base (default `https://api.x.ai/v1`) |
 | `XAI_MODEL` | xAI model (default `grok-4`) |

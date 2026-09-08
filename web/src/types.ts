@@ -63,6 +63,8 @@ export type ModelCard = {
   id: number;
   title: string;
   folder_name: string;
+  /** Pack shelf (e.g. Anime). Never a mega-category hero — INIT-020/SPEC-008. */
+  category?: string | null;
   synopsis: string | null;
   asset_count: number;
   byte_size: number;
@@ -423,6 +425,10 @@ export type ScanStatus = {
   folders_seen?: number;
   folders_indexed?: number;
   folders_skipped?: number;
+  /** SPEC-007 alias of folders_indexed — gallery progress uses this, not “N models”. */
+  packs_indexed?: number;
+  running?: boolean;
+  last_pack_path?: string | null;
   files_seen?: number;
   files_changed?: number;
   pruned_count?: number;
@@ -470,6 +476,7 @@ export type OpsSnapshot = {
 };
 
 export type ScanSettings = {
+  layout_mode?: string;
   max_seconds: number;
   max_files: number;
   max_folders: number;
@@ -510,6 +517,7 @@ export type LibraryInfo = {
   can_merge?: boolean;
   can_manage_printers: boolean;
   can_scan?: boolean;
+  layout_mode?: string;
   scan?: ScanStatus;
   scan_settings?: ScanSettings;
   cursors?: ScanCursorInfo[];

@@ -17,7 +17,7 @@ class ModelSearchTest < ActiveSupport::TestCase
       zip.get_output_stream("hero.stl") { |io| io.write("solid x\nendsolid x\n") }
     end
     @owner = create_owner!
-    @library = Library.create!(name: "Search", root_path: @root.to_s)
+    @library = Library.create!(name: "Search", root_path: @root.to_s, layout_mode: Library::LAYOUT_FLAT)
     Membership.create!(user: @owner, library: @library, role: Membership::OWNER)
     LibraryScanner.new(@library, uploaded_by: @owner).scan!
     @horn = @library.vibe_models.find_by!(folder_name: "signal-horn")

@@ -106,6 +106,55 @@ class GenerateCoverJobTest < ActionDispatch::IntegrationTest
     assert File.size(lqip) <= 1_200
   end
 
+  test "Category/Pack cover resolve stays under the pack and refuses a sibling pack" do
+    FileUtils.mkdir_p(@root.join("Anime/Hero-Figure"))
+    write_png(@root.join("Anime/Hero-Figure/preview.png"), 32, 24)
+    FileUtils.mkdir_p(@root.join("Anime/OtherPack"))
+    write_png(@root.join("Anime/OtherPack/preview.png"), 32, 24)
+    pack = @library.vibe_models.create!(
+      folder_name: "Anime/Hero-Figure",
+      title: "Hero Figure",
+      cover_status: VibeModel::COVER_PENDING,
+      cover_placeholder: true
+    )
+    preview = pack.assets.create!(
+      relative_path: "preview.png",
+      filename: "preview.png",
+      kind: "png",
+      mtime: Time.at(1_710_000_002),
+      content_digest: "packcover",
+      byte_size: File.size(@root.join("Anime/Hero-Figure/preview.png"))
+    )
+    payload = {
+      "library_id" => @library.id,
+      "model_id" => pack.id,
+      "asset_id" => preview.id,
+      "jailed_path" => "Anime/Hero-Figure/preview.png",
+      "mtime" => 1_710_000_002,
+      "content_hash" => "sha256:packcover",
+      "budget" => { "max_px" => 64, "max_bytes" => 8_000 }
+    }
+
+    GenerateCoverJob.perform_now(payload)
+    pack.reload
+    assert_equal VibeModel::COVER_READY, pack.cover_status
+    assert File.file?(@cover_root.join("#{pack.id}.webp"))
+
+    FileUtils.rm_f(@cover_root.join("#{pack.id}.webp"))
+    FileUtils.rm_f(@cover_root.join("#{pack.id}.lqip.webp"))
+    pack.update!(
+      cover_status: VibeModel::COVER_PENDING,
+      cover_url: nil,
+      cover_lqip_url: nil,
+      cover_cache_key: "stale",
+      cover_placeholder: true
+    )
+    GenerateCoverJob.perform_now(payload.merge("jailed_path" => "Anime/OtherPack/preview.png"))
+    pack.reload
+    assert_equal VibeModel::COVER_FAILED, pack.cover_status
+    assert_nil pack.cover_url
+  end
+
   test "jail refusal writes back failed" do
     GenerateCoverJob.perform_now(image_payload.merge("jailed_path" => "../etc/passwd"))
 

@@ -43,7 +43,7 @@ class LibraryPathJail
   end
 
   def join(folder_name, relative_path)
-    folder = normalize_folder(folder_name)
+    folder = normalize_pack_folder(folder_name)
     relative = normalize_relative(relative_path)
     candidate = @root.join(folder, relative).expand_path
     assert_inside!(candidate)
@@ -51,8 +51,9 @@ class LibraryPathJail
     candidate
   end
 
+  # Pack leaf (flat or Category/Pack). INIT-020/SPEC-005.
   def folder_path(name)
-    path = @root.join(normalize_model_folder(name)).expand_path
+    path = @root.join(normalize_pack_folder(name)).expand_path
     assert_inside!(path)
     assert_physical_inside!(path)
     path
@@ -63,6 +64,15 @@ class LibraryPathJail
     raise ArgumentError, "invalid folder" if segment.blank? || !valid_segment?(segment)
 
     segment
+  end
+
+  # Scan / asset identity: first-level (flat) or Category/Pack. INIT-020/SPEC-004
+  def normalize_pack_folder(name)
+    parts = segments(name)
+    raise ArgumentError, "invalid folder" if parts.empty? || parts.size > 2
+    raise ArgumentError, "invalid folder" unless parts.all? { |part| valid_segment?(part) }
+
+    parts.join("/")
   end
 
   # Vibe models are first-level folders. Rename/move must stay there.

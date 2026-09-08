@@ -1,6 +1,7 @@
 class ScanCursor < ApplicationRecord
   belongs_to :library
 
+  # Pack-prefix capable (Category/Pack). Not basename-only. INIT-020/SPEC-003
   validates :path_prefix, presence: true, uniqueness: { scope: :library_id }
 
   # Content fingerprint: max file mtime + total size. NFS often has 1s mtime

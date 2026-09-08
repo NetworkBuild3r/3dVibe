@@ -14,24 +14,28 @@ import {
   catalogQuery,
   emptyLibraryCopy,
   engineStatus,
+  filterPacksByCategory,
   galleryFilterClearParams,
   hasActiveFilters,
   headerCountLabel,
   nextGalleryHasMore,
   readDensity,
   readGalleryFilters,
+  shouldReloadGalleryForScan,
   usesSearchEndpoint,
   writeDensity,
   type CatalogFacets,
-  type GalleryDensity
+  type GalleryDensity,
+  type ScanProgress
 } from "../gallery";
 import { canToggleCardLike, cardLikeBusy, clearLikeBusy, markLikeBusy } from "../likes";
+import { OPS_POLL_MS, isActiveScan, packsIndexedCount, parseOpsPayload } from "../ops";
 
 export function GalleryPage() {
   const [params, setParams] = useSearchParams();
   const filters = useMemo(() => readGalleryFilters(params), [params]);
-  const queryKey = `${filters.q}\0${filters.tag}\0${filters.creator}\0${filters.hasCover}\0${filters.uploadedBy}`;
-  const { libraries, library } = useLibrary();
+  const queryKey = `${filters.q}\0${filters.tag}\0${filters.creator}\0${filters.category}\0${filters.hasCover}\0${filters.uploadedBy}`;
+  const { libraries, library, refresh: refreshLibraries } = useLibrary();
 
   const [models, setModels] = useState<ModelCard[]>([]);
   const [creators, setCreators] = useState<Creator[]>([]);
@@ -61,6 +65,8 @@ export function GalleryPage() {
   const requestRef = useRef(0);
   const membersTicket = useRef(0);
   const likeBusyRef = useRef<number[]>([]);
+  const [scanProgress, setScanProgress] = useState<ScanProgress>({ scanning: false, packsIndexed: 0 });
+  const scanProgressRef = useRef(scanProgress);
 
   const activeSearch = hasActiveFilters(filters);
 
@@ -256,6 +262,38 @@ export function GalleryPage() {
     return () => window.clearTimeout(handle);
   }, [queryKey, filters, resetAndLoad]);
 
+  useEffect(() => {
+    let cancelled = false;
+    async function tick() {
+      try {
+        const payload = await api.ops();
+        if (cancelled) return;
+        const next = parseOpsPayload(payload);
+        const progress: ScanProgress = next
+          ? { scanning: isActiveScan(next.scan), packsIndexed: packsIndexedCount(next.scan) }
+          : { scanning: false, packsIndexed: 0 };
+        const prev = scanProgressRef.current;
+        const reload = shouldReloadGalleryForScan(prev, progress);
+        scanProgressRef.current = progress;
+        setScanProgress(progress);
+        if (reload) {
+          void refreshLibraries().catch(() => undefined);
+          resetAndLoad();
+        }
+      } catch {
+        /* ops is curator-gated; gallery still lists packs */
+      }
+    }
+    void tick();
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void tick();
+    }, OPS_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [refreshLibraries, resetAndLoad]);
+
   async function toggleLike(model: ModelCard) {
     if (!canToggleCardLike(likeBusyRef.current, model.id)) return;
     likeBusyRef.current = markLikeBusy(likeBusyRef.current, model.id);
@@ -272,10 +310,22 @@ export function GalleryPage() {
     }
   }
 
-  const headerCount = activeSearch ? estimatedTotal : libraryTotal;
+  const visibleModels = useMemo(
+    () => filterPacksByCategory(models, filters.category),
+    [models, filters.category]
+  );
+  const headerCount = activeSearch
+    ? estimatedTotal
+    : scanProgress.scanning
+      ? scanProgress.packsIndexed
+      : libraryTotal;
   const countLabel = headerCountLabel({ filtered: activeSearch, count: headerCount, capped: activeSearch && capped });
   const showInitialSkeleton = loading && models.length === 0 && !loadError;
-  const empty = emptyLibraryCopy(filters, { members });
+  const empty = emptyLibraryCopy(filters, {
+    members,
+    scanning: scanProgress.scanning,
+    packsIndexed: scanProgress.packsIndexed
+  });
 
   return (
     <div>
@@ -315,7 +365,7 @@ export function GalleryPage() {
 
       {showInitialSkeleton ? <CardGridSkeleton cards={density === "compact" ? 12 : 8} /> : null}
 
-      {!showInitialSkeleton && models.length === 0 && !loadError ? (
+      {!showInitialSkeleton && visibleModels.length === 0 && !loadError ? (
         <EmptyState
           copy={empty.copy}
           onCta={empty.clearFilters ? clearFilters : undefined}
@@ -324,10 +374,10 @@ export function GalleryPage() {
         />
       ) : null}
 
-      {models.length > 0 ? (
+      {visibleModels.length > 0 ? (
         <VirtualizedCardGrid
           key={density}
-          models={models}
+          models={visibleModels}
           density={density}
           renderCard={(model) => (
             <ModelCardView

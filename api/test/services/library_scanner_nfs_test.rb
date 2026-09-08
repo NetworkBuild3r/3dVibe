@@ -8,7 +8,7 @@ class LibraryScannerNfsTest < ActiveJob::TestCase
       FileUtils.mkdir_p(@root.join(name))
       File.write(@root.join(name, "#{name}.txt"), name)
     end
-    @library = Library.create!(name: "NFS", root_path: @root.to_s)
+    @library = Library.create!(name: "NFS", root_path: @root.to_s, layout_mode: Library::LAYOUT_FLAT)
   end
 
   def teardown

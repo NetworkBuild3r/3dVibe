@@ -1,4 +1,5 @@
-# HITL extract of selected archive members into a first-level model folder.
+# HITL extract of selected archive members into a pack folder (library jail).
+# INIT-020/SPEC-005.
 # Streams one member at a time (ArchiveMemberStreamer) into a path-jailed
 # destination file. Never loads the parent archive into RAM, never rewrites
 # or deletes the source pack, and never silent-deletes NFS files.
@@ -153,7 +154,7 @@ class ArchiveMemberExtractor
     end
 
     name = if folder_name.present?
-      @jail.normalize_model_folder(folder_name)
+      @jail.normalize_pack_folder(folder_name)
     else
       slug_folder(title.presence || "extracted")
     end
@@ -169,7 +170,7 @@ class ArchiveMemberExtractor
   end
 
   def unique_model_folder(desired)
-    base = @jail.normalize_model_folder(desired.to_s)
+    base = @jail.normalize_pack_folder(desired.to_s)
     name = base
     n = 2
     while @library.vibe_models.exists?(folder_name: name) || @jail.folder_path(name).exist?

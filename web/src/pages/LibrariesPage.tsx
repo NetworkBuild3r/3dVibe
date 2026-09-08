@@ -31,7 +31,8 @@ function scanSummary(scan?: ScanStatus) {
   const files = scan.files_seen ?? 0;
   const errors = scan.error_count ?? 0;
   const pruned = scan.pruned_count ?? 0;
-  return `${files} files seen · ${scan.folders_indexed ?? 0} folders indexed · ${scan.folders_skipped ?? 0} skipped · ${pruned} pruned · ${errors} errors`;
+  const packs = scan.packs_indexed ?? scan.folders_indexed ?? 0;
+  return `${files} files seen · ${packs} packs indexed · ${scan.folders_skipped ?? 0} skipped · ${pruned} pruned · ${errors} errors`;
 }
 
 export function LibrariesPage() {

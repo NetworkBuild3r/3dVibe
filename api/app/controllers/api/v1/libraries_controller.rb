@@ -27,6 +27,20 @@ module API
         render json: library.scan_status_as_api.merge(library_id: library.id)
       end
 
+      # INIT-020/SPEC-007 — layout_mode on existing v1 settings, not a /v2 route.
+      def show_settings
+        library = accessible_libraries.find(params[:id])
+        render json: { settings: settings_as_api(library) }
+      end
+
+      def settings
+        library = accessible_libraries.find(params[:id])
+        return if require_owner!(library)
+
+        library.update!(layout_mode: layout_mode_param)
+        render json: { settings: settings_as_api(library.reload), library: serialize(library, detail: true) }
+      end
+
       def create
         unless current_user.owner_anywhere?
           render json: { error: "forbidden" }, status: :forbidden
@@ -43,7 +57,7 @@ module API
         return if require_owner!(library)
 
         prefix = params[:path_prefix].presence
-        prefix = LibraryPathJail.new(library.root_path).normalize_folder(prefix) if prefix
+        prefix = LibraryPathJail.new(library.root_path).normalize_pack_folder(prefix) if prefix
         library.scan_runs.create!(
           status: ScanRun::QUEUED,
           trigger: ScanRun::TRIGGER_API,
@@ -59,7 +73,24 @@ module API
       private
 
       def library_params
-        params.require(:library).permit(:name, :root_path, :notes)
+        params.require(:library).permit(:name, :root_path, :notes, :layout_mode)
+      end
+
+      def layout_mode_param
+        source = params[:settings].respond_to?(:permit) ? params.require(:settings) : params
+        source[:layout_mode].presence || params.dig(:library, :layout_mode)
+      end
+
+      def settings_as_api(library)
+        owner = current_user.owner_of?(library)
+        payload = { layout_mode: library.layout_mode }
+        return payload unless owner
+
+        payload.merge(scan_settings: scan_settings_as_api(library))
+      end
+
+      def scan_settings_as_api(library)
+        ScanSettings.as_api.merge(layout_mode: library.layout_mode)
       end
 
       def serialize(library, detail: false)
@@ -70,6 +101,7 @@ module API
           name: library.name,
           root_path: library.root_path,
           notes: library.notes,
+          layout_mode: library.layout_mode,
           model_count: library.vibe_models.count,
           shared: true,
           role: membership&.role || Membership::VIEWER,
@@ -84,7 +116,7 @@ module API
         return payload unless detail
 
         extra = {}
-        extra[:scan_settings] = ScanSettings.as_api if owner
+        extra[:scan_settings] = scan_settings_as_api(library) if owner
         extra[:cursors] = library.scan_cursors.order(:path_prefix).map { |cursor| serialize_cursor(cursor) } if owner
         payload.merge(extra)
       end

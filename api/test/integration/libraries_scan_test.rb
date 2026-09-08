@@ -10,7 +10,7 @@ class LibrariesScanTest < ActionDispatch::IntegrationTest
     File.write(@root.join("horn/notes.txt"), "signal")
     @password = "secret123"
     @owner = create_owner!(password: @password)
-    @library = Library.create!(name: "Studio", root_path: @root.to_s)
+    @library = Library.create!(name: "Studio", root_path: @root.to_s, layout_mode: Library::LAYOUT_FLAT)
     Membership.create!(user: @owner, library: @library, role: Membership::OWNER)
     LibraryScanner.new(@library, budget: ScanBudget.unlimited).scan!
   end
@@ -38,6 +38,10 @@ class LibrariesScanTest < ActionDispatch::IntegrationTest
     assert_equal "completed", body.dig("scan", "status")
     assert_equal "done", body.dig("scan", "phase")
     assert body["scan"].key?("resume")
+    assert body["scan"].key?("packs_indexed")
+    assert_equal false, body.dig("scan", "running")
+    assert_equal Library::LAYOUT_FLAT, body["layout_mode"]
+    assert_equal Library::LAYOUT_FLAT, body.dig("scan_settings", "layout_mode")
     assert body["scan_settings"]["max_files"].present?
     assert_equal "scan", body["scan_settings"]["queue"]
     assert_equal 1, body["scan_settings"]["concurrency"]
@@ -96,6 +100,9 @@ class LibrariesScanTest < ActionDispatch::IntegrationTest
     assert_response :success
     body = response.parsed_body
     assert_equal "idle", body.dig("scan", "status")
+    assert_equal 0, body.dig("scan", "packs_indexed")
+    assert_equal false, body.dig("scan", "running")
+    assert_nil body.dig("scan", "last_pack_path")
     assert body.dig("scan", "budgets").key?("max_seconds")
     assert_nil body["current"]
     assert_nil body["last"]

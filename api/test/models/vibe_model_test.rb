@@ -60,4 +60,77 @@ class VibeModelTest < ActiveSupport::TestCase
   test "on-disk assets are mergeable in the shared detail shape" do
     assert_equal true, VibeModel.asset_detail(@asset)[:mergeable]
   end
+
+  test "folder_name accepts Category/Pack and denormalizes category" do
+    pack = @library.vibe_models.create!(
+      folder_name: "Anime/AOT-ErenXArmored",
+      title: "AOT Eren X Armored"
+    )
+
+    assert_equal "Anime/AOT-ErenXArmored", pack.folder_name
+    assert_equal "Anime", pack.category
+    assert_equal "Anime", pack.as_card[:category]
+    assert_includes VibeModel.in_category("Anime"), pack
+    refute_includes VibeModel.in_category("DC"), pack
+  end
+
+  test "first-level folder_name stays unique per flat library" do
+    dup = @library.vibe_models.build(folder_name: "horn", title: "Horn copy")
+    refute dup.valid?
+    assert_includes dup.errors[:folder_name], "has already been taken"
+
+    other = create_shared_library!(
+      owner: @owner,
+      name: "Other pile",
+      root_path: "/tmp/other-#{SecureRandom.hex(4)}",
+      layout_mode: Library::LAYOUT_FLAT
+    )
+    twin = other.vibe_models.create!(folder_name: "horn", title: "Horn elsewhere")
+    assert_equal "horn", twin.category
+    assert_equal other.id, twin.library_id
+  end
+
+  test "keeps an existing mega-row and allows a sibling pack path" do
+    mega = @library.vibe_models.create!(folder_name: "Anime", title: "Anime")
+    pack = @library.vibe_models.create!(folder_name: "Anime/AOT-ErenXArmored", title: "Eren")
+
+    assert_equal "Anime", mega.reload.folder_name
+    assert_equal "Anime", mega.category
+    assert_equal "Anime/AOT-ErenXArmored", pack.folder_name
+    assert_equal 1, @library.vibe_models.where(folder_name: "Anime").count
+  end
+
+  test "rejects folder_name with .. absolute paths or NUL" do
+    {
+      "../escape" => "must not contain ..",
+      "Anime/../etc" => "must not contain ..",
+      "/Anime/AOT-ErenXArmored" => "must be a library-relative path",
+      "\\Anime\\Pack" => "must be a library-relative path",
+      "C:/Anime/Pack" => "must be a library-relative path"
+    }.each do |name, message|
+      model = @library.vibe_models.build(folder_name: name, title: "Bad")
+      refute model.valid?, name
+      assert_includes model.errors[:folder_name], message, name
+    end
+
+    model = @library.vibe_models.build(title: "Bad")
+    begin
+      model.folder_name = "safe\0pack"
+      refute model.valid?
+      assert_includes model.errors[:folder_name], "contains a NUL byte"
+    rescue ArgumentError => error
+      assert_match(/null byte/i, error.message)
+    end
+  end
+
+  test "unique index allows Category/Pack but not a duplicate pack path" do
+    @library.vibe_models.create!(folder_name: "Movie TV/Reinhardt", title: "Reinhardt")
+    clash = @library.vibe_models.build(folder_name: "Movie TV/Reinhardt", title: "Again")
+    refute clash.valid?
+    assert_includes clash.errors[:folder_name], "has already been taken"
+
+    sibling = @library.vibe_models.create!(folder_name: "Movie TV/D.Va", title: "D.Va")
+    assert_equal "Movie TV", sibling.category
+  end
 end
+
