@@ -18,7 +18,10 @@ Membership.find_or_create_by!(user: owner, library: library) do |membership|
   membership.role = Membership::OWNER
 end
 
-if Dir.exist?(library_root)
+# Compose/dev seeds walk the fixture tree. Production seeds the owner + library
+# row only; IncrementalScanJob / vibe:enqueue_scan fills the catalog from NFS.
+seed_scan = ENV.fetch("VIBE_SEED_SCAN", Rails.env.development? || Rails.env.test? ? "1" : "0")
+if Dir.exist?(library_root) && seed_scan == "1"
   LibraryScanner.new(library).scan!
 end
 

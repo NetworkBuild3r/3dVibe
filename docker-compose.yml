@@ -28,7 +28,7 @@ services:
   api:
     build:
       context: ./api
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dev
     environment:
       RAILS_ENV: ${RAILS_ENV:-development}
       DATABASE_URL: ${DATABASE_URL:-postgres://vibe:vibe@db:5432/td_vibe_development}
@@ -115,7 +115,7 @@ services:
   worker:
     build:
       context: ./api
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dev
     environment:
       RAILS_ENV: ${RAILS_ENV:-development}
       DATABASE_URL: ${DATABASE_URL:-postgres://vibe:vibe@db:5432/td_vibe_development}
@@ -196,7 +196,7 @@ services:
   web:
     build:
       context: ./web
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dev
     environment:
       VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api/v1}
     volumes:
@@ -211,7 +211,7 @@ services:
     profiles: ["curator"]
     build:
       context: ./curator
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dev
     environment:
       PORT: "8088"
       VIBE_CURATOR_TOKEN: ${VIBE_CURATOR_TOKEN:-vibe-dev-curator}
