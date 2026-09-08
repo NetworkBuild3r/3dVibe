@@ -7,7 +7,7 @@ class PrinterBridgeServiceTest < ActiveSupport::TestCase
     FileUtils.mkdir_p(@root.join("signal-horn"))
     File.write(@root.join("signal-horn/horn.stl"), "solid x\nendsolid x\n")
     @owner = create_owner!
-    @library = Library.create!(name: "Bridge", root_path: @root.to_s)
+    @library = Library.create!(name: "Bridge", root_path: @root.to_s, layout_mode: Library::LAYOUT_FLAT)
     Membership.create!(user: @owner, library: @library, role: Membership::OWNER)
     LibraryScanner.new(@library).scan!
     @model = @library.vibe_models.find_by!(folder_name: "signal-horn")

@@ -13,8 +13,8 @@ module ActiveSupport
       CuratorSetting.delete_all
     end
 
-    def create_shared_library!(owner:, contributor: nil, viewer: nil, name: "Shared pile", root_path: "/tmp/unused")
-      library = Library.create!(name: name, root_path: root_path)
+    def create_shared_library!(owner:, contributor: nil, viewer: nil, name: "Shared pile", root_path: "/tmp/unused", layout_mode: Library::LAYOUT_FLAT)
+      library = Library.create!(name: name, root_path: root_path, layout_mode: layout_mode)
       Membership.create!(user: owner, library: library, role: Membership::OWNER)
       Membership.create!(user: contributor, library: library, role: Membership::CONTRIBUTOR) if contributor
       Membership.create!(user: viewer, library: library, role: Membership::VIEWER) if viewer

@@ -131,34 +131,47 @@ class CoverGenerator
     library = model.library
     jail = LibraryPathJail.new(library.root_path)
     jailed = @data["jailed_path"].to_s
+    relative = relative_under_pack!(model.folder_name, jailed)
 
-    path = resolve_jailed!(jail, jailed)
+    path = resolve_pack_file!(jail, model.folder_name, relative)
     return path if image_path?(path)
 
-    # Mesh / archive: use a named preview sibling under the jail when present.
+    # Mesh / archive: use a named preview sibling under the pack jail.
     # Do not unzip, slurp, or rasterize 3D — this worker has no mesh renderer.
-    sibling = find_preview_sibling(jail, jailed)
+    sibling = find_preview_sibling(jail, model.folder_name, relative)
     return sibling if sibling
 
     raise PermanentError, "no preview image for mesh/archive #{jailed}"
   end
 
-  def resolve_jailed!(jail, jailed)
-    jail.resolve_jailed(jailed)
+  # INIT-020/SPEC-005 — jailed_path must stay under the pack folder, not merely the library.
+  def relative_under_pack!(folder_name, jailed)
+    prefix = folder_name.to_s.tr("\\", "/")
+    path = jailed.to_s.tr("\\", "/")
+    unless path == prefix || path.start_with?("#{prefix}/")
+      raise PermanentError, "jailed_path escapes pack root"
+    end
+
+    rel = path.delete_prefix("#{prefix}/")
+    raise PermanentError, "jailed_path is not a file under the pack" if rel.blank?
+
+    rel
+  end
+
+  def resolve_pack_file!(jail, folder_name, relative)
+    jail.resolve_file(folder_name, relative)
   rescue ArgumentError => e
     raise PermanentError, e.message
   end
 
-  def find_preview_sibling(jail, jailed_path)
-    parts = jailed_path.to_s.tr("\\", "/").split("/").reject(&:blank?)
-    return if parts.size < 2
-
-    dir = parts[0..-2]
+  def find_preview_sibling(jail, folder_name, relative)
+    dir = File.dirname(relative)
+    dir = nil if dir == "."
     PREVIEW_STEMS.each do |stem|
       IMAGE_EXT.each do |ext|
-        candidate = [*dir, "#{stem}.#{ext}"].join("/")
+        candidate = [dir, "#{stem}.#{ext}"].compact.join("/")
         begin
-          return jail.resolve_jailed(candidate)
+          return jail.resolve_file(folder_name, candidate)
         rescue ArgumentError
           next
         end

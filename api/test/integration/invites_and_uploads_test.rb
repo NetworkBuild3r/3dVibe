@@ -11,7 +11,7 @@ class InvitesAndUploadsTest < ActionDispatch::IntegrationTest
 
     @password = "secret123"
     @owner = create_owner!(password: @password)
-    @library = Library.create!(name: "Shared pile", root_path: @root.to_s)
+    @library = Library.create!(name: "Shared pile", root_path: @root.to_s, layout_mode: Library::LAYOUT_FLAT)
     Membership.create!(user: @owner, library: @library, role: Membership::OWNER)
     LibraryScanner.new(@library).scan!
   end

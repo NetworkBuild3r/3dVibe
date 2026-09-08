@@ -12,7 +12,7 @@ class ComputeArchiveMemberGeometryDigestJobTest < ActiveJob::TestCase
       zip.get_output_stream("path/foo.stl") { |io| io.write(File.binread(@root.join("loose/box.stl"))) }
       zip.get_output_stream("preview/hero.png") { |io| io.write("png") }
     end
-    @library = Library.create!(name: "Geo member job", root_path: @root.to_s)
+    @library = Library.create!(name: "Geo member job", root_path: @root.to_s, layout_mode: Library::LAYOUT_FLAT)
     LibraryScanner.new(@library, budget: ScanBudget.unlimited).scan!
     @archive = @library.vibe_models.find_by!(folder_name: "packed").assets.find_by!(filename: "pack.zip")
     @member = @archive.archive_members.find_by!(internal_path: "path/foo.stl")

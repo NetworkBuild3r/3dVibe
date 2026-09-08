@@ -10,7 +10,7 @@ class CurationSidecarTest < ActiveSupport::TestCase
     File.write(@root.join("Mz4250 - Alpha One/pack.zip"), "PK\x03\x04")
     FileUtils.mkdir_p(@root.join("beta-two"))
     File.write(@root.join("beta-two/b.stl"), "solid b\nendsolid b\n")
-    @library = Library.create!(name: "Sidecar", root_path: @root.to_s)
+    @library = Library.create!(name: "Sidecar", root_path: @root.to_s, layout_mode: Library::LAYOUT_FLAT)
     LibraryScanner.new(@library).scan!
     @alpha = @library.vibe_models.find_by!(folder_name: "Mz4250 - Alpha One")
     @alpha.update!(cover_status: VibeModel::COVER_READY)

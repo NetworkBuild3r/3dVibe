@@ -1,6 +1,8 @@
 # Resolves the request-scoped curator adapter settings sent to the sidecar.
 #
 # Order: persisted CuratorSetting field when present → else ENV → else stub.
+# ollama with a blank URL stays ollama (sidecar fail-loud). Never rewrite to stub.
+# INIT-020/SPEC-006
 # for_sidecar includes only the decrypted key needed for the active provider.
 # The SPA, Meilisearch, and proposal payloads never see this hash.
 class CuratorRuntime

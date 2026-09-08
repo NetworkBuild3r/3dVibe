@@ -31,6 +31,9 @@ jobs:
           - name: 3dvibe-web
             context: ./web
             dockerfile: ./web/Dockerfile
+          - name: 3dvibe-curator
+            context: ./curator
+            dockerfile: ./curator/Dockerfile
     steps:
       - uses: actions/checkout@v4
 

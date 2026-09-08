@@ -20,6 +20,7 @@ class ScanRun < ApplicationRecord
   TRIGGER_INLINE = "inline"
   TRIGGER_RESUME = "resume"
   TRIGGER_JOB = "job"
+  TRIGGER_REBUILD = "rebuild"
 
   belongs_to :library
   belongs_to :triggered_by, class_name: "User", optional: true
@@ -136,13 +137,16 @@ class ScanRun < ApplicationRecord
       status: status,
       trigger: trigger,
       phase: phase,
-      path_prefix: path_prefix,
+      path_prefix: safe_pack_path(path_prefix),
       started_at: started_at,
       finished_at: finished_at,
-      resume_after: resume_after,
+      resume_after: safe_last_pack_path,
       folders_seen: folders_seen,
       folders_indexed: folders_indexed,
       folders_skipped: folders_skipped,
+      packs_indexed: folders_indexed,
+      running: queued? || running?,
+      last_pack_path: safe_last_pack_path,
       files_seen: files_seen,
       files_changed: files_changed,
       pruned_count: pruned_count,
@@ -159,6 +163,9 @@ class ScanRun < ApplicationRecord
   def self.idle_as_api
     {
       status: "idle",
+      packs_indexed: 0,
+      running: false,
+      last_pack_path: nil,
       budgets: ScanSettings.budgets_as_api,
       resume: nil
     }
@@ -166,17 +173,53 @@ class ScanRun < ApplicationRecord
 
   def resume_as_api
     cursor = resume_cursor
-    path = cursor&.resume_relative_path
-    return nil if resume_after.blank? && path.blank?
+    path = safe_relative_path(cursor&.resume_relative_path)
+    after = safe_last_pack_path
+    prefix = safe_pack_path(cursor&.path_prefix) || after || safe_pack_path(path_prefix)
+    return nil if after.blank? && path.blank?
 
     {
-      resume_after: resume_after,
-      path_prefix: cursor&.path_prefix || path_prefix,
+      resume_after: after,
+      path_prefix: prefix,
       resume_relative_path: path
     }
   end
 
+  # INIT-020/SPEC-007 — last admitted pack as a library-relative path only.
+  def safe_last_pack_path
+    safe_pack_path(resume_after)
+  end
+
+  def safe_pack_path(value)
+    path = value.to_s
+    return nil if path.blank? || path.include?("\0")
+    return nil if path.start_with?("/", "\\") || path.match?(ABSOLUTE_DRIVE)
+
+    parts = path.tr("\\", "/").split("/").reject(&:blank?)
+    return nil if parts.empty? || parts.size > 2
+    return nil unless parts.all? { |part| safe_pack_segment?(part) }
+
+    parts.join("/")
+  end
+
+  def safe_relative_path(value)
+    path = value.to_s
+    return nil if path.blank? || path.include?("\0")
+    return nil if path.start_with?("/", "\\") || path.match?(ABSOLUTE_DRIVE)
+
+    parts = path.tr("\\", "/").split("/").reject(&:blank?)
+    return nil if parts.empty? || parts.any? { |part| part == "." || part == ".." }
+
+    parts.join("/")
+  end
+
   private
+
+  ABSOLUTE_DRIVE = /\A[A-Za-z]:[\\\/]/.freeze
+
+  def safe_pack_segment?(part)
+    part.present? && part != "." && part != ".." && !part.include?("\0") && !part.start_with?(".")
+  end
 
   def resume_cursor
     return unless resume_after.present? || budget_exhausted?

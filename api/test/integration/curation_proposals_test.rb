@@ -12,7 +12,7 @@ class CurationProposalsTest < ActionDispatch::IntegrationTest
     File.write(@root.join("hex-tray/hex.stl"), "solid y\nendsolid y\n")
 
     @owner = create_owner!
-    @library = Library.create!(name: "Studio", root_path: @root.to_s)
+    @library = Library.create!(name: "Studio", root_path: @root.to_s, layout_mode: Library::LAYOUT_FLAT)
     Membership.create!(user: @owner, library: @library, role: Membership::OWNER)
     LibraryScanner.new(@library).scan!
     @horn = @library.vibe_models.find_by!(folder_name: "signal-horn")

@@ -48,6 +48,20 @@ class LibraryPathJailTest < ActiveSupport::TestCase
     assert_raises(ArgumentError) { @jail.normalize_model_folder("../etc") }
   end
 
+  test "pack folders allow Category/Pack and refuse escape" do
+    assert_equal "dragon-kit", @jail.normalize_pack_folder("dragon-kit")
+    assert_equal "Anime/PackA", @jail.normalize_pack_folder("Anime/PackA")
+    path = @jail.join("Anime/PackA", "stl/body.stl")
+    assert_equal @root.join("Anime/PackA/stl/body.stl").to_s, path.to_s
+    assert_equal @root.join("Anime/PackA").to_s, @jail.folder_path("Anime/PackA").to_s
+    assert_raises(ArgumentError) { @jail.folder_path("../etc") }
+    assert_raises(ArgumentError) { @jail.folder_path("Anime/../etc") }
+    assert_raises(ArgumentError) { @jail.normalize_pack_folder("../etc") }
+    assert_raises(ArgumentError) { @jail.normalize_pack_folder("Anime/../etc") }
+    assert_raises(ArgumentError) { @jail.normalize_pack_folder("Anime/PackA/nested") }
+    assert_raises(ArgumentError) { @jail.normalize_pack_folder(".hidden") }
+  end
+
   test "join and folder_path refuse symlinks that escape the root" do
     FileUtils.mkdir_p(@root.join("safe-folder"))
     outside = Rails.root.join("tmp/jail-escape-#{SecureRandom.hex(4)}")

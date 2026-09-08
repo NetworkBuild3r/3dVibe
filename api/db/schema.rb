@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_09_07_030000) do
+ActiveRecord::Schema[8.0].define(version: 2026_09_08_010000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
   enable_extension "pg_trgm"
@@ -205,6 +205,7 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_07_030000) do
     t.datetime "last_polled_at"
     t.string "last_provider"
     t.text "last_error"
+    t.string "layout_mode", default: "category_model", null: false
     t.index ["root_path"], name: "index_libraries_on_root_path", unique: true
   end
 
@@ -396,10 +397,12 @@ ActiveRecord::Schema[8.0].define(version: 2026_09_07_030000) do
     t.string "cover_cache_key"
     t.bigint "cover_asset_id"
     t.string "cover_lqip_url"
+    t.string "category", null: false
     t.index ["cover_cache_key"], name: "index_vibe_models_on_cover_cache_key"
     t.index ["cover_status"], name: "index_vibe_models_on_cover_status"
     t.index ["creator_id"], name: "index_vibe_models_on_creator_id"
     t.index ["folder_name"], name: "index_vibe_models_on_folder_name_trgm", opclass: :gin_trgm_ops, using: :gin
+    t.index ["library_id", "category"], name: "index_vibe_models_on_library_id_and_category"
     t.index ["library_id", "folder_name"], name: "index_vibe_models_on_library_id_and_folder_name", unique: true
     t.index ["library_id", "updated_at", "id"], name: "index_vibe_models_on_library_id_and_updated_at_and_id"
     t.index ["library_id"], name: "index_vibe_models_on_library_id"

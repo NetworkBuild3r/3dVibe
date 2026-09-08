@@ -144,9 +144,7 @@ module VibeCurator
       end
 
       def base_url
-        raw = @env["VIBE_OLLAMA_URL"].to_s.strip
-        raw = "http://127.0.0.1:11434" if raw.empty?
-        raw.chomp("/")
+        Config.require_ollama_url!(@env["VIBE_OLLAMA_URL"]).chomp("/")
       end
     end
 

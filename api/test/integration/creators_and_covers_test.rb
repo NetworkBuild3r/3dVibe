@@ -18,7 +18,7 @@ class CreatorsAndCoversTest < ActionDispatch::IntegrationTest
     @owner = create_owner!(password: @password)
     @viewer = create_user!(email: "viewer@example.test")
     @contributor = create_user!(email: "contrib@example.test")
-    @library = Library.create!(name: "Studio", root_path: @root.to_s)
+    @library = Library.create!(name: "Studio", root_path: @root.to_s, layout_mode: Library::LAYOUT_FLAT)
     Membership.create!(user: @owner, library: @library, role: Membership::OWNER)
     Membership.create!(user: @viewer, library: @library, role: Membership::VIEWER)
     Membership.create!(user: @contributor, library: @library, role: Membership::CONTRIBUTOR)

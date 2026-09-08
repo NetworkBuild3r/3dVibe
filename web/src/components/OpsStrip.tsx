@@ -9,6 +9,7 @@ import {
   OPS_POLL_MS,
   isActiveScan,
   opsChips,
+  packsIndexedCount,
   parseLibraryScan,
   parseOpsPayload,
   scanPrefix,
@@ -114,6 +115,8 @@ function OpsDetail({
           {active ? formatScanLine(current || scan) : formatScanLine(last || scan)}
         </DetailRow>
         <DetailRow label="Phase">{scan.phase || (scan.status === "idle" ? "—" : null)}</DetailRow>
+        <DetailRow label="Packs indexed">{String(packsIndexedCount(scan))}</DetailRow>
+        <DetailRow label="Last pack">{scan.last_pack_path}</DetailRow>
         <DetailRow label="Prefix">{scanPrefix(scan)}</DetailRow>
         <DetailRow label="Budgets">{budgetsLine(scan)}</DetailRow>
         <DetailRow label="Resume">{resumeLine(scan)}</DetailRow>

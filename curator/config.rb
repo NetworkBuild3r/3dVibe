@@ -10,6 +10,9 @@
 # Stub never requires a key; secrets are dropped from the request-scoped env.
 # Rails sends only the decrypted key for the active provider (xai / openai /
 # anthropic). Compose/CI stay on stub. Owner UI default is ollama + gemma4.
+# When provider is ollama, VIBE_OLLAMA_URL must be set and must not contain
+# localhost or 127.0.0.1 — no loopback fallback (INIT-020/SPEC-006).
+# Sidecar proposes only; Rails HITL apply.
 module VibeCurator
   KINDS = %w[tag rename move merge organize].freeze
   PROVIDERS = %w[stub ollama xai openai anthropic].freeze
@@ -42,6 +45,7 @@ module VibeCurator
       scoped = env_with_runtime(catalog, env)
       name = provider_name(catalog, env: scoped)
       scoped = strip_secrets(scoped) if name == "stub"
+      require_ollama_url!(scoped["VIBE_OLLAMA_URL"]) if name == "ollama"
       [name, scoped]
     end
 
@@ -184,6 +188,31 @@ module VibeCurator
     def present(value)
       text = value.to_s.strip
       text.empty? ? nil : text
+    end
+
+    # INIT-020/SPEC-006 — fail loud. Do not invent a loopback LLM URL.
+    def require_ollama_url!(value)
+      raw = value.to_s.strip
+      if raw.empty?
+        raise Error.new(
+          "VIBE_OLLAMA_URL is blank; loopback fallback is forbidden",
+          status: 503,
+          code: "ollama_url_blank"
+        )
+      end
+      if banned_llm_url?(raw)
+        raise Error.new(
+          "VIBE_OLLAMA_URL is banned (localhost or 127.0.0.1)",
+          status: 503,
+          code: "ollama_url_banned"
+        )
+      end
+      raw
+    end
+
+    def banned_llm_url?(value)
+      text = value.to_s.downcase
+      text.include?("localhost") || text.include?("127.0.0.1")
     end
 
     def clamp_int(value, default:, min:, max:)

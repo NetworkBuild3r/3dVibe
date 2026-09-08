@@ -11,7 +11,7 @@ class LikesAndBookmarksTest < ActionDispatch::IntegrationTest
 
     @owner = create_owner!
     @friend = create_user!(email: "friend@example.test")
-    @library = Library.create!(name: "Shared pile", root_path: @root.to_s)
+    @library = Library.create!(name: "Shared pile", root_path: @root.to_s, layout_mode: Library::LAYOUT_FLAT)
     Membership.create!(user: @owner, library: @library, role: Membership::OWNER)
     Membership.create!(user: @friend, library: @library, role: Membership::CONTRIBUTOR)
     LibraryScanner.new(@library).scan!

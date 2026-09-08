@@ -17,7 +17,7 @@ class LibraryScanner
     root = Pathname.new(@library.root_path)
     raise ArgumentError, "Library root is not a directory: #{root}" unless root.directory?
 
-    @disk_folders = list_model_folders(root)
+    @disk_folders = PackFolderDiscovery.new(@library, root: root, path_prefix: @path_prefix).folder_names
 
     if @path_prefix.blank? && @run.phase == ScanRun::PHASE_PRUNE
       finish_or_continue_prune!
@@ -113,6 +113,8 @@ class LibraryScanner
       return :error
     end
 
+    LibraryPathJail.new(@library.root_path).assert_realpath_inside!(dir)
+
     dir_stat = dir.lstat
       if cursor.skip_deep_walk?(dir_stat)
         existing = @library.vibe_models.find_by(folder_name: folder_name)
@@ -138,6 +140,7 @@ class LibraryScanner
     model.uploaded_by ||= @uploaded_by
     model.creator ||= CreatorHint.upsert!(folder_name)
     model.save!
+    admit_pack!(model)
 
     seen_paths = []
     max_mtime = 0
@@ -197,18 +200,15 @@ class LibraryScanner
 
   def each_regular_file(dir)
     entries = []
-    dir.find do |path|
-      next if path == dir
-
+    LibraryPathJail.each_regular_file(dir) do |path, rel|
       begin
         stat = path.lstat
       rescue *NFS_STAT_ERRORS
         next
       end
-      next unless stat.file?
       next if SKIP_NAMES.include?(path.basename.to_s)
 
-      entries << [path, path.relative_path_from(dir).to_s, stat]
+      entries << [path, rel, stat]
     end
     entries.sort_by! { |_, rel, _| rel }
     entries.each { |path, rel, stat| yield path, rel, stat }
@@ -305,6 +305,9 @@ class LibraryScanner
 
   def budget_stop!(last_completed)
     @run.resume_after = last_completed
+    Rails.logger.info(
+      "[LibraryScanner] budget library=#{@library.id} reason=#{@budget.reason} resume_after=#{last_completed}"
+    )
     persist_run!(
       status: ScanRun::BUDGETED,
       budget_exhausted: true,
@@ -318,38 +321,9 @@ class LibraryScanner
     @run.save!
   end
 
-  def list_model_folders(root)
-    if @path_prefix
-      folder = LibraryPathJail.new(root).normalize_folder(@path_prefix)
-      target = root.join(folder)
-      return jailed_model_folder?(root, target) ? [folder] : []
-    end
-
-    names = []
-    Dir.each_child(root.to_s) do |name|
-      next if hidden_name?(name)
-
-      names << name if jailed_model_folder?(root, File.join(root.to_s, name))
-    end
-    names.sort
-  rescue *NFS_STAT_ERRORS => e
-    raise ArgumentError, "Cannot list library root: #{e.message}"
-  end
-
-  def hidden_name?(name)
-    name.start_with?(".") || SKIP_NAMES.include?(name)
-  end
-
-  # First-level folders that are symlinks (or whose realpath leaves the
-  # library) are not models. Scanning them would index and later upload
-  # through the jail.
-  def jailed_model_folder?(root, path)
-    return false unless File.directory?(path.to_s)
-
-    LibraryPathJail.new(root).assert_realpath_inside!(path)
-    true
-  rescue ArgumentError, Errno::ENOENT, Errno::ELOOP
-    false
+  def admit_pack!(model)
+    SearchIndex.enqueue(model)
+    Rails.logger.info("[LibraryScanner] pack admitted library=#{@library.id} folder=#{model.folder_name}")
   end
 
   def detect_kind(path)
@@ -368,6 +342,7 @@ class LibraryScanner
   def read_synopsis(dir)
     %w[readme.txt README.txt notes.txt synopsis.txt].each do |name|
       file = dir.join(name)
+      next if file.symlink?
       return file.read.truncate(2_000) if file.file?
     end
     nil
@@ -390,6 +365,6 @@ class LibraryScanner
   end
 
   def humanize(folder_name)
-    folder_name.tr("_-", " ").squeeze(" ").strip.split.map(&:capitalize).join(" ")
+    File.basename(folder_name).tr("_-", " ").squeeze(" ").strip.split.map(&:capitalize).join(" ")
   end
 end

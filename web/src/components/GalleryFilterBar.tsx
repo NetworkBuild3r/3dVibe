@@ -2,6 +2,7 @@ import type { Creator, LibraryMember, ModelCard } from "../types";
 import {
   allChipActive,
   creatorDisplayName,
+  facetCategories,
   facetCreators,
   facetTags,
   friendDisplayName,
@@ -54,6 +55,7 @@ export function GalleryFilterBar({
 }) {
   const creatorOptions = facetCreators(facets, creators, models);
   const tagOptions = facetTags(facets);
+  const categoryOptions = facetCategories(models);
   const selectedCreatorName = creatorDisplayName(filters.creator, creators, models);
   const filtersActive = hasActiveFilters(filters);
   const queryLabel = searchPillLabel(filters);
@@ -125,6 +127,15 @@ export function GalleryFilterBar({
                 </ChipOption>
               ))}
             </ChipDropdown>
+            {categoryOptions.map((item) => (
+              <CalmChip
+                key={item.name}
+                active={filters.category === item.name}
+                onClick={() => onPatch({ category: filters.category === item.name ? null : item.name })}
+              >
+                {item.name}
+              </CalmChip>
+            ))}
             <ChipDropdown
               label="Tags"
               active={Boolean(filters.tag)}
@@ -164,6 +175,9 @@ export function GalleryFilterBar({
             <FilterPill label={selectedCreatorName} onRemove={() => onPatch({ creator: null })} />
           ) : null}
           {filters.tag ? <FilterPill label={filters.tag} onRemove={() => onPatch({ tag: null })} /> : null}
+          {filters.category ? (
+            <FilterPill label={filters.category} onRemove={() => onPatch({ category: null })} />
+          ) : null}
           {filters.hasCover ? <FilterPill label="Has cover" onRemove={() => onPatch({ cover: null })} /> : null}
           <button type="button" onClick={onClear} className="text-xs text-slate-400 hover:text-white">
             Clear All

@@ -1,4 +1,8 @@
 class Library < ApplicationRecord
+  LAYOUT_CATEGORY_MODEL = "category_model"
+  LAYOUT_FLAT = "flat"
+  LAYOUT_MODES = [LAYOUT_CATEGORY_MODEL, LAYOUT_FLAT].freeze
+
   has_many :memberships, dependent: :destroy
   has_many :users, through: :memberships
   has_many :vibe_models, dependent: :destroy
@@ -15,6 +19,7 @@ class Library < ApplicationRecord
 
   validates :name, presence: true
   validates :root_path, presence: true
+  validates :layout_mode, inclusion: { in: LAYOUT_MODES }
 
   def owner
     memberships.find_by(role: Membership::OWNER)&.user
