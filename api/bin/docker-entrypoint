@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# db:prepare is for the API process only — Sidekiq workers skip it.
+if [[ "${1:-}" == "bin/rails" && "${2:-}" == "server" ]] || [[ "${VIBE_DB_PREPARE:-0}" == "1" ]]; then
+  echo "Preparing database..."
+  for i in $(seq 1 60); do
+    if bin/rails db:prepare; then
+      break
+    fi
+    echo "db:prepare failed (attempt ${i}/60); retrying..."
+    sleep 3
+  done
+fi
+
+if [[ "${VIBE_DB_SEED:-0}" == "1" ]]; then
+  echo "Seeding database..."
+  bin/rails db:seed
+fi
+
+exec "$@"
