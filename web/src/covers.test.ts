@@ -9,7 +9,7 @@ const ready = {
 };
 
 describe("cover LQIP bind", () => {
-  it("prefers cover_lqip_url for cheap card chrome", () => {
+  it("keeps LQIP for first-paint backdrop and the sharp webp for the card", () => {
     expect(cheapCoverUrl(ready)).toBe("/covers/9.lqip.webp");
     expect(fullCoverUrl(ready)).toBe("/covers/9.webp");
     expect(coverVisual(ready)).toBe("image");
