@@ -62,6 +62,39 @@ class DuplicatesTest < ActionDispatch::IntegrationTest
     assert_equal "likely", notes["confidence"]
   end
 
+  test "analyze ignores datapackage and spark sidecar files" do
+    FileUtils.mkdir_p(@root.join("pack-a"))
+    FileUtils.mkdir_p(@root.join("pack-b"))
+    sidecar = %({"title":"same-length-sidecar-body"}).freeze
+    File.write(@root.join("pack-a/datapackage.json"), sidecar)
+    File.write(@root.join("pack-b/datapackage.json"), sidecar)
+    File.write(@root.join("pack-a/.spark-curate-meta.json"), "meta" * 10)
+    File.write(@root.join("pack-b/.spark-curate-meta.json"), "meta" * 10)
+    File.write(@root.join("pack-a/preview.jpg"), "shared-do3d-preview")
+    File.write(@root.join("pack-b/preview.jpg"), "shared-do3d-preview")
+    File.write(@root.join("pack-a/preview.png"), "aaaa-same-length-preview")
+    File.write(@root.join("pack-b/preview.png"), "bbbb-same-length-preview")
+    LibraryScanner.new(@library, budget: ScanBudget.unlimited).scan!
+
+    AnalyzeDuplicatesJob.perform_now(@library.id)
+
+    get "/api/v1/duplicates",
+        params: { library_id: @library.id, status: "open" },
+        headers: auth_header(@owner)
+    assert_response :success
+    names = response.parsed_body.fetch("groups").map { |group| group["filename"] }
+    refute_includes names, "datapackage.json"
+    refute_includes names, ".spark-curate-meta.json"
+    refute_includes names, "ds_store"
+    refute(response.parsed_body.fetch("groups").any? { |group| group["filename"] == "preview.png" && group["reason"] == "name_size" })
+    preview = response.parsed_body.fetch("groups").find { |group| group["filename"] == "preview.jpg" }
+    assert preview
+    assert_equal "content_hash", preview["reason"]
+    folders = preview.fetch("assets").map { |asset| asset["folder_name"] }
+    assert_includes folders, "pack-a"
+    assert_includes folders, "pack-b"
+  end
+
   test "geometry_digest groups meshes that are not exact or name_size hits" do
     near_a = @library.vibe_models.find_by!(folder_name: "near-a").assets.find_by!(filename: "widget.stl")
     near_b = @library.vibe_models.find_by!(folder_name: "near-b").assets.find_by!(filename: "gizmo.stl")

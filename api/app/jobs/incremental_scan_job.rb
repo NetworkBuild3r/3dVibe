@@ -17,9 +17,15 @@ class IncrementalScanJob < ApplicationJob
       trigger: kind
     ).scan!(path_prefix: prefix, run: run)
 
-    return unless result.budgeted? && prefix.blank?
+    if result.budgeted? && prefix.blank?
+      IncrementalScanJob.perform_later(library_id, nil, uploaded_by_id, kind)
+      return
+    end
 
-    IncrementalScanJob.perform_later(library_id, nil, uploaded_by_id, kind)
+    return unless prefix.blank? && result.status == ScanRun::COMPLETED
+
+    AnalyzeDuplicatesJob.perform_later(library_id)
+    FetchCurationProposalsJob.perform_later(library_id)
   end
 
   private

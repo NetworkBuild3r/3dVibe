@@ -35,6 +35,7 @@ class CreatorHintTest < ActiveSupport::TestCase
       root.join("datapackage.json"),
       JSON.generate(
         "creator" => "Studio X",
+        "title" => "Hero Figure",
         "keywords" => %w[attack-on-titan eren],
         "contributors" => [{ "title" => "Ignored", "roles" => ["creator"] }]
       )
@@ -45,6 +46,7 @@ class CreatorHintTest < ActiveSupport::TestCase
     assert_equal "Studio X", hint.name
     assert_equal %w[attack-on-titan eren], hint.keywords
     assert_equal CreatorHint::AUTHORITY_DATAPACKAGE, hint.authority
+    assert_equal "Hero Figure", hint.title
     assert_equal Creator::SOURCE_NFS, hint.source
   ensure
     FileUtils.rm_rf(root) if defined?(root) && root

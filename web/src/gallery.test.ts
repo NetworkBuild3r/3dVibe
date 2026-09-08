@@ -3,6 +3,7 @@ import type { Creator, ModelCard } from "./types";
 import {
   allChipActive,
   applyCatalogParams,
+  cardChipTag,
   catalogQuery,
   categoryFromCard,
   columnCount,
@@ -283,5 +284,12 @@ describe("category chips and scan empty copy — INIT-020/SPEC-008", () => {
     expect(
       shouldReloadGalleryForScan({ scanning: true, packsIndexed: 1 }, { scanning: false, packsIndexed: 1 })
     ).toBe(true);
+  });
+
+  it("hides file-kind tags on cards so datapackage keywords can show", () => {
+    expect(cardChipTag(["json", "stl", "png"])).toBeNull();
+    expect(cardChipTag(["json", "anime", "stl"])).toBe("anime");
+    expect(cardChipTag(["json", "anime", "helmet", "do3d"])).toBe("helmet");
+    expect(cardChipTag(["helmet"])).toBe("helmet");
   });
 });

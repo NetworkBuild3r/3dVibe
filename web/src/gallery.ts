@@ -310,6 +310,52 @@ export function gridMetrics(density: GalleryDensity) {
     : { minColumn: 220, gap: 20, estimateRow: 328 };
 }
 
+const FILE_KIND_TAGS = new Set([
+  "stl",
+  "obj",
+  "3mf",
+  "gcode",
+  "bgcode",
+  "png",
+  "jpg",
+  "jpeg",
+  "webp",
+  "gif",
+  "zip",
+  "7z",
+  "rar",
+  "json",
+  "file"
+]);
+
+const WEAK_SHELF_TAGS = new Set([
+  "anime",
+  "cartoons",
+  "cosplay",
+  "d-d",
+  "d&d",
+  "dnd",
+  "dc",
+  "games",
+  "movie-tv",
+  "movie",
+  "tv",
+  "untagged",
+  "unknown",
+  "anystl",
+  "cults3d",
+  "gumroad"
+]);
+
+/** First useful card chip. File kinds stay searchable; shelf tags lose to a specific keyword. */
+export function cardChipTag(tags: string[] | undefined | null): string | null {
+  const semantic = (tags || [])
+    .map((tag) => tag.trim())
+    .filter((tag) => tag && !FILE_KIND_TAGS.has(tag.toLowerCase()));
+  const specific = semantic.find((tag) => !WEAK_SHELF_TAGS.has(tag.toLowerCase()));
+  return specific || semantic[0] || null;
+}
+
 export function columnCount(width: number, density: GalleryDensity): number {
   const { minColumn, gap } = gridMetrics(density);
   if (width <= 0) return 1;

@@ -4,6 +4,11 @@
 # → one group: loose↔member↔member). Name+size leftovers stay asset-oriented.
 # Size-prefilter + streamed hashing (never slurp archives). Path-jailed.
 class DuplicateFinder
+  # Catalog sidecars are identical across packs by design. Clustering them
+  # drowns real preview/mesh matches (INIT-020 organize).
+  SIDECAR_FILENAMES = %w[datapackage.json .spark-curate-meta.json].freeze
+  GENERIC_PREVIEW_FILENAMES = %w[preview.png preview.jpg preview.jpeg preview.webp 1.jpg 1.png].freeze
+
   Cluster = Struct.new(:reason, :confidence, :digest, :assets, :archive_members, keyword_init: true) do
     def initialize(*)
       super
@@ -65,6 +70,18 @@ class DuplicateFinder
          .where(vibe_models: { library_id: @library.id })
          .includes(vibe_model: :library)
          .to_a
+         .reject { |asset| sidecar_asset?(asset) }
+  end
+
+  def sidecar_asset?(asset)
+    name = asset.filename.to_s.downcase
+    return true if SIDECAR_FILENAMES.include?(name) || name.start_with?(".spark-")
+
+    name == "ds_store" || name.start_with?("ds_store ")
+  end
+
+  def generic_preview_name?(asset)
+    GENERIC_PREVIEW_FILENAMES.include?(asset.filename.to_s.downcase)
   end
 
   def load_mesh_archive_members
@@ -162,6 +179,7 @@ class DuplicateFinder
 
   def heuristic_groups(assets, claimed)
     assets
+      .reject { |asset| generic_preview_name?(asset) }
       .group_by { |asset| [asset.filename.to_s.downcase, asset.byte_size.to_i] }
       .filter_map do |(_filename, _byte_size), members|
         leftover = members.reject { |asset| claimed.include?(asset.id) }

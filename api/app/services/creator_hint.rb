@@ -3,7 +3,7 @@
 # prefix > category as a weak hint. Category shelves (Anime, …) are not creators.
 # NFS is the source of truth. We never invent private shelves or federation.
 class CreatorHint
-  Result = Struct.new(:slug, :name, :source, :keywords, :authority, keyword_init: true)
+  Result = Struct.new(:slug, :name, :source, :keywords, :authority, :title, keyword_init: true)
 
   SOURCE = Creator::SOURCE_NFS
   AUTHORITY_DATAPACKAGE = "datapackage"
@@ -91,18 +91,19 @@ class CreatorHint
     return unless data
 
     keywords = Array(data["keywords"]).filter_map { |word| word.to_s.strip.presence }.uniq
+    title = data["title"].to_s.strip.presence
     creator_name = datapackage_creator_name(data)
     unless creator_name
-      return result(nil, nil, keywords: keywords, authority: AUTHORITY_DATAPACKAGE) if keywords.any?
+      return result(nil, nil, keywords: keywords, authority: AUTHORITY_DATAPACKAGE, title: title) if keywords.any? || title
 
       return
     end
 
     if (known = known_pack(creator_name))
-      return result(known[:slug], known[:name], keywords: keywords, authority: AUTHORITY_DATAPACKAGE)
+      return result(known[:slug], known[:name], keywords: keywords, authority: AUTHORITY_DATAPACKAGE, title: title)
     end
 
-    result(slugify(creator_name), creator_name, keywords: keywords, authority: AUTHORITY_DATAPACKAGE)
+    result(slugify(creator_name), creator_name, keywords: keywords, authority: AUTHORITY_DATAPACKAGE, title: title)
   end
 
   def hint_from_pack_leaf(leaf)
@@ -213,8 +214,8 @@ class CreatorHint
     value.split(PACK_SEPARATOR, 2).first.to_s.strip.presence
   end
 
-  def result(slug, name, keywords: [], authority: AUTHORITY_FOLDER)
-    Result.new(slug: slug, name: name, source: SOURCE, keywords: keywords, authority: authority)
+  def result(slug, name, keywords: [], authority: AUTHORITY_FOLDER, title: nil)
+    Result.new(slug: slug, name: name, source: SOURCE, keywords: keywords, authority: authority, title: title)
   end
 
   def slugify(value)
