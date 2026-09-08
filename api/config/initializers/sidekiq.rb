@@ -1,5 +1,8 @@
 require "sidekiq-cron"
 
+# Production eager-load runs after initializers; Sidekiq needs ScanSettings now.
+require_relative "../../app/services/scan_settings"
+
 redis_url = ENV.fetch("REDIS_URL", "redis://127.0.0.1:6379/0")
 
 Sidekiq.configure_server do |config|
