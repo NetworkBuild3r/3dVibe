@@ -6,44 +6,29 @@ export function CoverMedia({
   model,
   className = "",
   label,
-  showFailedCopy = true,
-  preferLqip = false
+  showFailedCopy = true
 }: {
   model: Pick<ModelCard, "title" | "cover_status" | "cover_url" | "cover_lqip_url" | "cover_placeholder">;
   className?: string;
   label?: string;
   showFailedCopy?: boolean;
-  preferLqip?: boolean;
 }) {
   const visual = coverVisual(model);
   const status = coverStatusOf(model);
   const [broken, setBroken] = useState(false);
-  const cheap = cheapCoverUrl(model);
-  const full = fullCoverUrl(model);
-  // Never leave the card on the 32px LQIP — it scales into an unreadable blob.
-  // preferLqip only means "paint LQIP first"; the sharp cover is the image.
-  const src = full || cheap;
-  const backdrop = preferLqip && cheap && full && cheap !== full ? cheap : null;
+  // Always the 512px webp. The 32px LQIP is a first-paint hint only and must
+  // never be the gallery card image (it scales into an unreadable blob).
+  const src = fullCoverUrl(model) || cheapCoverUrl(model);
   const showImage = visual === "image" && !broken && src;
 
   if (showImage) {
     return (
-      <span className={`relative block h-full w-full overflow-hidden ${className}`}>
-        {backdrop ? (
-          <img
-            src={resolveCoverUrl(backdrop)}
-            alt=""
-            aria-hidden
-            className="absolute inset-0 h-full w-full scale-105 object-cover blur-sm"
-          />
-        ) : null}
-        <img
-          src={resolveCoverUrl(src)}
-          alt={label || model.title}
-          className="cover-fade-in relative h-full w-full object-cover"
-          onError={() => setBroken(true)}
-        />
-      </span>
+      <img
+        src={resolveCoverUrl(src)}
+        alt={label || model.title}
+        className={`cover-fade-in h-full w-full object-cover ${className}`}
+        onError={() => setBroken(true)}
+      />
     );
   }
 
