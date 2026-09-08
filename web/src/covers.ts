@@ -26,7 +26,7 @@ export function resolveCoverUrl(url: string): string {
   return url;
 }
 
-/** Tiny blur / low-res webp for virtualized card chrome. Prefer this over cover_url. */
+/** 32px LQIP for first-paint backdrop only. Never the only gallery card image. */
 export function cheapCoverUrl(model: CoverFields): string | null {
   return model.cover_lqip_url || model.cover_url || null;
 }

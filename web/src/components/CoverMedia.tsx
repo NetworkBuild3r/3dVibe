@@ -18,17 +18,32 @@ export function CoverMedia({
   const visual = coverVisual(model);
   const status = coverStatusOf(model);
   const [broken, setBroken] = useState(false);
-  const src = preferLqip ? cheapCoverUrl(model) : fullCoverUrl(model);
+  const cheap = cheapCoverUrl(model);
+  const full = fullCoverUrl(model);
+  // Never leave the card on the 32px LQIP — it scales into an unreadable blob.
+  // preferLqip only means "paint LQIP first"; the sharp cover is the image.
+  const src = full || cheap;
+  const backdrop = preferLqip && cheap && full && cheap !== full ? cheap : null;
   const showImage = visual === "image" && !broken && src;
 
   if (showImage) {
     return (
-      <img
-        src={resolveCoverUrl(src)}
-        alt={label || model.title}
-        className={`cover-fade-in h-full w-full object-cover ${className}`}
-        onError={() => setBroken(true)}
-      />
+      <span className={`relative block h-full w-full overflow-hidden ${className}`}>
+        {backdrop ? (
+          <img
+            src={resolveCoverUrl(backdrop)}
+            alt=""
+            aria-hidden
+            className="absolute inset-0 h-full w-full scale-105 object-cover blur-sm"
+          />
+        ) : null}
+        <img
+          src={resolveCoverUrl(src)}
+          alt={label || model.title}
+          className="cover-fade-in relative h-full w-full object-cover"
+          onError={() => setBroken(true)}
+        />
+      </span>
     );
   }
 
