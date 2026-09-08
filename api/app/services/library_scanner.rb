@@ -138,7 +138,7 @@ class LibraryScanner
     model.synopsis ||= read_synopsis(dir)
     # Audit only. Unattributed NFS walks stay null — never invent an owner.
     model.uploaded_by ||= @uploaded_by
-    model.creator ||= CreatorHint.upsert!(folder_name)
+    apply_pack_hint!(model, dir)
     model.save!
     admit_pack!(model)
 
@@ -184,6 +184,7 @@ class LibraryScanner
         byte_size: total
       )
       assign_default_tags(model)
+      apply_hint_tags(model, CreatorHint.parse(folder_name, pack_root: dir.to_s))
       label_creator_and_cover!(model)
       SearchIndex.enqueue(model)
       cursor.remember!(mtime: max_mtime, byte_size: total, file_count: file_count, dir_stat: dir_stat)
@@ -351,9 +352,31 @@ class LibraryScanner
   def label_creator_and_cover!(model)
     return unless model
 
-    creator = CreatorHint.upsert!(model.folder_name)
-    model.update!(creator: creator) if creator && model.creator_id != creator.id
+    apply_pack_hint!(model, model.absolute_path)
+    model.save! if model.changed?
     CoverEnqueue.call(model)
+  end
+
+  KIND_TAG_NAMES = (
+    Asset::ARCHIVE_KINDS + Asset::MESH_KINDS + Asset::IMAGE_KINDS + %w[json file]
+  ).freeze
+
+  def apply_pack_hint!(model, dir)
+    hint = CreatorHint.parse(model.folder_name, pack_root: dir.to_s)
+    creator = CreatorHint.upsert!(model.folder_name, pack_root: dir.to_s)
+    model.creator = creator if creator && model.creator_id != creator.id
+    model.title = hint.title if hint&.title.present?
+  end
+
+  def apply_hint_tags(model, hint)
+    Array(hint&.keywords).each do |raw|
+      name = raw.to_s.strip.downcase
+      next if name.blank? || name.start_with?("!")
+      next if KIND_TAG_NAMES.include?(name)
+
+      tag = Tag.find_or_create_by!(name: name)
+      model.tag_assignments.find_or_create_by!(tag: tag)
+    end
   end
 
   def assign_default_tags(model)

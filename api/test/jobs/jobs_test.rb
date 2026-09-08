@@ -13,6 +13,8 @@ class JobsTest < ActiveJob::TestCase
     IncrementalScanJob.perform_now(library.id)
     assert_equal %w[Anime/PackA Anime/PackB], library.vibe_models.order(:folder_name).pluck(:folder_name)
     refute library.vibe_models.exists?(folder_name: "Anime")
+    assert_enqueued_with(job: AnalyzeDuplicatesJob, args: [library.id])
+    assert_enqueued_with(job: FetchCurationProposalsJob, args: [library.id])
     assert_enqueued_with(job: IncrementalScanJob, queue: ScanSettings.queue) do
       IncrementalScanJob.perform_later(library.id)
     end

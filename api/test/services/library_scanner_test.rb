@@ -121,6 +121,35 @@ class LibraryScannerTest < ActiveSupport::TestCase
     FileUtils.rm_rf(pack_root) if defined?(pack_root) && pack_root
   end
 
+  test "category_model scan applies datapackage creator and keywords" do
+    pack_root = Rails.root.join("tmp/test-dp-#{SecureRandom.hex(4)}")
+    FileUtils.mkdir_p(pack_root.join("Anime/Death Gun"))
+    File.write(pack_root.join("Anime/Death Gun/preview.jpg"), "jpg")
+    File.write(
+      pack_root.join("Anime/Death Gun/datapackage.json"),
+      JSON.generate(
+        "title" => "Death Gun",
+        "keywords" => ["anime", "helmet", "!new", "do3d"],
+        "contributors" => [{ "title" => "DO3D", "roles" => ["creator"] }]
+      )
+    )
+
+    library = Library.create!(name: "DP packs", root_path: pack_root.to_s, layout_mode: Library::LAYOUT_CATEGORY_MODEL)
+    LibraryScanner.new(library).scan!
+
+    model = library.vibe_models.find_by!(folder_name: "Anime/Death Gun")
+    assert_equal "do3d", model.creator&.slug
+    assert_equal "DO3D", model.creator&.name
+    assert_equal "Death Gun", model.title
+    names = model.tags.map(&:name)
+    assert_includes names, "anime"
+    assert_includes names, "helmet"
+    assert_includes names, "do3d"
+    refute_includes names, "!new"
+  ensure
+    FileUtils.rm_rf(pack_root) if defined?(pack_root) && pack_root
+  end
+
   test "category_model common subfolder under a pack is not a third model" do
     pack_root = Rails.root.join("tmp/test-common-#{SecureRandom.hex(4)}")
     FileUtils.mkdir_p(pack_root.join("Movie TV/Reinhardt/stl"))

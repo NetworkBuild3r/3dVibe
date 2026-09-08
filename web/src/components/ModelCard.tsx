@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import type { ModelCard as ModelCardType } from "../types";
+import { cardChipTag } from "../gallery";
 import { CoverMedia } from "./CoverMedia";
 import { IconHeart } from "./Icons";
 
@@ -14,7 +15,7 @@ export function ModelCard({
   likeBusy?: boolean;
   onTag?: (tag: string) => void;
 }) {
-  const tag = model.tags[0];
+  const tag = cardChipTag(model.tags);
   const creator = model.creator;
 
   return (
